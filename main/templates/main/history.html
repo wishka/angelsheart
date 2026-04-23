@@ -1,0 +1,124 @@
+{% extends 'base.html' %}
+
+{% block title %}История | Добрые дела{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem;">
+        <h2 style="color: #d4737a;">
+            <i class="fas fa-history"></i> История добрых дел
+        </h2>
+        
+        <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+            <a href="?filter=all" class="btn {% if filter_type == 'all' %}btn-primary{% else %}btn-secondary{% endif %}" style="padding: 8px 16px;">
+                Все
+            </a>
+            <a href="?filter=sent" class="btn {% if filter_type == 'sent' %}btn-primary{% else %}btn-secondary{% endif %}" style="padding: 8px 16px;">
+                <i class="fas fa-arrow-up"></i> Отправленные
+            </a>
+            <a href="?filter=received" class="btn {% if filter_type == 'received' %}btn-primary{% else %}btn-secondary{% endif %}" style="padding: 8px 16px;">
+                <i class="fas fa-arrow-down"></i> Полученные
+            </a>
+        </div>
+    </div>
+    
+    <form method="get" style="margin-bottom: 2rem;">
+        <div style="display: flex; gap: 1rem;">
+            <input type="text" name="search" class="form-control" placeholder="Поиск по имени пользователя..." value="{{ search_query }}" style="flex: 1;">
+            <button type="submit" class="btn btn-primary">
+                <i class="fas fa-search"></i> Найти
+            </button>
+            {% if search_query %}
+                <a href="?filter={{ filter_type }}" class="btn btn-secondary">
+                    <i class="fas fa-times"></i> Сбросить
+                </a>
+            {% endif %}
+        </div>
+    </form>
+    
+    {% if page_obj %}
+        <div style="overflow-x: auto;">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Тип</th>
+                        <th>Отправитель</th>
+                        <th>Получатель</th>
+                        <th>Сумма</th>
+                        <th>Комментарий</th>
+                        <th>Дата</th>
+                        <th>Статус</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tx in page_obj %}
+                    <tr>
+                        <td>
+                            {% if tx.sender == user %}
+                                <span style="color: #ff6b6b;"><i class="fas fa-arrow-up"></i> Исходящий</span>
+                            {% else %}
+                                <span style="color: #51cf66;"><i class="fas fa-arrow-down"></i> Входящий</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'user_profile' tx.sender.username %}" style="color: #6b5a5a; text-decoration: none;">
+                                <i class="fas fa-user"></i> {{ tx.sender.username }}
+                            </a>
+                        </td>
+                        <td>
+                            <a href="{% url 'user_profile' tx.receiver.username %}" style="color: #6b5a5a; text-decoration: none;">
+                                <i class="fas fa-user"></i> {{ tx.receiver.username }}
+                            </a>
+                        </td>
+                        <td style="font-weight: 700;">{{ tx.amount }} ₽</td>
+                        <td>{{ tx.comment|default:"—"|truncatechars:30 }}</td>
+                        <td>{{ tx.created_at|date:"d.m.Y H:i" }}</td>
+                        <td>
+                            {% if tx.status == 'completed' %}
+                                <span style="background: #d4edda; color: #155724; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem;">
+                                    <i class="fas fa-check-circle"></i> Завершен
+                                </span>
+                            {% elif tx.status == 'pending' %}
+                                <span style="background: #fff3cd; color: #856404; padding: 4px 12px; border-radius: 20px;">
+                                    <i class="fas fa-clock"></i> Ожидает
+                                </span>
+                            {% else %}
+                                <span style="background: #f8d7da; color: #721c24; padding: 4px 12px; border-radius: 20px;">
+                                    <i class="fas fa-times-circle"></i> Ошибка
+                                </span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Пагинация -->
+        {% if page_obj.has_other_pages %}
+        <div style="display: flex; justify-content: center; gap: 0.5rem; margin-top: 2rem; flex-wrap: wrap;">
+            {% if page_obj.has_previous %}
+                <a href="?page={{ page_obj.previous_page_number }}&filter={{ filter_type }}&search={{ search_query }}" class="btn btn-secondary">« Назад</a>
+            {% endif %}
+            
+            <span style="padding: 8px 16px; background: #d4737a; color: white; border-radius: 50px;">
+                {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}
+            </span>
+            
+            {% if page_obj.has_next %}
+                <a href="?page={{ page_obj.next_page_number }}&filter={{ filter_type }}&search={{ search_query }}" class="btn btn-secondary">Вперед »</a>
+            {% endif %}
+        </div>
+        {% endif %}
+        
+    {% else %}
+        <div style="text-align: center; padding: 3rem; color: #b89a9a;">
+            <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 1rem;"></i>
+            <p>История пуста</p>
+            <a href="{% url 'main:transfer' %}" class="btn btn-primary" style="margin-top: 1rem;">
+                <i class="fas fa-gift"></i> Сделать первый перевод
+            </a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

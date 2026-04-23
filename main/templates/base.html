@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Ангел-Хранитель{% endblock %} | Добрые дела</title>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Декоративные элементы -->
+    <div class="cloud-bg">
+        <div class="cloud" style="width: 200px; height: 100px; top: 10%; left: 5%;"></div>
+        <div class="cloud" style="width: 300px; height: 120px; top: 60%; right: 5%; animation-delay: -5s;"></div>
+        <div class="cloud" style="width: 150px; height: 80px; bottom: 20%; left: 20%; animation-delay: -10s;"></div>
+    </div>
+    <div class="angel-wings"><i class="fas fa-feather-alt"></i><i class="fas fa-feather-alt"></i></div>
+
+    <!-- Навигация для авторизованных пользователей -->
+    {% if user.is_authenticated %}
+    <nav class="navbar">
+        <div class="navbar-container">
+            <a href="{% url 'main:dashboard' %}" class="logo">
+                <i class="fas fa-dove"></i>
+                <span>Ангел-Хранитель</span>
+            </a>
+            <div class="nav-links">
+                <a href="{% url 'main:dashboard' %}"><i class="fas fa-home"></i> Главная</a>
+                <a href="{% url 'main:transfer' %}"><i class="fas fa-paper-plane"></i> Перевести</a>
+                <a href="{% url 'main:history' %}"><i class="fas fa-history"></i> История</a>
+                <a href="{% url 'main:leaders' %}"><i class="fas fa-crown"></i> Лидеры</a>
+                <a href="{% url 'main:profile' %}"><i class="fas fa-user-circle"></i> Профиль</a>
+                <div class="balance-card-mini">
+                    <i class="fas fa-coins"></i>
+                    <span>{{ user.balance.amount|floatformat:2 }} ₽</span>
+                </div>
+                <a href="{% url 'main:logout' %}" style="color: #c96b72;"><i class="fas fa-sign-out-alt"></i> Выход</a>
+            </div>
+        </div>
+    </nav>
+    {% else %}
+    <!-- Навигация для неавторизованных пользователей -->
+    <nav class="navbar">
+        <div class="navbar-container">
+            <a href="{% url 'main:login' %}" class="logo">
+                <i class="fas fa-dove"></i>
+                <span>Ангел-Хранитель</span>
+            </a>
+            <div class="nav-links">
+                <a href="{% url 'main:login' %}"><i class="fas fa-sign-in-alt"></i> Вход</a>
+                <a href="{% url 'main:register' %}"><i class="fas fa-user-plus"></i> Регистрация</a>
+            </div>
+        </div>
+    </nav>
+    {% endif %}
+
+    <!-- Сообщения -->
+    <div class="messages">
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}">
+                    <i class="fas fa-{% if message.tags == 'success' %}check-circle{% elif message.tags == 'error' %}exclamation-circle{% else %}info-circle{% endif %}"></i>
+                    {{ message }}
+                </div>
+            {% endfor %}
+        {% endif %}
+    </div>
+
+    <!-- Основной контент -->
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Подвал -->
+    <footer>
+        <i class="fas fa-heart" style="color: #d4737a;"></i> С любовью и добротой | Помогая другим, мы помогаем себе <i class="fas fa-heart" style="color: #d4737a;"></i>
+        <div style="margin-bottom: 1rem;">
+            <a href="/privacy-policy/" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Политика конфиденциальности</a>
+            <a href="/user-agreement/" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Пользовательское соглашение</a>
+            <a href="/cookie-policy/" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Политика Cookies</a>
+        </div>
+    </footer>
+
+    <!-- Cookie Consent Modal -->
+    <div id="cookieModal" class="cookie-modal" style="display: none;">
+        <div class="cookie-modal-content">
+            <div class="cookie-modal-header">
+                <i class="fas fa-cookie-bite"></i>
+                <h2>Мы используем cookies</h2>
+            </div>
+            <div class="cookie-modal-body">
+                <p>Мы используем файлы cookie для улучшения работы сайта, анализа трафика и персонализации контента. Продолжая использовать наш сайт, вы соглашаетесь с нашей <a href="/privacy-policy/" target="_blank">Политикой конфиденциальности</a> и <a href="/cookie-policy/" target="_blank">Политикой использования cookies</a>.</p>
+                <div class="cookie-options">
+                    <label>
+                        <input type="checkbox" id="necessaryCookies" checked disabled>
+                        <span>Необходимые (всегда активны)</span>
+                    </label>
+                    <label>
+                        <input type="checkbox" id="functionalCookies">
+                        <span>Функциональные</span>
+                    </label>
+                    <label>
+                        <input type="checkbox" id="analyticsCookies">
+                        <span>Аналитические</span>
+                    </label>
+                </div>
+            </div>
+            <div class="cookie-modal-footer">
+                <button class="btn btn-secondary" id="cookieSettings">Настройки</button>
+                <button class="btn btn-primary" id="acceptAllCookies">Принять все</button>
+                <button class="btn btn-secondary" id="acceptNecessaryOnly">Только необходимое</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Стили вынесены в конец перед скриптами -->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Quicksand', sans-serif;
+            background: linear-gradient(135deg, #fdf4f0 0%, #f9e8e8 100%);
+            min-height: 100vh;
+            color: #4a3b3b;
+        }
+
+        /* Небесный фон с облачками */
+        .cloud-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .cloud {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 1000px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.05);
+            animation: float 20s infinite ease-in-out;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px) translateX(0px); }
+            50% { transform: translateY(-20px) translateX(10px); }
+        }
+
+        /* Ангельские крылья в углах */
+        .angel-wings {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            opacity: 0.15;
+            font-size: 150px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* Навигация */
+        .navbar {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+            padding: 1rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            border-bottom: 2px solid rgba(255, 182, 193, 0.3);
+        }
+
+        .navbar-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            font-family: 'Playfair Display', serif;
+            color: #d4737a;
+            text-decoration: none;
+        }
+
+        .logo i {
+            font-size: 2rem;
+            color: #e8a4aa;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1.5rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .nav-links a {
+            text-decoration: none;
+            color: #6b5a5a;
+            font-weight: 500;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .nav-links a:hover {
+            color: #d4737a;
+            transform: translateY(-2px);
+        }
+
+        .balance-card-mini {
+            background: linear-gradient(135deg, #ffe6e8, #ffe0e3);
+            padding: 8px 18px;
+            border-radius: 50px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 700;
+            color: #c96b72;
+            border: 1px solid rgba(212, 115, 122, 0.3);
+        }
+
+        /* Основной контент */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Карточки */
+        .card {
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(5px);
+            border-radius: 28px;
+            padding: 2rem;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12);
+        }
+
+        /* Кнопки */
+        .btn {
+            padding: 12px 28px;
+            border: none;
+            border-radius: 50px;
+            font-family: 'Quicksand', sans-serif;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1rem;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #d4737a, #e8a4aa);
+            color: white;
+            box-shadow: 0 4px 15px rgba(212, 115, 122, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(212, 115, 122, 0.4);
+        }
+
+        .btn-secondary {
+            background: white;
+            color: #d4737a;
+            border: 2px solid #d4737a;
+        }
+
+        .btn-secondary:hover {
+            background: #d4737a;
+            color: white;
+        }
+
+        /* Сообщения */
+        .messages {
+            position: fixed;
+            top: 100px;
+            right: 20px;
+            z-index: 1100;
+            max-width: 400px;
+        }
+
+        .alert {
+            padding: 15px 20px;
+            border-radius: 15px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border-left: 4px solid #28a745;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #dc3545;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border-left: 4px solid #17a2b8;
+        }
+
+        /* Формы */
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #6b5a5a;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #f0e0e0;
+            border-radius: 16px;
+            font-family: 'Quicksand', sans-serif;
+            font-size: 1rem;
+            transition: all 0.3s;
+            background: white;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: #d4737a;
+            box-shadow: 0 0 0 3px rgba(212, 115, 122, 0.1);
+        }
+
+        /* Таблицы */
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .table th, .table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #f0e0e0;
+        }
+
+        .table th {
+            color: #d4737a;
+            font-weight: 600;
+        }
+
+        /* Адаптивность */
+        @media (max-width: 768px) {
+            .navbar-container {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .nav-links {
+                justify-content: center;
+            }
+
+            .container {
+                padding: 1rem;
+            }
+        }
+
+        /* Анимация для горлиц */
+        .dove {
+            position: fixed;
+            font-size: 24px;
+            opacity: 0.1;
+            pointer-events: none;
+            animation: fly 15s infinite;
+        }
+
+        @keyframes fly {
+            0% { transform: translateX(-100px) translateY(100px) rotate(0deg); }
+            100% { transform: translateX(100vw) translateY(-100px) rotate(360deg); }
+        }
+
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: #b89a9a;
+            font-size: 0.9rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Стили для модального окна cookie */
+    .cookie-modal {
+        position: fixed;
+        bottom: 20px;
+        left: 20px;
+        right: 20px;
+        z-index: 10000;
+        animation: slideUp 0.3s ease;
+    }
+
+    @keyframes slideUp {
+        from {
+            transform: translateY(100%);
+            opacity: 0;
+        }
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
+
+    .cookie-modal-content {
+        max-width: 500px;
+        margin: 0 auto;
+        background: white;
+        border-radius: 20px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        overflow: hidden;
+    }
+
+    .cookie-modal-header {
+        background: linear-gradient(135deg, #d4737a, #e8a4aa);
+        padding: 1.5rem;
+        text-align: center;
+        color: white;
+    }
+
+    .cookie-modal-header i {
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .cookie-modal-header h2 {
+        margin: 0;
+        font-size: 1.3rem;
+    }
+
+    .cookie-modal-body {
+        padding: 1.5rem;
+    }
+
+    .cookie-modal-body p {
+        color: #6b5a5a;
+        line-height: 1.5;
+        margin-bottom: 1rem;
+    }
+
+    .cookie-modal-body a {
+        color: #d4737a;
+        text-decoration: none;
+    }
+
+    .cookie-options {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid #f0e0e0;
+    }
+
+    .cookie-options label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        cursor: pointer;
+        color: #6b5a5a;
+    }
+
+    .cookie-modal-footer {
+        padding: 1rem 1.5rem;
+        display: flex;
+        gap: 1rem;
+        justify-content: flex-end;
+        background: #fdf4f0;
+        flex-wrap: wrap;
+    }
+
+    @media (max-width: 768px) {
+        .cookie-modal-footer {
+            flex-direction: column;
+        }
+
+        .cookie-modal-footer .btn {
+            width: 100%;
+            justify-content: center;
+        }
+    }
+    </style>
+
+    <!-- Скрипты -->
+    <script>
+        // Автоматическое скрытие сообщений через 5 секунд
+        setTimeout(() => {
+            document.querySelectorAll('.alert').forEach(alert => {
+                alert.style.animation = 'slideOut 0.3s ease forwards';
+                setTimeout(() => {
+                    if (alert.parentNode) alert.remove();
+                }, 300);
+            });
+        }, 5000);
+
+        // Добавляем летающих горлиц
+        document.addEventListener('DOMContentLoaded', function() {
+            for(let i = 0; i < 5; i++) {
+                let dove = document.createElement('div');
+                dove.className = 'dove';
+                dove.innerHTML = '<i class="fas fa-dove"></i>';
+                dove.style.left = Math.random() * 100 + '%';
+                dove.style.animationDelay = Math.random() * 20 + 's';
+                dove.style.animationDuration = 15 + Math.random() * 10 + 's';
+                document.body.appendChild(dove);
+            }
+        });
+
+        // Управление cookie consent
+        function setCookie(name, value, days) {
+            let expires = "";
+            if (days) {
+                const date = new Date();
+                date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+                expires = "; expires=" + date.toUTCString();
+            }
+            document.cookie = name + "=" + (value || "") + expires + "; path=/; SameSite=Lax";
+        }
+
+        function getCookie(name) {
+            const nameEQ = name + "=";
+            const ca = document.cookie.split(';');
+            for(let i = 0; i < ca.length; i++) {
+                let c = ca[i];
+                while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+                if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+            }
+            return null;
+        }
+
+        function acceptCookies(types) {
+            setCookie('cookie_consent', 'true', 365);
+            setCookie('functional_cookies', types.functional ? 'true' : 'false', 365);
+            setCookie('analytics_cookies', types.analytics ? 'true' : 'false', 365);
+            document.getElementById('cookieModal').style.display = 'none';
+        }
+
+        // Показываем модальное окно, если согласие не дано
+        document.addEventListener('DOMContentLoaded', function() {
+            const cookieConsent = getCookie('cookie_consent');
+            if (!cookieConsent) {
+                document.getElementById('cookieModal').style.display = 'block';
+            }
+
+            // Кнопки модального окна
+            document.getElementById('acceptAllCookies')?.addEventListener('click', function() {
+                acceptCookies({ functional: true, analytics: true });
+            });
+
+            document.getElementById('acceptNecessaryOnly')?.addEventListener('click', function() {
+                acceptCookies({ functional: false, analytics: false });
+            });
+
+            document.getElementById('cookieSettings')?.addEventListener('click', function() {
+                const options = document.querySelector('.cookie-options');
+                if (options) options.style.display = options.style.display === 'none' ? 'flex' : 'none';
+            });
+        });
+    </script>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

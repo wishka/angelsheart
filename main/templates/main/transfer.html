@@ -1,0 +1,95 @@
+{% extends 'base.html' %}
+
+{% block title %}Перевести | Доброе дело{% endblock %}
+
+{% block content %}
+<div style="max-width: 600px; margin: 0 auto;">
+    <div class="card">
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <i class="fas fa-dove" style="font-size: 3rem; color: #e8a4aa;"></i>
+            <h1 style="color: #d4737a; margin-top: 1rem;">Совершить перевод</h1>
+            <p style="color: #6b5a5a;">Переведите средства нуждающемуся в помощи</p>
+        </div>
+        
+        <div style="background: #fdf4f0; padding: 1rem; border-radius: 20px; margin-bottom: 1.5rem; text-align: center;">
+            <i class="fas fa-wallet"></i> Ваш баланс: <strong style="color: #d4737a; font-size: 1.2rem;">{{ current_balance|floatformat:2 }} ₽</strong>
+        </div>
+        
+        <form method="post">
+            {% csrf_token %}
+            
+            <div class="form-group">
+                <label for="{{ form.receiver_username.id_for_label }}">
+                    <i class="fas fa-user-friends"></i> Кому помочь?
+                </label>
+                {{ form.receiver_username }}
+                <small style="color: #b89a9a; display: block; margin-top: 5px;">Введите username получателя</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="{{ form.amount.id_for_label }}">
+                    <i class="fas fa-coins"></i> Сумма (₽)
+                </label>
+                {{ form.amount }}
+            </div>
+            
+            <div class="form-group">
+                <label for="{{ form.comment.id_for_label }}">
+                    <i class="fas fa-comment"></i> Теплые слова (необязательно)
+                </label>
+                {{ form.comment }}
+            </div>
+            
+            {% if recent_receivers %}
+            <div style="margin-bottom: 1.5rem;">
+                <label>Недавние получатели:</label>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
+                    {% for username in recent_receivers %}
+                    <button type="button" class="btn-secondary" style="padding: 5px 15px; font-size: 0.9rem;" onclick="document.getElementById('id_receiver_username').value='{{ username }}'">
+                        <i class="fas fa-user"></i> {{ username }}
+                    </button>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            
+            <div style="display: flex; gap: 1rem; margin-top: 2rem;">
+                <button type="submit" class="btn btn-primary" style="flex: 1;">
+                    <i class="fas fa-paper-plane"></i> Перевести
+                </button>
+                <a href="{% url 'main:dashboard' %}" class="btn btn-secondary" style="flex: 1; text-align: center;">
+                    Отмена
+                </a>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Напоминание -->
+    <div style="text-align: center; margin-top: 1rem; font-size: 0.85rem; color: #b89a9a;">
+        <i class="fas fa-shield-alt"></i> Все переводы защищены и безопасны
+    </div>
+</div>
+
+<script>
+    // Проверка существования пользователя
+    const usernameInput = document.getElementById('id_receiver_username');
+    if (usernameInput) {
+        usernameInput.addEventListener('blur', function() {
+            const username = this.value;
+            if (username && username !== '{{ user.username }}') {
+                fetch(`/api/check-username/?username=${encodeURIComponent(username)}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (!data.exists) {
+                            const errorDiv = document.createElement('div');
+                            errorDiv.className = 'alert alert-error';
+                            errorDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Пользователь не найден';
+                            document.querySelector('.messages').appendChild(errorDiv);
+                            setTimeout(() => errorDiv.remove(), 3000);
+                        }
+                    });
+            }
+        });
+    }
+</script>
+{% endblock %}

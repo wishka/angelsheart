@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+
+{% block title %}Политика использования Cookies | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1 style="color: #d4737a; margin-bottom: 2rem;">
+        <i class="fas fa-cookie-bite"></i> Политика использования Cookies
+    </h1>
+    
+    <div style="line-height: 1.8; color: #6b5a5a;">
+        <h2>1. Что такое cookies?</h2>
+        <p>Cookies (файлы cookie) — это небольшие текстовые файлы, которые сохраняются на вашем устройстве при посещении веб-сайтов. Они широко используются для обеспечения функционирования сайтов, повышения эффективности и предоставления информации владельцам сайтов.</p>
+        
+        <h2>2. Какие cookies мы используем</h2>
+        
+        <h3>2.1. Необходимые cookies</h3>
+        <p>Эти cookies необходимы для работы сайта и не могут быть отключены. Они используются для:</p>
+        <ul>
+            <li>Аутентификации пользователей</li>
+            <li>Поддержания сессии после входа в систему</li>
+            <li>Защиты от CSRF-атак</li>
+            <li>Запоминания настроек конфиденциальности</li>
+        </ul>
+        
+        <h3>2.2. Функциональные cookies</h3>
+        <p>Эти cookies позволяют запоминать ваши предпочтения:</p>
+        <ul>
+            <li>Запоминание пользователя (функция "Запомнить меня")</li>
+            <li>Настройки интерфейса</li>
+            <li>Предпочтения по отображению</li>
+        </ul>
+        
+        <h3>2.3. Аналитические cookies</h3>
+        <p>Эти cookies помогают нам понять, как посетители взаимодействуют с сайтом:</p>
+        <ul>
+            <li>Анализ трафика</li>
+            <li>Популярные страницы</li>
+            <li>Время на сайте</li>
+            <li>Источники переходов</li>
+        </ul>
+        
+        <h2>3. Срок хранения cookies</h2>
+        <ul>
+            <li><strong>Сессионные cookies:</strong> удаляются после закрытия браузера</li>
+            <li><strong>Постоянные cookies:</strong> хранятся до 30 дней (или дольше с вашего согласия)</li>
+        </ul>
+        
+        <h2>4. Управление cookies</h2>
+        <p>Вы можете управлять cookies через настройки вашего браузера:</p>
+        <ul>
+            <li><strong>Google Chrome:</strong> Настройки → Конфиденциальность и безопасность → Cookies</li>
+            <li><strong>Mozilla Firefox:</strong> Настройки → Приватность и защита → Cookies</li>
+            <li><strong>Safari:</strong> Настройки → Конфиденциальность → Cookies</li>
+            <li><strong>Microsoft Edge:</strong> Настройки → Конфиденциальность → Cookies</li>
+        </ul>
+        
+        <h2>5. Отключение cookies</h2>
+        <p>Вы можете отключить cookies в настройках браузера, но это может привести к некорректной работе сайта. В частности, без необходимых cookies вы не сможете:</p>
+        <ul>
+            <li>Войти в свой аккаунт</li>
+            <li>Совершать переводы</li>
+            <li>Сохранять настройки</li>
+        </ul>
+        
+        <h2>6. Изменение согласия</h2>
+        <p>Вы можете изменить свое согласие на использование cookies в любое время, нажав на кнопку "Настройки cookies" в нижней части страницы.</p>
+        
+        <h2>7. Контактная информация</h2>
+        <p>По вопросам, связанным с использованием cookies, вы можете связаться с нами по email: privacy@angel-helper.ru</p>
+        
+        <div style="margin-top: 2rem; padding: 1rem; background: #fdf4f0; border-radius: 16px; text-align: center;">
+            <i class="fas fa-info-circle" style="color: #d4737a;"></i>
+            <p style="margin-top: 0.5rem; font-size: 0.9rem;">Продолжая использовать наш сайт, вы соглашаетесь с нашей политикой использования cookies.</p>
+            <button onclick="document.getElementById('cookieModal').style.display='block'" class="btn btn-secondary" style="margin-top: 0.5rem;">
+                <i class="fas fa-cog"></i> Настроить cookies
+            </button>
+        </div>
+        
+        <p style="margin-top: 2rem; font-size: 0.9rem;">Дата последнего обновления: {% now "d.m.Y" %}</p>
+    </div>
+</div>
+
+<script>
+// Функция для показа модального окна cookies
+function showCookieModal() {
+    const modal = document.getElementById('cookieModal');
+    if (modal) {
+        modal.style.display = 'block';
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+
+{% block title %}Регистрация | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div style="min-height: 80vh; display: flex; align-items: center; justify-content: center;">
+    <div class="card" style="max-width: 500px; width: 100%;">
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <i class="fas fa-dove" style="font-size: 3rem; color: #e8a4aa;"></i>
+            <h1 style="color: #d4737a; margin-top: 1rem;">Добро пожаловать!</h1>
+            <p style="color: #6b5a5a;">Присоединяйтесь к сообществу добрых сердец</p>
+        </div>
+        
+        <form method="post">
+            {% csrf_token %}
+            
+            <div class="form-group">
+                <label><i class="fas fa-user"></i> Имя пользователя</label>
+                {{ form.username }}
+                <small style="color: #b89a9a;">Только буквы, цифры и @/./+/-/_</small>
+            </div>
+            
+            <div class="form-group">
+                <label><i class="fas fa-envelope"></i> Email</label>
+                {{ form.email }}
+            </div>
+            
+            <div class="form-group">
+                <label><i class="fas fa-lock"></i> Пароль</label>
+                {{ form.password1 }}
+                <small style="color: #b89a9a;">Не менее 8 символов, не слишком простой</small>
+            </div>
+            
+            <div class="form-group">
+                <label><i class="fas fa-lock"></i> Подтверждение пароля</label>
+                {{ form.password2 }}
+            </div>
+            
+            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">
+                <i class="fas fa-heart"></i> Создать аккаунт
+            </button>
+        </form>
+        
+        <div style="text-align: center; margin-top: 1.5rem;">
+            <p style="color: #6b5a5a;">Уже есть аккаунт? <a href="{% url 'main:login' %}" style="color: #d4737a; text-decoration: none;">Войти</a></p>
+        </div>
+    </div>
+</div>
+{% endblock %}

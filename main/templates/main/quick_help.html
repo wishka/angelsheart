@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+
+{% block title %}Быстрая помощь | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div style="max-width: 600px; margin: 0 auto;">
+    <div class="card" style="text-align: center;">
+        <i class="fas fa-random" style="font-size: 3rem; color: #e8a4aa;"></i>
+        <h1 style="color: #d4737a; margin: 1rem 0;">Быстрая помощь</h1>
+        <p style="color: #6b5a5a; margin-bottom: 1.5rem;">
+            Мы выбрали для вас случайного пользователя, которому нужна поддержка
+        </p>
+        
+        <div style="background: linear-gradient(135deg, #ffe6e8, #ffe0e3); padding: 2rem; border-radius: 28px; margin-bottom: 1.5rem;">
+            <i class="fas fa-user-circle" style="font-size: 4rem; color: #d4737a;"></i>
+            <h2 style="margin: 0.5rem 0;">{{ suggested_user.username }}</h2>
+            <p style="color: #6b5a5a;">ждет вашей поддержки</p>
+            
+            <div style="margin-top: 1rem;">
+                <span style="background: white; padding: 5px 15px; border-radius: 20px;">
+                    <i class="fas fa-coins"></i> Предлагаемая сумма: {{ suggested_amount }} ₽
+                </span>
+            </div>
+        </div>
+        
+        <div style="display: flex; gap: 1rem; justify-content: center;">
+            <form method="post" action="{% url 'maintransfer' %}">
+                {% csrf_token %}
+                <input type="hidden" name="receiver_username" value="{{ suggested_user.username }}">
+                <input type="hidden" name="amount" value="{{ suggested_amount }}">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-paper-plane"></i> Помочь {{ suggested_amount }} ₽
+                </button>
+            </form>
+            
+            <form method="post" action="{% url 'main:transfer' %}">
+                {% csrf_token %}
+                <input type="hidden" name="receiver_username" value="{{ suggested_user.username }}">
+                <input type="hidden" name="amount" value="100">
+                <button type="submit" class="btn btn-secondary">
+                    <i class="fas fa-gift"></i> Помочь 100 ₽
+                </button>
+            </form>
+        </div>
+        
+        <div style="margin-top: 1.5rem;">
+            <a href="{% url 'main:quick_help' %}" class="btn-secondary" style="padding: 8px 20px; display: inline-block;">
+                <i class="fas fa-sync-alt"></i> Выбрать другого
+            </a>
+        </div>
+    </div>
+    
+    <div style="text-align: center; margin-top: 1rem; font-size: 0.85rem; color: #b89a9a;">
+        <i class="fas fa-dove"></i> Ваша помощь действительно важна
+    </div>
+</div>
+{% endblock %}

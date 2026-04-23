@@ -1,0 +1,309 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if is_own_profile %}Мой профиль{% else %}{{ profile_user.username }}{% endif %}{% endblock %}
+
+{% block content %}
+<div class="card">
+    <!-- Шапка профиля -->
+    <div class="profile-header">
+        <div class="profile-avatar">
+            <i class="fas fa-user-circle"></i>
+        </div>
+        <h1 class="profile-username">{{ profile_user.username }}</h1>
+        <p class="profile-joined">
+            <i class="fas fa-calendar-alt"></i> С нами с {{ member_since|date:"F Y" }}
+        </p>
+
+        {% if is_own_profile %}
+            <span class="profile-badge">
+                <i class="fas fa-star"></i> Это вы
+            </span>
+        {% else %}
+            <a href="{% url 'main:transfer' %}" class="btn btn-primary profile-help-btn">
+                <i class="fas fa-gift"></i> Помочь {{ profile_user.username }}
+            </a>
+        {% endif %}
+    </div>
+
+    <!-- Статистика -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <i class="fas fa-coins stat-icon" style="color: #d4737a;"></i>
+            <h3 class="stat-title">Баланс</h3>
+            <div class="stat-value">{{ balance|floatformat:2 }} ₽</div>
+        </div>
+        <div class="stat-card">
+            <i class="fas fa-arrow-up stat-icon" style="color: #28a745;"></i>
+            <h3 class="stat-title">Отправлено</h3>
+            <div class="stat-value">{{ total_sent|floatformat:2 }} ₽</div>
+        </div>
+        <div class="stat-card">
+            <i class="fas fa-arrow-down stat-icon" style="color: #d4737a;"></i>
+            <h3 class="stat-title">Получено</h3>
+            <div class="stat-value">{{ total_received|floatformat:2 }} ₽</div>
+        </div>
+        <div class="stat-card">
+            <i class="fas fa-hand-holding-heart stat-icon" style="color: #e8a4aa;"></i>
+            <h3 class="stat-title">Всего переводов</h3>
+            <div class="stat-value">{{ transactions_count }}</div>
+        </div>
+    </div>
+
+    <!-- Последние операции -->
+    <h3 class="recent-title">
+        <i class="fas fa-history"></i> Последние операции
+    </h3>
+
+    {% if recent_transactions %}
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Тип</th>
+                        <th>С кем</th>
+                        <th>Сумма</th>
+                        <th>Дата</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tx in recent_transactions %}
+                    <tr>
+                        <td>
+                            {% if tx.sender == profile_user %}
+                                <span class="badge badge-sent">
+                                    <i class="fas fa-arrow-up"></i> Отправил
+                                </span>
+                            {% else %}
+                                <span class="badge badge-received">
+                                    <i class="fas fa-arrow-down"></i> Получил
+                                </span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if tx.sender == profile_user %}
+                                <a href="{% url 'main:user_profile' tx.receiver.username %}" class="user-link">
+                                    <i class="fas fa-user"></i> {{ tx.receiver.username }}
+                                </a>
+                            {% else %}
+                                <a href="{% url 'main:user_profile' tx.sender.username %}" class="user-link">
+                                    <i class="fas fa-user"></i> {{ tx.sender.username }}
+                                </a>
+                            {% endif %}
+                        </td>
+                        <td class="transaction-amount">{{ tx.amount }} ₽</td>
+                        <td class="transaction-date">{{ tx.created_at|date:"d.m.y H:i" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="empty-state">
+            <i class="fas fa-inbox"></i>
+            <p>Нет операций</p>
+        </div>
+    {% endif %}
+</div>
+
+<style>
+    /* Стили только для страницы профиля */
+    .profile-header {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+
+    .profile-avatar {
+        width: 100px;
+        height: 100px;
+        background: linear-gradient(135deg, #ffe6e8, #ffe0e3);
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 1rem;
+    }
+
+    .profile-avatar i {
+        font-size: 4rem;
+        color: #d4737a;
+    }
+
+    .profile-username {
+        color: #d4737a;
+        margin: 0.5rem 0;
+        font-size: 1.8rem;
+    }
+
+    .profile-joined {
+        color: #b89a9a;
+        margin-bottom: 1rem;
+    }
+
+    .profile-badge {
+        background: white;
+        color: #d4737a;
+        border: 2px solid #d4737a;
+        padding: 5px 15px;
+        border-radius: 50px;
+        font-size: 0.9rem;
+        display: inline-block;
+    }
+
+    .profile-help-btn {
+        margin-top: 1rem;
+        display: inline-block;
+    }
+
+    /* Сетка статистики */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+
+    .stat-card {
+        text-align: center;
+        padding: 1.5rem;
+        background: #fdf4f0;
+        border-radius: 20px;
+        transition: transform 0.3s;
+    }
+
+    .stat-card:hover {
+        transform: translateY(-5px);
+    }
+
+    .stat-icon {
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+        display: inline-block;
+    }
+
+    .stat-title {
+        margin: 0.5rem 0;
+        color: #6b5a5a;
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+    .stat-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #d4737a;
+    }
+
+    /* Заголовок последних операций */
+    .recent-title {
+        color: #d4737a;
+        margin-bottom: 1rem;
+        font-size: 1.3rem;
+    }
+
+    /* Таблица */
+    .table-responsive {
+        overflow-x: auto;
+    }
+
+    .table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .table th,
+    .table td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid #f0e0e0;
+    }
+
+    .table th {
+        color: #d4737a;
+        font-weight: 600;
+    }
+
+    /* Бейджи */
+    .badge {
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .badge-sent {
+        background: #ffe6e6;
+        color: #ff6b6b;
+    }
+
+    .badge-received {
+        background: #e6ffe6;
+        color: #51cf66;
+    }
+
+    /* Ссылки на пользователей */
+    .user-link {
+        color: #6b5a5a;
+        text-decoration: none;
+        transition: color 0.3s;
+    }
+
+    .user-link:hover {
+        color: #d4737a;
+    }
+
+    /* Сумма транзакции */
+    .transaction-amount {
+        font-weight: 700;
+        color: #d4737a;
+    }
+
+    .transaction-date {
+        color: #b89a9a;
+        font-size: 0.85rem;
+    }
+
+    /* Пустое состояние */
+    .empty-state {
+        text-align: center;
+        padding: 3rem;
+        color: #b89a9a;
+    }
+
+    .empty-state i {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        display: inline-block;
+    }
+
+    /* Адаптивность */
+    @media (max-width: 768px) {
+        .stats-grid {
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
+        .stat-card {
+            padding: 1rem;
+        }
+
+        .stat-value {
+            font-size: 1.2rem;
+        }
+
+        .profile-username {
+            font-size: 1.3rem;
+        }
+
+        .profile-avatar {
+            width: 70px;
+            height: 70px;
+        }
+
+        .profile-avatar i {
+            font-size: 2.5rem;
+        }
+    }
+</style>
+{% endblock %}
