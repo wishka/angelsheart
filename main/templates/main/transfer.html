@@ -6,55 +6,97 @@
 <div style="max-width: 600px; margin: 0 auto;">
     <div class="card">
         <div style="text-align: center; margin-bottom: 2rem;">
-            <i class="fas fa-dove" style="font-size: 3rem; color: #e8a4aa;"></i>
-            <h1 style="color: #d4737a; margin-top: 1rem;">Совершить перевод</h1>
-            <p style="color: #6b5a5a;">Переведите средства нуждающемуся в помощи</p>
+            <div style="background: linear-gradient(135deg, #ffe6e8, #ffe0e3); width: 70px; height: 70px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 1rem;">
+                <i class="fas fa-paper-plane" style="font-size: 2rem; color: #d4737a;"></i>
+            </div>
+            <h1 style="color: #d4737a; margin-top: 0; margin-bottom: 0.5rem;">Совершить перевод</h1>
+            <p style="color: #6b5a5a; margin: 0;">Переведите средства нуждающемуся в помощи</p>
         </div>
-        
-        <div style="background: #fdf4f0; padding: 1rem; border-radius: 20px; margin-bottom: 1.5rem; text-align: center;">
-            <i class="fas fa-wallet"></i> Ваш баланс: <strong style="color: #d4737a; font-size: 1.2rem;">{{ current_balance|floatformat:2 }} ₽</strong>
+
+        <!-- Баланс пользователя -->
+        <div style="background: linear-gradient(135deg, #fdf4f0, #fff5f0); padding: 1rem 1.5rem; border-radius: 20px; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <i class="fas fa-wallet" style="font-size: 1.5rem; color: #d4737a;"></i>
+                <div>
+                    <div style="font-size: 0.85rem; color: #b89a9a;">Ваш баланс</div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #d4737a;">{{ current_balance|floatformat:2 }} ₽</div>
+                </div>
+            </div>
+            <a href="{% url 'main:topup' %}" class="btn btn-secondary" style="padding: 8px 20px;">
+                <i class="fas fa-plus-circle"></i> Пополнить
+            </a>
         </div>
-        
-        <form method="post">
+
+        <form method="post" id="transferForm">
             {% csrf_token %}
-            
+
+            <!-- Получатель -->
             <div class="form-group">
-                <label for="{{ form.receiver_username.id_for_label }}">
-                    <i class="fas fa-user-friends"></i> Кому помочь?
+                <label style="display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-user-friends" style="color: #d4737a;"></i>
+                    <span>Кому помочь?</span>
                 </label>
-                {{ form.receiver_username }}
-                <small style="color: #b89a9a; display: block; margin-top: 5px;">Введите username получателя</small>
+                <div style="position: relative;">
+                    {{ form.receiver_username }}
+                    <div id="usernameCheckResult" style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%);"></div>
+                </div>
+                <small style="color: #b89a9a; display: block; margin-top: 5px;">
+                    <i class="fas fa-info-circle"></i> Введите username получателя
+                </small>
             </div>
-            
-            <div class="form-group">
-                <label for="{{ form.amount.id_for_label }}">
-                    <i class="fas fa-coins"></i> Сумма (₽)
-                </label>
-                {{ form.amount }}
-            </div>
-            
-            <div class="form-group">
-                <label for="{{ form.comment.id_for_label }}">
-                    <i class="fas fa-comment"></i> Теплые слова (необязательно)
-                </label>
-                {{ form.comment }}
-            </div>
-            
+
+            <!-- Быстрые получатели -->
             {% if recent_receivers %}
             <div style="margin-bottom: 1.5rem;">
-                <label>Недавние получатели:</label>
-                <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #6b5a5a;">
+                    <i class="fas fa-clock"></i> Недавние получатели:
+                </label>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
                     {% for username in recent_receivers %}
-                    <button type="button" class="btn-secondary" style="padding: 5px 15px; font-size: 0.9rem;" onclick="document.getElementById('id_receiver_username').value='{{ username }}'">
+                    <button type="button" class="receiver-quick-btn" data-username="{{ username }}" style="background: #fdf4f0; border: 1px solid #e0d0d0; padding: 6px 15px; border-radius: 50px; cursor: pointer; transition: all 0.3s; color: #6b5a5a;">
                         <i class="fas fa-user"></i> {{ username }}
                     </button>
                     {% endfor %}
                 </div>
             </div>
             {% endif %}
-            
+
+            <!-- Сумма перевода -->
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-coins" style="color: #d4737a;"></i>
+                    <span>Сумма перевода (₽)</span>
+                </label>
+                <div style="position: relative;">
+                    {{ form.amount }}
+                    <span style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%); color: #b89a9a;">₽</span>
+                </div>
+
+                <!-- Быстрые суммы -->
+                <div style="display: flex; gap: 0.5rem; margin-top: 10px; flex-wrap: wrap;">
+                    <button type="button" class="amount-quick-btn" data-amount="100">100 ₽</button>
+                    <button type="button" class="amount-quick-btn" data-amount="300">300 ₽</button>
+                    <button type="button" class="amount-quick-btn" data-amount="500">500 ₽</button>
+                    <button type="button" class="amount-quick-btn" data-amount="1000">1 000 ₽</button>
+                    <button type="button" class="amount-quick-btn" data-amount="2000">2 000 ₽</button>
+                </div>
+            </div>
+
+            <!-- Комментарий -->
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 8px;">
+                    <i class="fas fa-comment" style="color: #d4737a;"></i>
+                    <span>Теплые слова (необязательно)</span>
+                </label>
+                {{ form.comment }}
+                <small style="color: #b89a9a; display: block; margin-top: 5px;">
+                    <i class="fas fa-heart"></i> Напишите добрые слова получателю
+                </small>
+            </div>
+
+            <!-- Кнопки -->
             <div style="display: flex; gap: 1rem; margin-top: 2rem;">
-                <button type="submit" class="btn btn-primary" style="flex: 1;">
+                <button type="submit" class="btn btn-primary" style="flex: 1;" id="submitBtn">
                     <i class="fas fa-paper-plane"></i> Перевести
                 </button>
                 <a href="{% url 'main:dashboard' %}" class="btn btn-secondary" style="flex: 1; text-align: center;">
@@ -62,33 +104,206 @@
                 </a>
             </div>
         </form>
-    </div>
-    
-    <!-- Напоминание -->
-    <div style="text-align: center; margin-top: 1rem; font-size: 0.85rem; color: #b89a9a;">
-        <i class="fas fa-shield-alt"></i> Все переводы защищены и безопасны
+
+        <!-- Напоминание о безопасности -->
+        <div style="margin-top: 1.5rem; text-align: center; padding: 0.75rem; background: #fdf4f0; border-radius: 12px;">
+            <div style="display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.85rem; color: #6b5a5a;">
+                <i class="fas fa-shield-alt" style="color: #d4737a;"></i>
+                <span>Все переводы защищены и безопасны</span>
+                <i class="fas fa-lock" style="color: #d4737a;"></i>
+            </div>
+        </div>
+
+        <!-- Информация о комиссии -->
+        <div style="margin-top: 1rem; text-align: center; font-size: 0.8rem; color: #b89a9a;">
+            <i class="fas fa-info-circle"></i>
+            При переводе через сборы взимается комиссия 3%.
+            <a href="/user-agreement/#commission" style="color: #d4737a;">Подробнее</a>
+        </div>
     </div>
 </div>
 
+<style>
+    /* Стили для быстрых кнопок */
+    .receiver-quick-btn:hover {
+        background: #d4737a;
+        border-color: #d4737a;
+        color: white;
+        transform: translateY(-2px);
+    }
+
+    .amount-quick-btn {
+        background: white;
+        border: 1px solid #e0d0d0;
+        padding: 5px 12px;
+        border-radius: 50px;
+        cursor: pointer;
+        transition: all 0.3s;
+        color: #6b5a5a;
+        font-size: 0.85rem;
+        font-family: 'Quicksand', sans-serif;
+    }
+
+    .amount-quick-btn:hover {
+        background: #d4737a;
+        border-color: #d4737a;
+        color: white;
+        transform: translateY(-2px);
+    }
+
+    .username-valid {
+        color: #28a745;
+    }
+
+    .username-invalid {
+        color: #dc3545;
+    }
+
+    .form-control:focus {
+        outline: none;
+        border-color: #d4737a;
+        box-shadow: 0 0 0 3px rgba(212, 115, 122, 0.1);
+    }
+</style>
+
 <script>
-    // Проверка существования пользователя
-    const usernameInput = document.getElementById('id_receiver_username');
-    if (usernameInput) {
-        usernameInput.addEventListener('blur', function() {
-            const username = this.value;
-            if (username && username !== '{{ user.username }}') {
-                fetch(`/api/check-username/?username=${encodeURIComponent(username)}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        if (!data.exists) {
-                            const errorDiv = document.createElement('div');
-                            errorDiv.className = 'alert alert-error';
-                            errorDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Пользователь не найден';
-                            document.querySelector('.messages').appendChild(errorDiv);
-                            setTimeout(() => errorDiv.remove(), 3000);
-                        }
-                    });
+    // Быстрые суммы
+    document.querySelectorAll('.amount-quick-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const amount = this.getAttribute('data-amount');
+            const amountInput = document.getElementById('id_amount');
+            if (amountInput) {
+                amountInput.value = amount;
+                amountInput.style.borderColor = '#d4737a';
+                // Проверка баланса
+                checkBalance(amount);
             }
+        });
+    });
+
+    // Быстрые получатели
+    document.querySelectorAll('.receiver-quick-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const username = this.getAttribute('data-username');
+            const usernameInput = document.getElementById('id_receiver_username');
+            if (usernameInput) {
+                usernameInput.value = username;
+                usernameInput.style.borderColor = '#d4737a';
+                checkUsername(username);
+            }
+        });
+    });
+
+    // Проверка существования пользователя (AJAX)
+    let typingTimer;
+    const usernameInput = document.getElementById('id_receiver_username');
+
+    function checkUsername(username) {
+        if (username && username.length > 2) {
+            fetch(`/api/check-username/?username=${encodeURIComponent(username)}`)
+                .then(response => response.json())
+                .then(data => {
+                    const resultDiv = document.getElementById('usernameCheckResult');
+                    if (data.exists) {
+                        resultDiv.innerHTML = '<i class="fas fa-check-circle username-valid" style="font-size: 1.2rem;"></i>';
+                        usernameInput.style.borderColor = '#28a745';
+                    } else {
+                        resultDiv.innerHTML = '<i class="fas fa-times-circle username-invalid" style="font-size: 1.2rem;"></i>';
+                        usernameInput.style.borderColor = '#dc3545';
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка:', error);
+                });
+        } else if (username && username.length > 0 && username.length <= 2) {
+            document.getElementById('usernameCheckResult').innerHTML = '<i class="fas fa-spinner fa-pulse" style="color: #b89a9a;"></i>';
+        } else {
+            document.getElementById('usernameCheckResult').innerHTML = '';
+            usernameInput.style.borderColor = '#f0e0e0';
+        }
+    }
+
+    if (usernameInput) {
+        usernameInput.addEventListener('keyup', function() {
+            clearTimeout(typingTimer);
+            typingTimer = setTimeout(() => {
+                checkUsername(this.value);
+            }, 500);
+        });
+
+        usernameInput.addEventListener('blur', function() {
+            if (this.value) {
+                checkUsername(this.value);
+            }
+        });
+    }
+
+    // Проверка баланса
+    const currentBalance = {{ current_balance|floatformat:2 }};
+    const amountField = document.getElementById('id_amount');
+
+    function checkBalance(amount) {
+        const amountValue = parseFloat(amount);
+        if (amountValue > currentBalance) {
+            amountField.style.borderColor = '#dc3545';
+            // Показываем предупреждение
+            let warningDiv = document.getElementById('balanceWarning');
+            if (!warningDiv) {
+                warningDiv = document.createElement('div');
+                warningDiv.id = 'balanceWarning';
+                warningDiv.style.color = '#dc3545';
+                warningDiv.style.fontSize = '0.8rem';
+                warningDiv.style.marginTop = '5px';
+                amountField.parentNode.appendChild(warningDiv);
+            }
+            warningDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Недостаточно средств. Ваш баланс: ' + currentBalance + ' ₽';
+        } else {
+            amountField.style.borderColor = '#28a745';
+            const warningDiv = document.getElementById('balanceWarning');
+            if (warningDiv) {
+                warningDiv.remove();
+            }
+        }
+    }
+
+    if (amountField) {
+        amountField.addEventListener('input', function() {
+            checkBalance(this.value);
+        });
+    }
+
+    // Валидация перед отправкой
+    const transferForm = document.getElementById('transferForm');
+    if (transferForm) {
+        transferForm.addEventListener('submit', function(e) {
+            const username = usernameInput?.value.trim();
+            const amount = parseFloat(amountField?.value || 0);
+
+            // Проверка получателя
+            if (!username) {
+                e.preventDefault();
+                alert('Пожалуйста, укажите получателя');
+                usernameInput.focus();
+                return false;
+            }
+
+            // Проверка суммы
+            if (isNaN(amount) || amount <= 0) {
+                e.preventDefault();
+                alert('Пожалуйста, укажите корректную сумму (больше 0)');
+                amountField.focus();
+                return false;
+            }
+
+            // Проверка баланса
+            if (amount > currentBalance) {
+                e.preventDefault();
+                alert(`Недостаточно средств. Ваш баланс: ${currentBalance} ₽`);
+                return false;
+            }
+
+            // Подтверждение
+            return confirm(`Подтвердите перевод:\n\nОтправитель: Вы\nПолучатель: ${username}\nСумма: ${amount} ₽\n\nПродолжить?`);
         });
     }
 </script>

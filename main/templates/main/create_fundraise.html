@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+
+{% block title %}Создать сбор | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 700px; margin: 0 auto;">
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <i class="fas fa-hand-holding-heart" style="font-size: 3rem; color: #e8a4aa;"></i>
+        <h1 style="color: #d4737a; margin-top: 1rem;">Создать сбор средств</h1>
+        <p style="color: #6b5a5a;">Расскажите о своей цели и получите поддержку</p>
+    </div>
+    
+    <form method="post">
+        {% csrf_token %}
+        
+        <div class="form-group">
+            <label><i class="fas fa-heading"></i> Название сбора</label>
+            {{ form.title }}
+            <small style="color: #b89a9a;">Краткое и понятное название цели</small>
+        </div>
+        
+        <div class="form-group">
+            <label><i class="fas fa-align-left"></i> Описание</label>
+            {{ form.description }}
+            <small style="color: #b89a9a;">Подробно расскажите, на что нужны средства</small>
+        </div>
+        
+        <div class="form-group">
+            <label><i class="fas fa-tag"></i> Категория</label>
+            {{ form.category }}
+        </div>
+        
+        <div class="form-group">
+            <label><i class="fas fa-ruble-sign"></i> Целевая сумма (₽)</label>
+            {{ form.target_amount }}
+        </div>
+        
+        <div class="form-group">
+            <label><i class="fas fa-calendar-alt"></i> Дата окончания (необязательно)</label>
+            {{ form.end_date }}
+        </div>
+        
+        <div class="form-group">
+            <label><i class="fas fa-image"></i> Ссылка на изображение (необязательно)</label>
+            {{ form.image_url }}
+        </div>
+        
+        <div style="background: #fdf4f0; padding: 1rem; border-radius: 16px; margin: 1rem 0;">
+            <p style="margin: 0; color: #6b5a5a; font-size: 0.9rem;">
+                <i class="fas fa-info-circle"></i> 
+                Создание сбора бесплатно. Комиссия сервиса - 0%. Все средства поступают на ваш счет.
+            </p>
+        </div>
+        
+        <button type="submit" class="btn btn-primary" style="width: 100%;">
+            <i class="fas fa-rocket"></i> Создать сбор
+        </button>
+    </form>
+</div>
+{% endblock %}

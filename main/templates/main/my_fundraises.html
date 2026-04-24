@@ -1,0 +1,200 @@
+{% extends 'base.html' %}
+
+{% block title %}Мои сборы | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem;">
+        <div>
+            <h1 style="color: #d4737a; margin-bottom: 0.5rem;">
+                <i class="fas fa-hand-holding-heart"></i> Мои сборы
+            </h1>
+            <p style="color: #6b5a5a;">Управляйте своими сборами средств</p>
+        </div>
+        
+        {% if not has_active_fundraise %}
+        <a href="{% url 'main:create_fundraise' %}" class="btn btn-primary">
+            <i class="fas fa-plus-circle"></i> Создать сбор
+        </a>
+        {% else %}
+        <button class="btn btn-secondary" disabled style="opacity: 0.5; cursor: not-allowed;">
+            <i class="fas fa-ban"></i> Новый сбор недоступен
+        </button>
+        {% endif %}
+    </div>
+    
+    {% if has_active_fundraise %}
+    <div style="background: #fff3cd; padding: 1rem; border-radius: 16px; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <i class="fas fa-info-circle" style="color: #856404; font-size: 1.5rem;"></i>
+        <div style="flex: 1;">
+            <strong style="color: #856404;">У вас уже есть активный сбор</strong>
+            <p style="color: #856404; margin: 0;">Вы можете создать новый сбор только после завершения или отмены текущего.</p>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Активные сборы -->
+    {% if active_fundraises %}
+    <h3 style="color: #d4737a; margin-bottom: 1rem;">
+        <i class="fas fa-play-circle"></i> Активные сборы
+    </h3>
+    <div style="display: grid; gap: 1.5rem; margin-bottom: 2rem;">
+        {% for fundraise in active_fundraises %}
+        <div style="background: #fdf4f0; border-radius: 20px; padding: 1.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+                <div>
+                    <h2 style="color: #d4737a; margin-bottom: 0.5rem;">
+                        <a href="{% url 'main:fundraise_detail' fundraise.pk %}" style="color: #d4737a; text-decoration: none;">
+                            {{ fundraise.title }}
+                        </a>
+                    </h2>
+                    <span style="background: white; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; color: #d4737a;">
+                        {{ fundraise.get_category_display }}
+                    </span>
+                    <span style="background: #d4edda; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; color: #155724; margin-left: 5px;">
+                        <i class="fas fa-play-circle"></i> Активный
+                    </span>
+                </div>
+                <div style="text-align: right;">
+                    <div style="font-size: 0.85rem; color: #6b5a5a;">
+                        <i class="fas fa-calendar"></i> {{ fundraise.created_at|date:"d.m.Y" }}
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Шкала прогресса -->
+            <div style="margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <span style="font-size: 0.9rem; color: #6b5a5a;">Собрано:</span>
+                    <span style="font-size: 0.9rem; font-weight: 700; color: #d4737a;">{{ fundraise.current_amount|floatformat:0 }} ₽</span>
+                </div>
+                <div style="background: #e0d0d0; border-radius: 10px; overflow: hidden; height: 8px;">
+                    <div style="background: linear-gradient(90deg, #d4737a, #e8a4aa); width: {{ fundraise.get_progress_percent }}%; height: 100%;"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 5px;">
+                    <span style="font-size: 0.8rem; color: #b89a9a;">Цель: {{ fundraise.target_amount|floatformat:0 }} ₽</span>
+                    <span style="font-size: 0.8rem; color: #b89a9a;">{{ fundraise.get_progress_percent }}%</span>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+                <a href="{% url 'main:fundraise_detail' fundraise.pk %}" class="btn btn-primary" style="padding: 8px 20px;">
+                    <i class="fas fa-eye"></i> Просмотреть
+                </a>
+                <a href="{% url 'main:complete_fundraise' fundraise.pk %}" class="btn btn-secondary" style="padding: 8px 20px; background: #28a745; color: white; border: none;" 
+                   onclick="return confirm('Вы уверены, что хотите завершить этот сбор? После завершения сбор нельзя будет возобновить.');">
+                    <i class="fas fa-check-circle"></i> Завершить
+                </a>
+                <a href="{% url 'main:cancel_fundraise' fundraise.pk %}" class="btn btn-secondary" style="padding: 8px 20px; background: #dc3545; color: white; border: none;"
+                   onclick="return confirm('Вы уверены, что хотите отменить этот сбор? Средства, уже поступившие на ваш баланс, останутся у вас.');">
+                    <i class="fas fa-times-circle"></i> Отменить
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    <!-- Завершенные сборы -->
+    {% if completed_fundraises %}
+    <h3 style="color: #28a745; margin-bottom: 1rem;">
+        <i class="fas fa-check-circle"></i> Завершенные сборы
+    </h3>
+    <div style="display: grid; gap: 1.5rem; margin-bottom: 2rem;">
+        {% for fundraise in completed_fundraises %}
+        <div style="background: #f0f8f0; border-radius: 20px; padding: 1.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+                <div>
+                    <h2 style="color: #28a745; margin-bottom: 0.5rem;">
+                        <a href="{% url 'main:fundraise_detail' fundraise.pk %}" style="color: #28a745; text-decoration: none;">
+                            {{ fundraise.title }}
+                        </a>
+                    </h2>
+                    <span style="background: white; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; color: #28a745;">
+                        {{ fundraise.get_category_display }}
+                    </span>
+                    <span style="background: #d1ecf1; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; color: #0c5460; margin-left: 5px;">
+                        <i class="fas fa-check-circle"></i> Завершен
+                    </span>
+                </div>
+                <div style="text-align: right;">
+                    <div style="font-size: 1.1rem; font-weight: 700; color: #28a745;">
+                        {{ fundraise.current_amount|floatformat:0 }} ₽
+                    </div>
+                    <div style="font-size: 0.85rem; color: #6b5a5a;">
+                        из {{ fundraise.target_amount|floatformat:0 }} ₽
+                    </div>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+                <a href="{% url 'main:fundraise_detail' fundraise.pk %}" class="btn btn-secondary" style="padding: 8px 20px;">
+                    <i class="fas fa-eye"></i> Просмотреть
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    <!-- Отмененные сборы -->
+    {% if cancelled_fundraises %}
+    <h3 style="color: #dc3545; margin-bottom: 1rem;">
+        <i class="fas fa-times-circle"></i> Отмененные сборы
+    </h3>
+    <div style="display: grid; gap: 1.5rem;">
+        {% for fundraise in cancelled_fundraises %}
+        <div style="background: #fff0f0; border-radius: 20px; padding: 1.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 1rem;">
+                <div>
+                    <h2 style="color: #dc3545; margin-bottom: 0.5rem;">
+                        <a href="{% url 'main:fundraise_detail' fundraise.pk %}" style="color: #dc3545; text-decoration: none;">
+                            {{ fundraise.title }}
+                        </a>
+                    </h2>
+                    <span style="background: white; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; color: #dc3545;">
+                        {{ fundraise.get_category_display }}
+                    </span>
+                    <span style="background: #f8d7da; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; color: #721c24; margin-left: 5px;">
+                        <i class="fas fa-times-circle"></i> Отменен
+                    </span>
+                </div>
+                <div style="text-align: right;">
+                    <div style="font-size: 0.85rem; color: #6b5a5a;">
+                        Собрано: {{ fundraise.current_amount|floatformat:0 }} ₽
+                    </div>
+                </div>
+            </div>
+            <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+                <a href="{% url 'main:fundraise_detail' fundraise.pk %}" class="btn btn-secondary" style="padding: 8px 20px;">
+                    <i class="fas fa-eye"></i> Просмотреть
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    
+    {% if not active_fundraises and not completed_fundraises and not cancelled_fundraises %}
+    <div style="text-align: center; padding: 3rem; color: #b89a9a;">
+        <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 1rem; display: inline-block;"></i>
+        <h3>У вас еще нет сборов</h3>
+        <p>Создайте свой первый сбор средств и получите поддержку!</p>
+        {% if not has_active_fundraise %}
+        <a href="{% url 'main:create_fundraise' %}" class="btn btn-primary" style="margin-top: 1rem;">
+            <i class="fas fa-plus-circle"></i> Создать сбор
+        </a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    @media (max-width: 768px) {
+        .btn {
+            width: 100%;
+            justify-content: center;
+        }
+    }
+</style>
+{% endblock %}

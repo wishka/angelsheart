@@ -29,4 +29,14 @@ urlpatterns = [
     path('privacy-policy/', views.privacy_policy, name='privacy_policy'),
     path('user-agreement/', views.user_agreement, name='user_agreement'),
     path('cookie-policy/', views.cookie_policy, name='cookie_policy'),
+    path('my-consents/', views.my_consents, name='my_consents'),
+    
+    # Сборы средств
+    path('fundraises/', views.fundraise_list, name='fundraises'),
+    path('fundraise/<int:pk>/', views.fundraise_detail, name='fundraise_detail'),
+    path('fundraise/create/', views.create_fundraise, name='create_fundraise'),
+    path('my-fundraises/', views.my_fundraises, name='my_fundraises'),
+    path('my-donations/', views.my_donations, name='my_donations'),
+    path('fundraise/<int:pk>/complete/', views.complete_fundraise, name='complete_fundraise'),
+    path('fundraise/<int:pk>/cancel/', views.cancel_fundraise, name='cancel_fundraise'),
 ]

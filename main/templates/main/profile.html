@@ -53,6 +53,9 @@
     <h3 class="recent-title">
         <i class="fas fa-history"></i> Последние операции
     </h3>
+    <a href="{% url 'main:my_consents' %}" class="btn btn-secondary">
+        <i class="fas fa-file-signature"></i> Управление согласиями
+    </a>
 
     {% if recent_transactions %}
         <div class="table-responsive">

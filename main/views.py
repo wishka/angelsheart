@@ -3,29 +3,93 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth import login, authenticate, logout
 from django.contrib import messages
 from django.conf import settings
+from django.utils import timezone
 from django.db import transaction as db_transaction
 from django.db.models import Q, Sum
 from django.contrib.auth.models import User
 from django.core.paginator import Paginator
 from django.http import JsonResponse
-from .models import Balance, Transaction
-from .forms import RegisterForm, TransferForm
+from .models import Balance, Transaction, Fundraise, Donation, UserConsent, ConsentLog
+from .forms import RegisterForm, TransferForm, FundraiseForm, DonationForm
 
 
 # ==================== АУТЕНТИФИКАЦИЯ ====================
 
 def register_page(request):
-    """Регистрация нового пользователя"""
+    """Регистрация нового пользователя с сохранением согласий"""
     if request.user.is_authenticated:
         return redirect('main:dashboard')
     
     if request.method == 'POST':
         form = RegisterForm(request.POST)
+        
+        # Получаем согласия из формы
+        agree_privacy = request.POST.get('agree_privacy')
+        agree_terms = request.POST.get('agree_terms')
+        agree_cookies = request.POST.get('agree_cookies')
+        
+        # Проверка всех обязательных согласий
+        if not agree_privacy or not agree_terms or not agree_cookies:
+            messages.error(request, 'Вы должны принять все условия для регистрации')
+            return render(request, 'main/register.html', {'form': form})
+        
         if form.is_valid():
             user = form.save()
+            
+            # Получаем IP-адрес пользователя
+            x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+            if x_forwarded_for:
+                ip_address = x_forwarded_for.split(',')[0]
+            else:
+                ip_address = request.META.get('REMOTE_ADDR')
+            
+            user_agent = request.META.get('HTTP_USER_AGENT', '')
+            
+            # Сохраняем согласия
+            consents_data = [
+                ('privacy', agree_privacy, 'Политика конфиденциальности', '1.0'),
+                ('terms', agree_terms, 'Пользовательское соглашение', '1.0'),
+                ('cookies', agree_cookies, 'Политика cookies', '1.0'),
+            ]
+            
+            for consent_type, agreed, _, version in consents_data:
+                if agreed:
+                    # Создаем запись согласия
+                    consent = UserConsent.objects.create(
+                        user=user,
+                        consent_type=consent_type,
+                        version=version,
+                        is_accepted=True,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        agreed_at=timezone.now()
+                    )
+                    
+                    # Создаем лог
+                    ConsentLog.objects.create(
+                        user=user,
+                        action='accept',
+                        consent_type=consent_type,
+                        version=version,
+                        ip_address=ip_address,
+                        user_agent=user_agent
+                    )
+                    
+                    print(f"Создано согласие: {consent_type} для пользователя {user.username}")  # Для отладки
+            
+            # Сохраняем в сессию информацию о согласиях
+            request.session['agreed_to_privacy'] = True
+            request.session['agreed_to_terms'] = True
+            request.session['agreed_to_cookies'] = True
+            request.session['consent_version'] = '1.0'
+            request.session['consent_signed_at'] = timezone.now().isoformat()
+            
             login(request, user)
             messages.success(request, f'Добро пожаловать, {user.username}!')
             return redirect('main:dashboard')
+        else:
+            for error in form.errors.values():
+                messages.error(request, error)
     else:
         form = RegisterForm()
     
@@ -40,7 +104,7 @@ def login_page(request):
     if request.method == 'POST':
         username = request.POST.get('username')
         password = request.POST.get('password')
-        remember_me = request.POST.get('remember_me')
+        remember_me = request.POST.get('remember_me')  # Получаем значение чекбокса
         
         user = authenticate(request, username=username, password=password)
         
@@ -48,12 +112,12 @@ def login_page(request):
             login(request, user)
             
             # Настройка "Запомнить меня"
-            if not remember_me:
-                # Если не выбран "Запомнить меня" - сессия закроется при закрытии браузера
-                request.session.set_expiry(0)
+            if remember_me == 'on':  # Чекбокс передает 'on' когда отмечен
+                # Если выбран "Запомнить меня" - сессия будет жить 30 дней
+                request.session.set_expiry(30 * 24 * 60 * 60)  # 30 дней в секундах
             else:
-                # Если выбран - сессия будет жить 30 дней
-                request.session.set_expiry(settings.SESSION_REMEMBER_ME_AGE)
+                # Если не выбран - сессия закроется при закрытии браузера
+                request.session.set_expiry(0)
             
             messages.success(request, f'С возвращением, {user.username}!')
             return redirect('main:dashboard')
@@ -355,6 +419,327 @@ def cancel_transaction(request, transaction_id):
         messages.error(request, 'Невозможно отменить эту транзакцию')
     
     return redirect('main:history')
+
+
+# ==================== СБОРЫ СРЕДСТВ ====================
+
+@login_required
+def fundraise_list(request):
+    """Страница со списком сборов"""
+    category = request.GET.get('category', 'all')
+    status = request.GET.get('status', 'active')
+    
+    fundraises = Fundraise.objects.all()
+    
+    if category != 'all':
+        fundraises = fundraises.filter(category=category)
+    if status != 'all':
+        fundraises = fundraises.filter(status=status)
+    
+    # Статистика
+    total_fundraises = fundraises.count()
+    total_raised = fundraises.aggregate(Sum('current_amount'))['current_amount__sum'] or 0
+    total_donors = Donation.objects.values('donor').distinct().count()
+    
+    context = {
+        'fundraises': fundraises,
+        'total_fundraises': total_fundraises,
+        'total_raised': total_raised,
+        'total_donors': total_donors,
+        'selected_category': category,
+        'selected_status': status,
+    }
+    return render(request, 'main/fundraises.html', context)
+
+
+@login_required
+def fundraise_detail(request, pk):
+    """Детальная страница сбора"""
+    fundraise = get_object_or_404(Fundraise, pk=pk)
+    donations = fundraise.donations.all()[:20]
+    
+    # Последние 5 пожертвований
+    recent_donations = fundraise.donations.select_related('donor').order_by('-created_at')[:10]
+    
+    # Проверка, является ли пользователь автором сбора
+    is_author = (request.user == fundraise.author)
+    
+    if request.method == 'POST':
+        # Запрещаем автору жертвовать самому себе
+        if is_author:
+            messages.error(request, '❌ Вы не можете пожертвовать средства в свой собственный сбор')
+            return redirect('main:fundraise_detail', pk=pk)
+        
+        form = DonationForm(request.POST)
+        if form.is_valid():
+            amount = form.cleaned_data['amount']
+            message = form.cleaned_data.get('message', '')
+            is_anonymous = form.cleaned_data.get('is_anonymous', False)
+            
+            # Проверка минимальной суммы
+            if amount < 1:
+                messages.error(request, 'Минимальная сумма пожертвования - 1 ₽')
+                return redirect('main:fundraise_detail', pk=pk)
+            
+            # Проверка баланса
+            if request.user.balance.amount < amount:
+                messages.error(request, f'Недостаточно средств. Ваш баланс: {request.user.balance.amount} ₽')
+                return redirect('main:fundraise_detail', pk=pk)
+            
+            # Расчет комиссии
+            commission_percent = settings.SERVICE_COMMISSION_PERCENT
+            commission_amount = (amount * commission_percent) / 100
+            author_amount = amount - commission_amount
+            
+            try:
+                with db_transaction.atomic():
+                    # Обновляем баланс пользователя (донора) - списываем полную сумму
+                    user_balance = Balance.objects.select_for_update().get(user=request.user)
+                    user_balance.amount -= amount
+                    user_balance.save()
+                    
+                    # Обновляем баланс автора сбора - зачисляем сумму за вычетом комиссии
+                    author_balance = Balance.objects.select_for_update().get(user=fundraise.author)
+                    author_balance.amount += author_amount
+                    author_balance.save()
+                    
+                    # Обновляем сумму сбора (показываем полную сумму донатов)
+                    fundraise.current_amount += amount
+                    fundraise.donors_count += 1
+                    fundraise.total_commission += commission_amount
+                    fundraise.save()
+                    
+                    # Создаем пожертвование
+                    donation = Donation.objects.create(
+                        donor=request.user,
+                        fundraise=fundraise,
+                        amount=amount,
+                        message=message,
+                        is_anonymous=is_anonymous
+                    )
+                    
+                    # Создаем транзакцию для автора (сумма за вычетом комиссии)
+                    transaction_comment = f'Пожертвование на сбор "{fundraise.title}"'
+                    if message:
+                        transaction_comment += f' - "{message[:50]}"'
+                    
+                    Transaction.objects.create(
+                        sender=request.user,
+                        receiver=fundraise.author,
+                        amount=author_amount,
+                        comment=transaction_comment,
+                        status='completed',
+                        is_donation=True,
+                        fundraise_id=fundraise.id
+                    )
+                    
+                    # Создаем транзакцию комиссии (если комиссия > 0)
+                    if commission_amount > 0:
+                        # Создаем системный аккаунт или записываем в специальную таблицу
+                        # Для простоты создадим транзакцию с receiver=null или специальным пользователем
+                        Transaction.objects.create(
+                            sender=request.user,
+                            receiver=None,  # Комиссия уходит в систему
+                            amount=commission_amount,
+                            comment=f'Комиссия сервиса {commission_percent}% за пожертвование на сбор "{fundraise.title}"',
+                            status='completed',
+                            is_donation=True,
+                            fundraise_id=fundraise.id
+                        )
+                    
+                    messages.success(
+                        request,
+                        f'✅ Спасибо за пожертвование! '
+                        f'{amount} ₽ отправлено в сбор "{fundraise.title}". '
+                        f'Комиссия сервиса: {commission_amount:.2f} ₽ ({commission_percent}%)'
+                    )
+                    return redirect('main:fundraise_detail', pk=pk)
+            
+            except Exception as e:
+                messages.error(request, f'Ошибка при пожертвовании: {str(e)}')
+                return redirect('main:fundraise_detail', pk=pk)
+        else:
+            messages.error(request, 'Пожалуйста, исправьте ошибки в форме')
+    else:
+        form = DonationForm()
+    
+    context = {
+        'fundraise': fundraise,
+        'donations': donations,
+        'recent_donations': recent_donations,
+        'form': form,
+        'progress_percent': fundraise.get_progress_percent(),
+        'is_author': is_author,
+        'commission_percent': settings.SERVICE_COMMISSION_PERCENT,
+    }
+    return render(request, 'main/fundraise_detail.html', context)
+
+
+@login_required
+def create_fundraise(request):
+    """Создание нового сбора (только если нет активных сборов)"""
+    # Проверяем, есть ли у пользователя активный сбор
+    has_active_fundraise = Fundraise.objects.filter(author=request.user, status='active').exists()
+    
+    if has_active_fundraise:
+        messages.error(request, 'У вас уже есть активный сбор. Завершите или отмените его, прежде чем создавать новый.')
+        return redirect('main:my_fundraises')
+    
+    if request.method == 'POST':
+        form = FundraiseForm(request.POST)
+        if form.is_valid():
+            fundraise = form.save(commit=False)
+            fundraise.author = request.user
+            fundraise.save()
+            messages.success(request, f'Сбор "{fundraise.title}" успешно создан!')
+            return redirect('main:fundraise_detail', pk=fundraise.pk)
+    else:
+        form = FundraiseForm()
+    
+    return render(request, 'main/create_fundraise.html', {'form': form})
+
+
+@login_required
+def my_fundraises(request):
+    """Мои сборы"""
+    active_fundraises = Fundraise.objects.filter(author=request.user, status='active')
+    completed_fundraises = Fundraise.objects.filter(author=request.user, status='completed')
+    cancelled_fundraises = Fundraise.objects.filter(author=request.user, status='cancelled')
+    
+    # Проверяем, есть ли активный сбор
+    has_active_fundraise = active_fundraises.exists()
+    
+    context = {
+        'active_fundraises': active_fundraises,
+        'completed_fundraises': completed_fundraises,
+        'cancelled_fundraises': cancelled_fundraises,
+        'has_active_fundraise': has_active_fundraise,
+    }
+    return render(request, 'main/my_fundraises.html', context)
+
+
+@login_required
+def my_donations(request):
+    """Мои пожертвования"""
+    donations = Donation.objects.filter(donor=request.user).select_related('fundraise').order_by('-created_at')
+    
+    context = {
+        'donations': donations,
+        'total_donated': donations.aggregate(Sum('amount'))['amount__sum'] or 0,
+    }
+    return render(request, 'main/my_donations.html', context)
+
+
+@login_required
+def my_consents(request):
+    """Страница управления согласиями пользователя"""
+    consents = UserConsent.objects.filter(user=request.user, is_accepted=True, revoked_at__isnull=True)
+    consent_logs = ConsentLog.objects.filter(user=request.user)[:20]
+    
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        consent_type = request.POST.get('consent_type')
+        
+        if action == 'revoke':
+            # Отзыв согласия
+            consent = UserConsent.objects.filter(
+                user=request.user,
+                consent_type=consent_type,
+                is_accepted=True,
+                revoked_at__isnull=True
+            ).first()
+            
+            if consent:
+                reason = request.POST.get('reason', '')
+                consent.revoke(reason)
+                
+                # Логируем отзыв
+                ConsentLog.objects.create(
+                    user=request.user,
+                    action='revoke',
+                    consent_type=consent_type,
+                    version=consent.version,
+                    ip_address=request.META.get('REMOTE_ADDR'),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
+                
+                messages.info(request, f'Согласие на "{consent.get_consent_type_display()}" отозвано')
+        
+        elif action == 'reaccept':
+            # Повторное принятие согласия
+            version = request.POST.get('version', '1.0')
+            
+            # Создаем новое согласие
+            UserConsent.objects.create(
+                user=request.user,
+                consent_type=consent_type,
+                version=version,
+                is_accepted=True,
+                ip_address=request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT', '')
+            )
+            
+            # Логируем принятие
+            ConsentLog.objects.create(
+                user=request.user,
+                action='accept',
+                consent_type=consent_type,
+                version=version,
+                ip_address=request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT', '')
+            )
+            
+            messages.success(request, f'Согласие на "{dict(UserConsent.CONSENT_TYPES).get(consent_type)}" принято')
+        
+        return redirect('main:my_consents')
+    
+    context = {
+        'consents': consents,
+        'consent_logs': consent_logs,
+    }
+    return render(request, 'main/my_consents.html', context)
+
+
+@login_required
+def complete_fundraise(request, pk):
+    """Завершение сбора автором"""
+    fundraise = get_object_or_404(Fundraise, pk=pk, author=request.user)
+    
+    if fundraise.status == 'active':
+        fundraise.status = 'completed'
+        fundraise.save()
+        
+        # Создаем уведомление о завершении
+        messages.success(request,
+                         f'Сбор "{fundraise.title}" успешно завершен! Все собранные средства ({fundraise.current_amount | floatformat:2} ₽) зачислены на ваш баланс.')
+        
+        # Здесь можно добавить логику для перевода средств на отдельный счет
+        # Но так как средства уже поступают сразу на баланс автора,
+        # дополнительных действий не требуется
+    
+    else:
+        messages.error(request, 'Этот сбор уже завершен или отменен')
+    
+    return redirect('main:my_fundraises')
+
+
+@login_required
+def cancel_fundraise(request, pk):
+    """Отмена сбора автором"""
+    fundraise = get_object_or_404(Fundraise, pk=pk, author=request.user)
+    
+    if fundraise.status == 'active':
+        fundraise.status = 'cancelled'
+        fundraise.save()
+        messages.warning(request, f'Сбор "{fundraise.title}" отменен.')
+        
+        # Здесь можно добавить логику возврата средств донатерам
+        # Но для простоты оставим как есть - средства уже на счету автора
+    
+    else:
+        messages.error(request, 'Этот сбор уже завершен или отменен')
+    
+    return redirect('main:my_fundraises')
 
 def privacy_policy(request):
     """Страница политики конфиденциальности"""

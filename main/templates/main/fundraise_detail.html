@@ -1,0 +1,620 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ fundraise.title }} | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div style="display: grid; grid-template-columns: 1fr 400px; gap: 2rem;">
+    <!-- Левая колонка - информация о сборе -->
+    <div>
+        <div class="card">
+            <!-- Категория и статус -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+                <span style="background: #fdf4f0; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; color: #d4737a;">
+                    <i class="fas fa-tag"></i> {{ fundraise.get_category_display }}
+                </span>
+                {% if fundraise.status == 'active' %}
+                    <span style="background: #d4edda; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; color: #155724;">
+                        <i class="fas fa-play-circle"></i> Активный
+                    </span>
+                {% elif fundraise.status == 'completed' %}
+                    <span style="background: #d1ecf1; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; color: #0c5460;">
+                        <i class="fas fa-check-circle"></i> Завершен
+                    </span>
+                {% else %}
+                    <span style="background: #f8d7da; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; color: #721c24;">
+                        <i class="fas fa-times-circle"></i> Отменен
+                    </span>
+                {% endif %}
+            </div>
+
+            <!-- Заголовок -->
+            <h1 style="color: #d4737a; margin-bottom: 1rem;">{{ fundraise.title }}</h1>
+
+            <!-- Информация об авторе и дате -->
+            <div style="display: flex; gap: 1.5rem; margin-bottom: 1.5rem; flex-wrap: wrap; padding-bottom: 1rem; border-bottom: 1px solid #f0e0e0;">
+                <span style="color: #6b5a5a;">
+                    <i class="fas fa-user"></i> Автор:
+                    <a href="{% url 'main:user_profile' fundraise.author.username %}" style="color: #d4737a; text-decoration: none;">
+                        {{ fundraise.author.username }}
+                    </a>
+                    {% if is_author %}
+                        <span style="background: #d4737a; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; margin-left: 5px;">
+                            Это вы
+                        </span>
+                    {% endif %}
+                </span>
+                <span style="color: #6b5a5a;">
+                    <i class="fas fa-calendar"></i> Создан: {{ fundraise.created_at|date:"d.m.Y" }}
+                </span>
+                {% if fundraise.end_date %}
+                <span style="color: #6b5a5a;">
+                    <i class="fas fa-hourglass-half"></i> До: {{ fundraise.end_date|date:"d.m.Y" }}
+                </span>
+                {% endif %}
+            </div>
+
+            <!-- Шкала прогресса -->
+            <div style="background: #fdf4f0; padding: 1.5rem; border-radius: 20px; margin-bottom: 1.5rem;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                    <span style="font-weight: 600; color: #6b5a5a;">Собрано средств:</span>
+                    <span style="font-size: 1.3rem; font-weight: 700; color: #d4737a;">{{ fundraise.current_amount|floatformat:0 }} ₽</span>
+                </div>
+                <div style="background: #e0d0d0; border-radius: 15px; overflow: hidden; height: 12px;">
+                    <div style="background: linear-gradient(90deg, #d4737a, #e8a4aa); width: {{ progress_percent }}%; height: 100%; transition: width 0.5s;"></div>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 10px;">
+                    <span style="color: #b89a9a;">Цель: {{ fundraise.target_amount|floatformat:0 }} ₽</span>
+                    <span style="font-weight: 600; color: #d4737a;">{{ progress_percent }}%</span>
+                </div>
+                <div style="margin-top: 15px; color: #28a745; font-weight: 600;">
+                    <i class="fas fa-users"></i> {{ fundraise.donors_count }} {% if fundraise.donors_count == 1 %}человек{% elif fundraise.donors_count <= 4 %}человека{% else %}человек{% endif %} уже помогли
+                </div>
+                {% if fundraise.total_commission > 0 %}
+                <div style="margin-top: 10px; color: #856404; font-size: 0.85rem;">
+                    <i class="fas fa-percent"></i> Всего комиссии: {{ fundraise.total_commission|floatformat:2 }} ₽
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Описание -->
+            <h3 style="color: #d4737a; margin-bottom: 1rem;">
+                <i class="fas fa-info-circle"></i> История цели
+            </h3>
+            <div style="line-height: 1.8; color: #6b5a5a; margin-bottom: 1.5rem;">
+                {{ fundraise.description|linebreaks }}
+            </div>
+
+            <!-- Список донатеров -->
+            <h3 style="color: #d4737a; margin-bottom: 1rem;">
+                <i class="fas fa-heart"></i> Поддержали сбор
+            </h3>
+            <div style="max-height: 400px; overflow-y: auto;">
+                {% for donation in recent_donations %}
+                <div style="padding: 1rem; border-bottom: 1px solid #f0e0e0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            {% if donation.is_anonymous %}
+                                <strong style="color: #6b5a5a;">
+                                    <i class="fas fa-user-secret"></i> Анонимный доброжелатель
+                                </strong>
+                            {% else %}
+                                <strong style="color: #d4737a;">
+                                    <i class="fas fa-user"></i>
+                                    <a href="{% url 'main:user_profile' donation.donor.username %}" style="color: #d4737a; text-decoration: none;">
+                                        {{ donation.donor.username }}
+                                    </a>
+                                </strong>
+                            {% endif %}
+                            <div style="font-size: 0.85rem; color: #b89a9a;">
+                                <i class="fas fa-clock"></i> {{ donation.created_at|date:"d.m.Y H:i" }}
+                            </div>
+                        </div>
+                        <div style="font-weight: 700; color: #28a745; font-size: 1.1rem;">
+                            + {{ donation.amount }} ₽
+                        </div>
+                    </div>
+                    {% if donation.message %}
+                    <div style="margin-top: 0.75rem; padding: 0.75rem; background: #fdf4f0; border-radius: 12px;">
+                        <i class="fas fa-quote-left" style="color: #e8a4aa; font-size: 0.8rem;"></i>
+                        <span style="color: #6b5a5a; font-style: italic;">{{ donation.message }}</span>
+                        <i class="fas fa-quote-right" style="color: #e8a4aa; font-size: 0.8rem;"></i>
+                    </div>
+                    {% endif %}
+                </div>
+                {% empty %}
+                <div style="text-align: center; padding: 2rem; color: #b89a9a;">
+                    <i class="fas fa-inbox" style="font-size: 2rem; margin-bottom: 0.5rem; display: inline-block;"></i>
+                    <p>Пока никто не поддержал этот сбор</p>
+                    <p style="font-size: 0.85rem;">Будьте первым, кто поможет!</p>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Правая колонка - форма пожертвования/управление -->
+    <!-- Правая колонка - форма пожертвования/управление -->
+    <div>
+        <div class="card" style="position: sticky; top: 100px;">
+            <h2 style="color: #d4737a; text-align: center; margin-bottom: 1.5rem;">
+                {% if is_author %}
+                    <i class="fas fa-cog"></i> Управление сбором
+                {% else %}
+                    <i class="fas fa-gift"></i> Поддержать сбор
+                {% endif %}
+            </h2>
+
+            {% if is_author %}
+                <!-- Блок для автора сбора -->
+                <div style="background: #fff3cd; padding: 1rem; border-radius: 16px; margin-bottom: 1rem; text-align: center;">
+                    <i class="fas fa-info-circle" style="color: #856404; font-size: 2rem; margin-bottom: 0.5rem; display: inline-block;"></i>
+                    <p style="color: #856404; margin: 0;">
+                        <strong>Это ваш сбор</strong><br>
+                        Вы не можете пожертвовать средства в свой собственный сбор.
+                    </p>
+                </div>
+
+                <!-- Статистика для автора -->
+                <div style="background: #fdf4f0; padding: 1rem; border-radius: 16px; margin-bottom: 1rem;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                        <span>Собрано (всего):</span>
+                        <strong>{{ fundraise.current_amount|floatformat:0 }} ₽</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                        <span>Комиссия сервиса:</span>
+                        <strong>{{ fundraise.total_commission|floatformat:2 }} ₽</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                        <span>Вы получите:</span>
+                        <strong style="color: #28a745;">{{ fundraise.current_amount|floatformat:0 }} ₽</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span>Количество донатеров:</span>
+                        <strong>{{ fundraise.donors_count }}</strong>
+                    </div>
+                </div>
+
+                <!-- Кнопки управления для автора -->
+                <div style="display: flex; gap: 1rem; flex-direction: column;">
+                    <a href="{% url 'main:my_fundraises' %}" class="btn btn-secondary" style="text-align: center;">
+                        <i class="fas fa-list"></i> Мои сборы
+                    </a>
+                    {% if fundraise.status == 'active' %}
+                    <a href="{% url 'main:complete_fundraise' fundraise.pk %}" class="btn btn-secondary" style="text-align: center; background: #28a745; color: white; border: none;"
+                       onclick="return confirm('Вы уверены, что хотите завершить этот сбор?');">
+                        <i class="fas fa-check-circle"></i> Завершить сбор
+                    </a>
+                    <a href="{% url 'main:cancel_fundraise' fundraise.pk %}" class="btn btn-secondary" style="text-align: center; background: #dc3545; color: white; border: none;"
+                       onclick="return confirm('Вы уверены, что хотите отменить этот сбор?');">
+                        <i class="fas fa-times-circle"></i> Отменить сбор
+                    </a>
+                    {% endif %}
+                </div>
+
+            {% elif fundraise.status != 'active' %}
+                <!-- Сбор завершен или отменен -->
+                <div style="background: #d4edda; padding: 1rem; border-radius: 16px; margin-bottom: 1rem; text-align: center;">
+                    <i class="fas fa-check-circle" style="color: #155724; font-size: 2rem; margin-bottom: 0.5rem; display: inline-block;"></i>
+                    <p style="color: #155724; margin: 0;">
+                        <strong>{% if fundraise.status == 'completed' %}Сбор успешно завершен{% else %}Сбор отменен{% endif %}</strong>
+                    </p>
+                </div>
+
+                {% if fundraise.status == 'completed' %}
+                <div style="background: linear-gradient(135deg, #d4737a, #e8a4aa); padding: 1rem; border-radius: 16px; text-align: center; color: white;">
+                    <i class="fas fa-trophy" style="font-size: 2rem; margin-bottom: 0.5rem; display: inline-block;"></i>
+                    <p style="margin: 0; font-weight: 600;">Цель достигнута!</p>
+                    <p style="margin: 0; font-size: 0.9rem;">Собрано {{ fundraise.current_amount|floatformat:0 }} из {{ fundraise.target_amount|floatformat:0 }} ₽</p>
+                </div>
+                {% endif %}
+
+            {% else %}
+                <!-- Форма пожертвования для обычных пользователей -->
+                <form method="post" id="donationForm">
+                    {% csrf_token %}
+
+                    <!-- Быстрые суммы -->
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-bottom: 1rem;">
+                        <button type="button" class="btn-secondary quick-amount" style="padding: 8px; font-size: 0.9rem;" data-amount="100">100 ₽</button>
+                        <button type="button" class="btn-secondary quick-amount" style="padding: 8px; font-size: 0.9rem;" data-amount="500">500 ₽</button>
+                        <button type="button" class="btn-secondary quick-amount" style="padding: 8px; font-size: 0.9rem;" data-amount="1000">1 000 ₽</button>
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="fas fa-coins"></i> Сумма пожертвования (₽)</label>
+                        <input type="number" name="amount" id="amount" class="form-control" min="1" required placeholder="Введите сумму">
+                        <small style="color: #b89a9a; display: block; margin-top: 5px;">Минимальная сумма - 1 ₽</small>
+                    </div>
+
+                    <!-- Калькулятор комиссии -->
+                    <div style="background: #fdf4f0; padding: 0.75rem; border-radius: 12px; margin-bottom: 1rem; font-size: 0.85rem;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                            <span>Сумма пожертвования:</span>
+                            <span id="displayAmount">0 ₽</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                            <span>Комиссия ({{ commission_percent }}%):</span>
+                            <span id="displayCommission" style="color: #856404;">0 ₽</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-weight: 600; padding-top: 5px; border-top: 1px solid #e0d0d0;">
+                            <span>Получит автор:</span>
+                            <span id="displayAuthorAmount" style="color: #28a745;">0 ₽</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="fas fa-comment"></i> Слова поддержки</label>
+                        <textarea name="message" class="form-control" rows="3" placeholder="Напишите слова поддержки..."></textarea>
+                    </div>
+
+                    <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+                        <input type="checkbox" name="is_anonymous" id="is_anonymous" style="width: 18px; height: 18px;">
+                        <label for="is_anonymous" style="margin: 0; cursor: pointer; color: #6b5a5a;">
+                            <i class="fas fa-user-secret"></i> Пожертвовать анонимно
+                        </label>
+                    </div>
+
+                    <!-- Баланс пользователя -->
+                    <div style="background: #fdf4f0; padding: 1rem; border-radius: 16px; margin: 1rem 0;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span><i class="fas fa-wallet"></i> Ваш баланс:</span>
+                            <strong style="color: #d4737a;">{{ user.balance.amount|floatformat:2 }} ₽</strong>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" style="width: 100%;" id="submitBtn">
+                        <i class="fas fa-heart"></i> Пожертвовать
+                    </button>
+                </form>
+            {% endif %}
+        </div>
+
+        <!-- Ссылки на подробности -->
+        <div style="margin-top: 0.5rem; text-align: center;">
+            <a href="#" onclick="showCommissionInfo(); return false;" style="color: #d4737a; text-decoration: none; font-size: 0.8rem;">
+                <i class="fas fa-info-circle"></i> Подробнее о комиссии
+            </a>
+            <span style="color: #b89a9a; margin: 0 8px;">•</span>
+            <a href="/user-agreement/" target="_blank" style="color: #d4737a; text-decoration: none; font-size: 0.8rem;">
+                <i class="fas fa-file-contract"></i> Правила
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно с информацией о комиссии -->
+<div id="commissionModal" class="policy-modal" style="display: none;">
+    <div class="policy-modal-content" style="max-width: 500px;">
+        <div class="policy-modal-header">
+            <i class="fas fa-coins"></i>
+            <h2>О комиссии сервиса</h2>
+            <span class="policy-close" onclick="closeCommissionModal()">&times;</span>
+        </div>
+        <div class="policy-modal-body">
+            <h3>Почему мы берем комиссию?</h3>
+            <p>Комиссия в размере <strong>{{ commission_percent }}%</strong> от каждого пожертвования направляется на:</p>
+            <ul>
+                <li>🌐 Поддержание работы сервера и хостинга</li>
+                <li>🛡️ Обеспечение безопасности и защиту данных</li>
+                <li>⚡ Разработку новых функций и улучшение сервиса</li>
+                <li>💬 Поддержку пользователей</li>
+                <li>📱 Развитие мобильных приложений</li>
+                <li>🎨 Улучшение дизайна и юзабилити</li>
+            </ul>
+
+            <h3>Как рассчитывается комиссия?</h3>
+            <p>Пример: при пожертвовании <strong>1000 ₽</strong>:</p>
+            <ul>
+                <li>📊 Комиссия ({{ commission_percent }}%) = <strong id="exampleCommission">30 ₽</strong></li>
+                <li>💝 Получатель получит = <strong id="exampleAuthorAmount">970 ₽</strong></li>
+            </ul>
+            <p style="font-size: 0.9rem; color: #6b5a5a; margin-top: 5px;">
+                <i class="fas fa-calculator"></i> Формула: Сумма × {{ commission_percent }}% = Комиссия<br>
+                1000 × {{ commission_percent }} / 100 = <strong id="formulaCommission">30 ₽</strong>
+            </p>
+
+            <h3>Прозрачность</h3>
+            <p>Мы обязуемся использовать все средства от комиссии исключительно на развитие платформы «Ангел-Хранитель» и повышение качества услуг.</p>
+
+            <h3>Когда комиссия не взимается?</h3>
+            <ul>
+                <li>❌ При прямых переводах между пользователями (не через сборы)</li>
+                <li>❌ При выводе средств</li>
+                <li>❌ При пополнении баланса</li>
+            </ul>
+
+            <div style="margin-top: 1rem; padding: 0.75rem; background: #fdf4f0; border-radius: 12px;">
+                <i class="fas fa-heart" style="color: #d4737a;"></i>
+                <span style="font-size: 0.85rem;">Спасибо, что помогаете нам делать платформу лучше!</span>
+            </div>
+        </div>
+        <div class="policy-modal-footer">
+            <button class="btn btn-primary" onclick="closeCommissionModal()">Понятно</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .quick-amount {
+        transition: all 0.3s;
+        cursor: pointer;
+    }
+
+    .quick-amount:hover {
+        transform: translateY(-2px);
+        background: #d4737a;
+        color: white;
+        border-color: #d4737a;
+    }
+
+    .policy-modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 10001;
+        display: none;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .policy-modal-content {
+        background: white;
+        width: 90%;
+        max-width: 500px;
+        max-height: 80vh;
+        border-radius: 20px;
+        overflow: hidden;
+        animation: modalSlideIn 0.3s ease;
+    }
+
+    @keyframes modalSlideIn {
+        from {
+            transform: translateY(-50px);
+            opacity: 0;
+        }
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
+
+    .policy-modal-header {
+        background: linear-gradient(135deg, #d4737a, #e8a4aa);
+        padding: 1.5rem;
+        color: white;
+        position: relative;
+        text-align: center;
+    }
+
+    .policy-modal-header i {
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .policy-modal-header h2 {
+        margin: 0;
+        font-size: 1.3rem;
+    }
+
+    .policy-close {
+        position: absolute;
+        top: 1rem;
+        right: 1.5rem;
+        font-size: 2rem;
+        cursor: pointer;
+        color: white;
+        transition: transform 0.3s;
+    }
+
+    .policy-close:hover {
+        transform: scale(1.1);
+    }
+
+    .policy-modal-body {
+        padding: 1.5rem;
+        overflow-y: auto;
+        max-height: 60vh;
+        color: #6b5a5a;
+        line-height: 1.6;
+    }
+
+    .policy-modal-body h3 {
+        color: #d4737a;
+        margin: 1.5rem 0 0.5rem 0;
+        font-size: 1.1rem;
+    }
+
+    .policy-modal-body h3:first-child {
+        margin-top: 0;
+    }
+
+    .policy-modal-body ul {
+        margin-left: 1.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .policy-modal-footer {
+        padding: 1rem 1.5rem;
+        background: #fdf4f0;
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    @media (max-width: 768px) {
+        .container {
+            padding: 1rem;
+        }
+
+        .policy-modal-content {
+            width: 95%;
+            max-height: 90vh;
+        }
+    }
+
+    /* Адаптация для десктопа */
+    @media (min-width: 769px) {
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+    }
+
+    /* Обеспечиваем, чтобы правый блок не переполнялся */
+    @media (min-width: 1200px) {
+        .grid-container {
+            gap: 2rem;
+        }
+    }
+
+    /* Для всех input/textarea */
+    input, textarea, select {
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+</style>
+
+<script>
+    // Быстрые суммы
+    document.querySelectorAll('.quick-amount').forEach(button => {
+        button.addEventListener('click', function() {
+            const amount = this.getAttribute('data-amount');
+            document.getElementById('amount').value = amount;
+            updateCommissionCalculator(amount);
+            document.getElementById('amount').style.borderColor = '#d4737a';
+        });
+    });
+
+    // Калькулятор комиссии
+    const commissionPercent = {{ commission_percent }};
+
+    function updateCommissionCalculator(amount) {
+        const donationAmount = parseFloat(amount) || 0;
+        const commissionPercent = {{ commission_percent }};
+        const commission = (donationAmount * commissionPercent) / 100;
+        const authorAmount = donationAmount - commission;
+
+        document.getElementById('displayAmount').textContent = donationAmount.toFixed(2) + ' ₽';
+        document.getElementById('displayCommission').textContent = commission.toFixed(2) + ' ₽';
+        document.getElementById('displayAuthorAmount').textContent = authorAmount.toFixed(2) + ' ₽';
+    }
+
+    const amountInput = document.getElementById('amount');
+    if (amountInput) {
+        amountInput.addEventListener('input', function() {
+            updateCommissionCalculator(this.value);
+        });
+
+        amountInput.addEventListener('focus', function() {
+            this.style.borderColor = '#d4737a';
+            this.style.boxShadow = '0 0 0 3px rgba(212, 115, 122, 0.1)';
+        });
+
+        amountInput.addEventListener('blur', function() {
+            this.style.borderColor = '#f0e0e0';
+            this.style.boxShadow = 'none';
+        });
+    }
+
+    // Валидация суммы перед отправкой
+    const form = document.getElementById('donationForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            const amountInput = document.getElementById('amount');
+            const amount = parseFloat(amountInput.value);
+            const balance = {{ user.balance.amount|floatformat:2 }};
+
+            if (isNaN(amount) || amount < 1) {
+                e.preventDefault();
+                alert('Пожалуйста, введите корректную сумму (минимум 1 ₽)');
+                amountInput.focus();
+                return false;
+            }
+
+            if (amount > balance) {
+                e.preventDefault();
+                alert(`Недостаточно средств. Ваш баланс: ${balance} ₽\nПожалуйста, пополните баланс.`);
+                return false;
+            }
+
+            if (amount > 1000000) {
+                e.preventDefault();
+                alert('Максимальная сумма пожертвования - 1 000 000 ₽');
+                return false;
+            }
+
+            const commission = (amount * commissionPercent) / 100;
+            const confirmMsg = `Подтвердите пожертвование:\n\n` +
+                `Сумма: ${amount} ₽\n` +
+                `Комиссия (${commissionPercent}%): ${commission.toFixed(2)} ₽\n` +
+                `Автор получит: ${(amount - commission).toFixed(2)} ₽\n\n` +
+                `Продолжить?`;
+
+            if (!confirm(confirmMsg)) {
+                e.preventDefault();
+                return false;
+            }
+
+            return true;
+        });
+    }
+
+    // Модальное окно комиссии
+    function showCommissionInfo() {
+        document.getElementById('commissionModal').style.display = 'flex';
+    }
+
+    function closeCommissionModal() {
+        document.getElementById('commissionModal').style.display = 'none';
+    }
+
+    function updateModalExample() {
+        const commissionPercent = {{ commission_percent }};
+        const exampleAmount = 1000;
+        const commission = (exampleAmount * commissionPercent) / 100;
+        const authorAmount = exampleAmount - commission;
+
+        const exampleCommissionElem = document.getElementById('exampleCommission');
+        const exampleAuthorElem = document.getElementById('exampleAuthorAmount');
+        const formulaCommissionElem = document.getElementById('formulaCommission');
+
+        if (exampleCommissionElem) exampleCommissionElem.textContent = commission + ' ₽';
+        if (exampleAuthorElem) exampleAuthorElem.textContent = authorAmount + ' ₽';
+        if (formulaCommissionElem) formulaCommissionElem.textContent = commission + ' ₽';
+    }
+
+    // Вызываем при загрузке
+    document.addEventListener('DOMContentLoaded', function() {
+        updateModalExample();
+    });
+
+    function showCommissionInfo() {
+        updateModalExample();
+        document.getElementById('commissionModal').style.display = 'flex';
+    }
+
+    // Закрытие модального окна при клике вне его
+    window.onclick = function(event) {
+        const modal = document.getElementById('commissionModal');
+        if (event.target === modal) {
+            modal.style.display = 'none';
+        }
+    }
+
+    // Закрытие по Escape
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            closeCommissionModal();
+        }
+    });
+
+    // Инициализация калькулятора
+    if (amountInput && amountInput.value) {
+        updateCommissionCalculator(amountInput.value);
+    } else if (amountInput) {
+        updateCommissionCalculator(0);
+    }
+</script>
+{% endblock %}

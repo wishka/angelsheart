@@ -1,0 +1,160 @@
+{% extends 'base.html' %}
+
+{% block title %}Мои согласия | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1 style="color: #d4737a; margin-bottom: 1rem;">
+        <i class="fas fa-file-signature"></i> Мои согласия
+    </h1>
+    <p style="color: #6b5a5a; margin-bottom: 2rem;">
+        Здесь вы можете просмотреть и управлять выданными вами согласиями на обработку данных
+    </p>
+    
+    <!-- Активные согласия -->
+    <h3 style="color: #d4737a; margin-bottom: 1rem;">
+        <i class="fas fa-check-circle"></i> Активные согласия
+    </h3>
+    
+    <div style="overflow-x: auto;">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Тип согласия</th>
+                    <th>Версия</th>
+                    <th>Дата подписания</th>
+                    <th>IP-адрес</th>
+                    <th>Действие</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for consent in consents %}
+                <tr>
+                    <td>{{ consent.get_consent_type_display }}</td>
+                    <td>Версия {{ consent.version }}</td>
+                    <td>{{ consent.agreed_at|date:"d.m.Y H:i" }}</td>
+                    <td>{{ consent.ip_address|default:"—" }}</td>
+                    <td>
+                        <button onclick="showRevokeModal('{{ consent.consent_type }}', '{{ consent.get_consent_type_display }}')" 
+                                class="btn btn-secondary" style="padding: 5px 15px;">
+                            <i class="fas fa-times"></i> Отозвать
+                        </button>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" style="text-align: center; color: #b89a9a;">
+                        Нет активных согласий
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- История изменений -->
+    <h3 style="color: #d4737a; margin: 2rem 0 1rem;">
+        <i class="fas fa-history"></i> История изменений
+    </h3>
+    
+    <div style="overflow-x: auto;">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Действие</th>
+                    <th>Тип согласия</th>
+                    <th>Версия</th>
+                    <th>Дата</th>
+                    <th>IP-адрес</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in consent_logs %}
+                <tr>
+                    <td>
+                        {% if log.action == 'accept' %}
+                            <span style="color: #28a745;"><i class="fas fa-check"></i> Принято</span>
+                        {% else %}
+                            <span style="color: #dc3545;"><i class="fas fa-times"></i> Отозвано</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ log.get_consent_type_display }}</td>
+                    <td>Версия {{ log.version }}</td>
+                    <td>{{ log.created_at|date:"d.m.Y H:i" }}</td>
+                    <td>{{ log.ip_address|default:"—" }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" style="text-align: center; color: #b89a9a;">
+                        История изменений пуста
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <div style="margin-top: 2rem; padding: 1rem; background: #fdf4f0; border-radius: 16px;">
+        <p style="margin: 0; color: #6b5a5a; font-size: 0.9rem;">
+            <i class="fas fa-info-circle"></i>
+            Отзыв согласия может ограничить функциональность сервиса. Например, отзыв согласия на cookies может повлиять на работу аутентификации.
+        </p>
+    </div>
+</div>
+
+<!-- Модальное окно для отзыва согласия -->
+<div id="revokeModal" class="policy-modal" style="display: none;">
+    <div class="policy-modal-content" style="max-width: 500px;">
+        <div class="policy-modal-header">
+            <i class="fas fa-exclamation-triangle"></i>
+            <h2>Отзыв согласия</h2>
+            <span class="policy-close" onclick="closeRevokeModal()">&times;</span>
+        </div>
+        <div class="policy-modal-body">
+            <p>Вы действительно хотите отозвать согласие на <strong id="consentTypeName"></strong>?</p>
+            <p style="color: #dc3545; margin-top: 1rem;">
+                <i class="fas fa-warning"></i>
+                Отзыв согласия может привести к ограничению работы сервиса.
+            </p>
+            
+            <form method="post" id="revokeForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="revoke">
+                <input type="hidden" name="consent_type" id="consentType">
+                
+                <div class="form-group">
+                    <label>Причина отзыва (необязательно)</label>
+                    <textarea name="reason" class="form-control" rows="3" placeholder="Укажите причину отзыва согласия..."></textarea>
+                </div>
+            </form>
+        </div>
+        <div class="policy-modal-footer">
+            <button class="btn btn-secondary" onclick="closeRevokeModal()">Отмена</button>
+            <button class="btn btn-primary" onclick="submitRevoke()">Отозвать согласие</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    function showRevokeModal(consentType, consentTypeName) {
+        document.getElementById('consentType').value = consentType;
+        document.getElementById('consentTypeName').textContent = consentTypeName;
+        document.getElementById('revokeModal').style.display = 'flex';
+    }
+    
+    function closeRevokeModal() {
+        document.getElementById('revokeModal').style.display = 'none';
+    }
+    
+    function submitRevoke() {
+        document.getElementById('revokeForm').submit();
+    }
+    
+    // Закрытие по Escape
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            closeRevokeModal();
+        }
+    });
+</script>
+{% endblock %}

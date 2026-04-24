@@ -4,46 +4,402 @@
 
 {% block content %}
 <div style="min-height: 80vh; display: flex; align-items: center; justify-content: center;">
-    <div class="card" style="max-width: 500px; width: 100%;">
+    <div class="card" style="max-width: 550px; width: 100%;">
         <div style="text-align: center; margin-bottom: 2rem;">
             <i class="fas fa-dove" style="font-size: 3rem; color: #e8a4aa;"></i>
             <h1 style="color: #d4737a; margin-top: 1rem;">Добро пожаловать!</h1>
             <p style="color: #6b5a5a;">Присоединяйтесь к сообществу добрых сердец</p>
         </div>
-        
-        <form method="post">
+
+        <form method="post" id="registerForm">
             {% csrf_token %}
-            
+
             <div class="form-group">
                 <label><i class="fas fa-user"></i> Имя пользователя</label>
                 {{ form.username }}
+                {% if form.username.errors %}
+                    <small style="color: #dc3545;">{{ form.username.errors.0 }}</small>
+                {% endif %}
                 <small style="color: #b89a9a;">Только буквы, цифры и @/./+/-/_</small>
             </div>
-            
+
             <div class="form-group">
                 <label><i class="fas fa-envelope"></i> Email</label>
                 {{ form.email }}
+                {% if form.email.errors %}
+                    <small style="color: #dc3545;">{{ form.email.errors.0 }}</small>
+                {% endif %}
             </div>
-            
+
             <div class="form-group">
                 <label><i class="fas fa-lock"></i> Пароль</label>
                 {{ form.password1 }}
+                {% if form.password1.errors %}
+                    <small style="color: #dc3545;">{{ form.password1.errors.0 }}</small>
+                {% endif %}
                 <small style="color: #b89a9a;">Не менее 8 символов, не слишком простой</small>
             </div>
-            
+
             <div class="form-group">
                 <label><i class="fas fa-lock"></i> Подтверждение пароля</label>
                 {{ form.password2 }}
+                {% if form.password2.errors %}
+                    <small style="color: #dc3545;">{{ form.password2.errors.0 }}</small>
+                {% endif %}
             </div>
-            
-            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">
+
+            <!-- Обязательные соглашения -->
+            <div class="form-group" style="background: #fdf4f0; padding: 1rem; border-radius: 16px; margin: 1rem 0;">
+                <div style="margin-bottom: 1rem;">
+                    <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
+                        <input type="checkbox" name="agree_privacy" id="agree_privacy" required style="margin-top: 3px;">
+                        <span>Я принимаю <a href="#" onclick="showPrivacyModal(); return false;" style="color: #d4737a;">Политику конфиденциальности</a></span>
+                    </label>
+                </div>
+
+                <div style="margin-bottom: 1rem;">
+                    <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
+                        <input type="checkbox" name="agree_terms" id="agree_terms" required style="margin-top: 3px;">
+                        <span>Я принимаю <a href="#" onclick="showTermsModal(); return false;" style="color: #d4737a;">Пользовательское соглашение</a></span>
+                    </label>
+                </div>
+
+                <div style="margin-bottom: 0.5rem;">
+                    <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
+                        <input type="checkbox" name="agree_cookies" id="agree_cookies" required style="margin-top: 3px;">
+                        <span>Я принимаю <a href="#" onclick="showCookiesModal(); return false;" style="color: #d4737a;">Политику использования cookies</a></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-group" style="background: #fff8e1; padding: 1rem; border-radius: 16px; font-size: 0.85rem;">
+                <p style="color: #856404; margin: 0;">
+                    <i class="fas fa-info-circle"></i>
+                    Регистрируясь, вы подтверждаете, что вам есть 18 лет, и вы соглашаетесь со всеми условиями.
+                </p>
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;" id="submitBtn">
                 <i class="fas fa-heart"></i> Создать аккаунт
             </button>
         </form>
-        
+
         <div style="text-align: center; margin-top: 1.5rem;">
             <p style="color: #6b5a5a;">Уже есть аккаунт? <a href="{% url 'main:login' %}" style="color: #d4737a; text-decoration: none;">Войти</a></p>
         </div>
     </div>
 </div>
+
+<!-- Модальное окно - Политика конфиденциальности -->
+<div id="privacyModal" class="policy-modal" style="display: none;">
+    <div class="policy-modal-content">
+        <div class="policy-modal-header">
+            <i class="fas fa-shield-alt"></i>
+            <h2>Политика конфиденциальности</h2>
+            <span class="policy-close" onclick="closeModal('privacyModal')">&times;</span>
+        </div>
+        <div class="policy-modal-body">
+            <h3>1. Общие положения</h3>
+            <p>Настоящая политика обработки персональных данных составлена в соответствии с требованиями Федерального закона от 27.07.2006 № 152-ФЗ «О персональных данных» и определяет порядок обработки персональных данных и меры по обеспечению безопасности персональных данных, предпринимаемые сервисом «Ангел-Хранитель».</p>
+
+            <h3>2. Какие данные мы собираем</h3>
+            <p>При регистрации на сайте мы собираем следующую информацию:</p>
+            <ul>
+                <li>Имя пользователя (username)</li>
+                <li>Адрес электронной почты (email)</li>
+                <li>Пароль (в зашифрованном виде)</li>
+                <li>Историю транзакций</li>
+                <li>IP-адрес и данные о браузере</li>
+            </ul>
+
+            <h3>3. Как мы используем ваши данные</h3>
+            <p>Ваши данные используются для:</p>
+            <ul>
+                <li>Обеспечения функционирования сервиса денежных переводов</li>
+                <li>Ведения истории транзакций</li>
+                <li>Связи с вами по вопросам поддержки</li>
+                <li>Улучшения качества обслуживания</li>
+            </ul>
+
+            <h3>4. Защита данных</h3>
+            <p>Мы применяем современные методы шифрования и защиты данных, включая SSL-сертификаты, шифрование паролей, защиту от CSRF-атак и SQL-инъекций.</p>
+
+            <h3>5. Ваши права</h3>
+            <p>Вы имеете право:</p>
+            <ul>
+                <li>Запросить информацию о ваших персональных данных</li>
+                <li>Требовать исправления неточных данных</li>
+                <li>Требовать удаления ваших данных</li>
+                <li>Отозвать согласие на обработку данных</li>
+            </ul>
+        </div>
+        <div class="policy-modal-footer">
+            <button class="btn btn-primary" onclick="closeModal('privacyModal')">Закрыть</button>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно - Пользовательское соглашение -->
+<div id="termsModal" class="policy-modal" style="display: none;">
+    <div class="policy-modal-content">
+        <div class="policy-modal-header">
+            <i class="fas fa-file-contract"></i>
+            <h2>Пользовательское соглашение</h2>
+            <span class="policy-close" onclick="closeModal('termsModal')">&times;</span>
+        </div>
+        <div class="policy-modal-body">
+            <h3>1. Термины и определения</h3>
+            <p>1.1. «Сервис» — онлайн-платформа «Ангел-Хранитель», предоставляющая возможность совершения денежных переводов между пользователями.</p>
+            <p>1.2. «Пользователь» — физическое лицо, зарегистрированное в Сервисе и принявшее условия настоящего Соглашения.</p>
+            <p>1.3. «Перевод» — добровольное перечисление денежных средств от одного Пользователя другому.</p>
+
+            <h3>2. Предмет соглашения</h3>
+            <p>2.1. Сервис предоставляет Пользователю возможность совершать денежные переводы другим Пользователям.</p>
+            <p>2.2. Сервис не является финансовым посредником и не несет ответственности за законность операций Пользователей.</p>
+
+            <h3>3. Права и обязанности пользователя</h3>
+            <p>3.1. Пользователь обязуется:</p>
+            <ul>
+                <li>Предоставлять достоверную информацию при регистрации</li>
+                <li>Не использовать Сервис для незаконных операций</li>
+                <li>Не осуществлять переводы с целью отмывания денег</li>
+                <li>Не нарушать законодательство РФ</li>
+            </ul>
+
+            <h3>4. Запрещенные операции</h3>
+            <p>Запрещается использование Сервиса для:</p>
+            <ul>
+                <li>Переводов, связанных с незаконной деятельностью</li>
+                <li>Финансирования терроризма и экстремизма</li>
+                <li>Азартных игр и ставок</li>
+                <li>Обналичивания денежных средств</li>
+            </ul>
+        </div>
+        <div class="policy-modal-footer">
+            <button class="btn btn-primary" onclick="closeModal('termsModal')">Закрыть</button>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно - Политика cookies -->
+<div id="cookiesModal" class="policy-modal" style="display: none;">
+    <div class="policy-modal-content">
+        <div class="policy-modal-header">
+            <i class="fas fa-cookie-bite"></i>
+            <h2>Политика использования Cookies</h2>
+            <span class="policy-close" onclick="closeModal('cookiesModal')">&times;</span>
+        </div>
+        <div class="policy-modal-body">
+            <h3>1. Что такое cookies?</h3>
+            <p>Cookies — это небольшие текстовые файлы, которые сохраняются на вашем устройстве при посещении веб-сайтов.</p>
+
+            <h3>2. Какие cookies мы используем</h3>
+            <ul>
+                <li><strong>Необходимые cookies</strong> - для аутентификации и безопасности</li>
+                <li><strong>Функциональные cookies</strong> - для запоминания настроек</li>
+                <li><strong>Аналитические cookies</strong> - для анализа трафика</li>
+            </ul>
+
+            <h3>3. Срок хранения cookies</h3>
+            <ul>
+                <li>Сессионные cookies: удаляются после закрытия браузера</li>
+                <li>Постоянные cookies: хранятся до 30 дней</li>
+            </ul>
+
+            <h3>4. Управление cookies</h3>
+            <p>Вы можете управлять cookies через настройки вашего браузера.</p>
+        </div>
+        <div class="policy-modal-footer">
+            <button class="btn btn-primary" onclick="closeModal('cookiesModal')">Закрыть</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Стили для модальных окон политик */
+    .policy-modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 10001;
+        display: none;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .policy-modal-content {
+        background: white;
+        width: 90%;
+        max-width: 700px;
+        max-height: 80vh;
+        border-radius: 20px;
+        overflow: hidden;
+        animation: modalSlideIn 0.3s ease;
+    }
+
+    @keyframes modalSlideIn {
+        from {
+            transform: translateY(-50px);
+            opacity: 0;
+        }
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
+
+    .policy-modal-header {
+        background: linear-gradient(135deg, #d4737a, #e8a4aa);
+        padding: 1.5rem;
+        color: white;
+        position: relative;
+        text-align: center;
+    }
+
+    .policy-modal-header i {
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .policy-modal-header h2 {
+        margin: 0;
+        font-size: 1.3rem;
+    }
+
+    .policy-close {
+        position: absolute;
+        top: 1rem;
+        right: 1.5rem;
+        font-size: 2rem;
+        cursor: pointer;
+        color: white;
+        transition: transform 0.3s;
+    }
+
+    .policy-close:hover {
+        transform: scale(1.1);
+    }
+
+    .policy-modal-body {
+        padding: 1.5rem;
+        overflow-y: auto;
+        max-height: 60vh;
+        color: #6b5a5a;
+        line-height: 1.6;
+    }
+
+    .policy-modal-body h3 {
+        color: #d4737a;
+        margin: 1.5rem 0 0.5rem 0;
+        font-size: 1.1rem;
+    }
+
+    .policy-modal-body h3:first-child {
+        margin-top: 0;
+    }
+
+    .policy-modal-body p {
+        margin-bottom: 0.8rem;
+    }
+
+    .policy-modal-body ul {
+        margin-left: 1.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .policy-modal-body li {
+        margin-bottom: 0.3rem;
+    }
+
+    .policy-modal-footer {
+        padding: 1rem 1.5rem;
+        background: #fdf4f0;
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    @media (max-width: 768px) {
+        .policy-modal-content {
+            width: 95%;
+            max-height: 90vh;
+        }
+
+        .policy-modal-body {
+            max-height: 65vh;
+        }
+    }
+</style>
+
+<script>
+    // Функции для открытия модальных окон
+    function showPrivacyModal() {
+        document.getElementById('privacyModal').style.display = 'flex';
+    }
+
+    function showTermsModal() {
+        document.getElementById('termsModal').style.display = 'flex';
+    }
+
+    function showCookiesModal() {
+        document.getElementById('cookiesModal').style.display = 'flex';
+    }
+
+    function closeModal(modalId) {
+        document.getElementById(modalId).style.display = 'none';
+    }
+
+    // Закрытие модального окна при клике вне его
+    window.onclick = function(event) {
+        const modals = ['privacyModal', 'termsModal', 'cookiesModal'];
+        modals.forEach(function(modalId) {
+            const modal = document.getElementById(modalId);
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+        });
+    }
+
+    // Проверка перед отправкой формы
+    document.getElementById('registerForm').addEventListener('submit', function(e) {
+        const agreePrivacy = document.getElementById('agree_privacy').checked;
+        const agreeTerms = document.getElementById('agree_terms').checked;
+        const agreeCookies = document.getElementById('agree_cookies').checked;
+
+        if (!agreePrivacy) {
+            e.preventDefault();
+            alert('Пожалуйста, примите Политику конфиденциальности');
+            return false;
+        }
+
+        if (!agreeTerms) {
+            e.preventDefault();
+            alert('Пожалуйста, примите Пользовательское соглашение');
+            return false;
+        }
+
+        if (!agreeCookies) {
+            e.preventDefault();
+            alert('Пожалуйста, примите Политику использования cookies');
+            return false;
+        }
+
+        return true;
+    });
+
+    // Закрытие по Escape
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            const modals = ['privacyModal', 'termsModal', 'cookiesModal'];
+            modals.forEach(function(modalId) {
+                const modal = document.getElementById(modalId);
+                if (modal && modal.style.display === 'flex') {
+                    modal.style.display = 'none';
+                }
+            });
+        }
+    });
+</script>
 {% endblock %}
