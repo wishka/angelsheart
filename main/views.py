@@ -104,7 +104,9 @@ def login_page(request):
     if request.method == 'POST':
         username = request.POST.get('username')
         password = request.POST.get('password')
-        remember_me = request.POST.get('remember_me')  # Получаем значение чекбокса
+        remember_me = request.POST.get('remember_me')
+        
+        print(f"Login attempt: {username}, remember_me={remember_me}")  # Отладка
         
         user = authenticate(request, username=username, password=password)
         
@@ -112,17 +114,20 @@ def login_page(request):
             login(request, user)
             
             # Настройка "Запомнить меня"
-            if remember_me == 'on':  # Чекбокс передает 'on' когда отмечен
-                # Если выбран "Запомнить меня" - сессия будет жить 30 дней
-                request.session.set_expiry(30 * 24 * 60 * 60)  # 30 дней в секундах
+            if remember_me == 'on':
+                # 30 дней в секундах
+                request.session.set_expiry(30 * 24 * 60 * 60)
+                print(f"Session expiry set to 30 days for {username}")
             else:
-                # Если не выбран - сессия закроется при закрытии браузера
+                # Сессия закроется при закрытии браузера
                 request.session.set_expiry(0)
+                print(f"Session expiry set to browser close for {username}")
             
             messages.success(request, f'С возвращением, {user.username}!')
             return redirect('main:dashboard')
         else:
             messages.error(request, 'Неверное имя пользователя или пароль')
+            print(f"Failed login attempt for {username}")
     
     return render(request, 'main/login.html')
 

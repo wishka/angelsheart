@@ -3,8 +3,8 @@
 {% block title %}{{ fundraise.title }} | Ангел-Хранитель{% endblock %}
 
 {% block content %}
-<div style="display: grid; grid-template-columns: 1fr 400px; gap: 2rem;">
-    <!-- Левая колонка - информация о сборе -->
+<div style="display: grid; grid-template-columns: 1fr 400px; gap: 2rem; align-items: start;">
+    <!-- ЛЕВАЯ КОЛОНКА - информация о сборе (не прилипает) -->
     <div>
         <div class="card">
             <!-- Категория и статус -->
@@ -67,7 +67,8 @@
                     <span style="font-weight: 600; color: #d4737a;">{{ progress_percent }}%</span>
                 </div>
                 <div style="margin-top: 15px; color: #28a745; font-weight: 600;">
-                    <i class="fas fa-users"></i> {{ fundraise.donors_count }} {% if fundraise.donors_count == 1 %}человек{% elif fundraise.donors_count <= 4 %}человека{% else %}человек{% endif %} уже помогли
+                    <i class="fas fa-users"></i> {{ fundraise.donors_count }}
+                    {% if fundraise.donors_count == 1 %}человек{% elif fundraise.donors_count <= 4 %}человека{% else %}человек{% endif %} уже помогли
                 </div>
                 {% if fundraise.total_commission > 0 %}
                 <div style="margin-top: 10px; color: #856404; font-size: 0.85rem;">
@@ -132,10 +133,11 @@
         </div>
     </div>
 
-    <!-- Правая колонка - форма пожертвования/управление -->
-    <!-- Правая колонка - форма пожертвования/управление -->
-    <div>
-        <div class="card" style="position: sticky; top: 100px;">
+    <!-- ПРАВАЯ КОЛОНКА - форма и управление (ВСЕ прилипает вместе) -->
+    <div style="position: sticky; top: 100px; align-self: start;">
+
+        <!-- Основная карточка с формой/управлением -->
+        <div class="card">
             <h2 style="color: #d4737a; text-align: center; margin-bottom: 1.5rem;">
                 {% if is_author %}
                     <i class="fas fa-cog"></i> Управление сбором
@@ -145,7 +147,7 @@
             </h2>
 
             {% if is_author %}
-                <!-- Блок для автора сбора -->
+                <!-- БЛОК ДЛЯ АВТОРА СБОРА -->
                 <div style="background: #fff3cd; padding: 1rem; border-radius: 16px; margin-bottom: 1rem; text-align: center;">
                     <i class="fas fa-info-circle" style="color: #856404; font-size: 2rem; margin-bottom: 0.5rem; display: inline-block;"></i>
                     <p style="color: #856404; margin: 0;">
@@ -154,7 +156,6 @@
                     </p>
                 </div>
 
-                <!-- Статистика для автора -->
                 <div style="background: #fdf4f0; padding: 1rem; border-radius: 16px; margin-bottom: 1rem;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
                         <span>Собрано (всего):</span>
@@ -169,12 +170,11 @@
                         <strong style="color: #28a745;">{{ fundraise.current_amount|floatformat:0 }} ₽</strong>
                     </div>
                     <div style="display: flex; justify-content: space-between;">
-                        <span>Количество донатеров:</span>
+                        <span>Количество сердец:</span>
                         <strong>{{ fundraise.donors_count }}</strong>
                     </div>
                 </div>
 
-                <!-- Кнопки управления для автора -->
                 <div style="display: flex; gap: 1rem; flex-direction: column;">
                     <a href="{% url 'main:my_fundraises' %}" class="btn btn-secondary" style="text-align: center;">
                         <i class="fas fa-list"></i> Мои сборы
@@ -192,7 +192,7 @@
                 </div>
 
             {% elif fundraise.status != 'active' %}
-                <!-- Сбор завершен или отменен -->
+                <!-- СБОР ЗАВЕРШЕН ИЛИ ОТМЕНЕН -->
                 <div style="background: #d4edda; padding: 1rem; border-radius: 16px; margin-bottom: 1rem; text-align: center;">
                     <i class="fas fa-check-circle" style="color: #155724; font-size: 2rem; margin-bottom: 0.5rem; display: inline-block;"></i>
                     <p style="color: #155724; margin: 0;">
@@ -209,7 +209,7 @@
                 {% endif %}
 
             {% else %}
-                <!-- Форма пожертвования для обычных пользователей -->
+                <!-- ФОРМА ПОЖЕРТВОВАНИЯ ДЛЯ ОБЫЧНЫХ ПОЛЬЗОВАТЕЛЕЙ -->
                 <form method="post" id="donationForm">
                     {% csrf_token %}
 
@@ -269,8 +269,17 @@
             {% endif %}
         </div>
 
-        <!-- Ссылки на подробности -->
-        <div style="margin-top: 0.5rem; text-align: center;">
+        <!-- ИНФОРМАЦИЯ О КОМИССИИ (статичный блок, но внутри sticky-контейнера) -->
+        <div style="margin-top: 1rem; text-align: center; background: #fdf4f0; border-radius: 16px; padding: 0.75rem;">
+            <div style="font-size: 0.8rem; color: #6b5a5a; display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap;">
+                <span><i class="fas fa-percent" style="color: #d4737a;"></i> Комиссия: {{ commission_percent }}%</span>
+                <span><i class="fas fa-chart-line" style="color: #d4737a;"></i> На развитие</span>
+                <span><i class="fas fa-clock" style="color: #d4737a;"></i> Мгновенно</span>
+            </div>
+        </div>
+
+        <!-- ССЫЛКИ НА ПОДРОБНОСТИ (статичный блок, но внутри sticky-контейнера) -->
+        <div style="margin-top: 0.5rem; text-align: center; padding: 0.5rem; background: rgba(253, 244, 240, 0.5); border-radius: 12px;">
             <a href="#" onclick="showCommissionInfo(); return false;" style="color: #d4737a; text-decoration: none; font-size: 0.8rem;">
                 <i class="fas fa-info-circle"></i> Подробнее о комиссии
             </a>
@@ -282,7 +291,7 @@
     </div>
 </div>
 
-<!-- Модальное окно с информацией о комиссии -->
+<!-- МОДАЛЬНОЕ ОКНО С ИНФОРМАЦИЕЙ О КОМИССИИ -->
 <div id="commissionModal" class="policy-modal" style="display: none;">
     <div class="policy-modal-content" style="max-width: 500px;">
         <div class="policy-modal-header">
@@ -339,7 +348,6 @@
         transition: all 0.3s;
         cursor: pointer;
     }
-
     .quick-amount:hover {
         transform: translateY(-2px);
         background: #d4737a;
@@ -359,7 +367,6 @@
         justify-content: center;
         align-items: center;
     }
-
     .policy-modal-content {
         background: white;
         width: 90%;
@@ -369,7 +376,6 @@
         overflow: hidden;
         animation: modalSlideIn 0.3s ease;
     }
-
     @keyframes modalSlideIn {
         from {
             transform: translateY(-50px);
@@ -380,7 +386,6 @@
             opacity: 1;
         }
     }
-
     .policy-modal-header {
         background: linear-gradient(135deg, #d4737a, #e8a4aa);
         padding: 1.5rem;
@@ -388,17 +393,14 @@
         position: relative;
         text-align: center;
     }
-
     .policy-modal-header i {
         font-size: 2rem;
         margin-bottom: 0.5rem;
     }
-
     .policy-modal-header h2 {
         margin: 0;
         font-size: 1.3rem;
     }
-
     .policy-close {
         position: absolute;
         top: 1rem;
@@ -408,11 +410,9 @@
         color: white;
         transition: transform 0.3s;
     }
-
     .policy-close:hover {
         transform: scale(1.1);
     }
-
     .policy-modal-body {
         padding: 1.5rem;
         overflow-y: auto;
@@ -420,22 +420,18 @@
         color: #6b5a5a;
         line-height: 1.6;
     }
-
     .policy-modal-body h3 {
         color: #d4737a;
         margin: 1.5rem 0 0.5rem 0;
         font-size: 1.1rem;
     }
-
     .policy-modal-body h3:first-child {
         margin-top: 0;
     }
-
     .policy-modal-body ul {
         margin-left: 1.5rem;
         margin-bottom: 1rem;
     }
-
     .policy-modal-footer {
         padding: 1rem 1.5rem;
         background: #fdf4f0;
@@ -447,29 +443,12 @@
         .container {
             padding: 1rem;
         }
-
         .policy-modal-content {
             width: 95%;
             max-height: 90vh;
         }
     }
 
-    /* Адаптация для десктопа */
-    @media (min-width: 769px) {
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-    }
-
-    /* Обеспечиваем, чтобы правый блок не переполнялся */
-    @media (min-width: 1200px) {
-        .grid-container {
-            gap: 2rem;
-        }
-    }
-
-    /* Для всех input/textarea */
     input, textarea, select {
         max-width: 100%;
         box-sizing: border-box;
@@ -477,101 +456,23 @@
 </style>
 
 <script>
-    // Быстрые суммы
-    document.querySelectorAll('.quick-amount').forEach(button => {
-        button.addEventListener('click', function() {
-            const amount = this.getAttribute('data-amount');
-            document.getElementById('amount').value = amount;
-            updateCommissionCalculator(amount);
-            document.getElementById('amount').style.borderColor = '#d4737a';
-        });
-    });
-
-    // Калькулятор комиссии
     const commissionPercent = {{ commission_percent }};
 
     function updateCommissionCalculator(amount) {
         const donationAmount = parseFloat(amount) || 0;
-        const commissionPercent = {{ commission_percent }};
         const commission = (donationAmount * commissionPercent) / 100;
         const authorAmount = donationAmount - commission;
 
-        document.getElementById('displayAmount').textContent = donationAmount.toFixed(2) + ' ₽';
-        document.getElementById('displayCommission').textContent = commission.toFixed(2) + ' ₽';
-        document.getElementById('displayAuthorAmount').textContent = authorAmount.toFixed(2) + ' ₽';
-    }
+        const displayAmount = document.getElementById('displayAmount');
+        const displayCommission = document.getElementById('displayCommission');
+        const displayAuthorAmount = document.getElementById('displayAuthorAmount');
 
-    const amountInput = document.getElementById('amount');
-    if (amountInput) {
-        amountInput.addEventListener('input', function() {
-            updateCommissionCalculator(this.value);
-        });
-
-        amountInput.addEventListener('focus', function() {
-            this.style.borderColor = '#d4737a';
-            this.style.boxShadow = '0 0 0 3px rgba(212, 115, 122, 0.1)';
-        });
-
-        amountInput.addEventListener('blur', function() {
-            this.style.borderColor = '#f0e0e0';
-            this.style.boxShadow = 'none';
-        });
-    }
-
-    // Валидация суммы перед отправкой
-    const form = document.getElementById('donationForm');
-    if (form) {
-        form.addEventListener('submit', function(e) {
-            const amountInput = document.getElementById('amount');
-            const amount = parseFloat(amountInput.value);
-            const balance = {{ user.balance.amount|floatformat:2 }};
-
-            if (isNaN(amount) || amount < 1) {
-                e.preventDefault();
-                alert('Пожалуйста, введите корректную сумму (минимум 1 ₽)');
-                amountInput.focus();
-                return false;
-            }
-
-            if (amount > balance) {
-                e.preventDefault();
-                alert(`Недостаточно средств. Ваш баланс: ${balance} ₽\nПожалуйста, пополните баланс.`);
-                return false;
-            }
-
-            if (amount > 1000000) {
-                e.preventDefault();
-                alert('Максимальная сумма пожертвования - 1 000 000 ₽');
-                return false;
-            }
-
-            const commission = (amount * commissionPercent) / 100;
-            const confirmMsg = `Подтвердите пожертвование:\n\n` +
-                `Сумма: ${amount} ₽\n` +
-                `Комиссия (${commissionPercent}%): ${commission.toFixed(2)} ₽\n` +
-                `Автор получит: ${(amount - commission).toFixed(2)} ₽\n\n` +
-                `Продолжить?`;
-
-            if (!confirm(confirmMsg)) {
-                e.preventDefault();
-                return false;
-            }
-
-            return true;
-        });
-    }
-
-    // Модальное окно комиссии
-    function showCommissionInfo() {
-        document.getElementById('commissionModal').style.display = 'flex';
-    }
-
-    function closeCommissionModal() {
-        document.getElementById('commissionModal').style.display = 'none';
+        if (displayAmount) displayAmount.textContent = donationAmount.toFixed(2) + ' ₽';
+        if (displayCommission) displayCommission.textContent = commission.toFixed(2) + ' ₽';
+        if (displayAuthorAmount) displayAuthorAmount.textContent = authorAmount.toFixed(2) + ' ₽';
     }
 
     function updateModalExample() {
-        const commissionPercent = {{ commission_percent }};
         const exampleAmount = 1000;
         const commission = (exampleAmount * commissionPercent) / 100;
         const authorAmount = exampleAmount - commission;
@@ -585,17 +486,82 @@
         if (formulaCommissionElem) formulaCommissionElem.textContent = commission + ' ₽';
     }
 
-    // Вызываем при загрузке
-    document.addEventListener('DOMContentLoaded', function() {
-        updateModalExample();
-    });
-
     function showCommissionInfo() {
         updateModalExample();
-        document.getElementById('commissionModal').style.display = 'flex';
+        const modal = document.getElementById('commissionModal');
+        if (modal) modal.style.display = 'flex';
     }
 
-    // Закрытие модального окна при клике вне его
+    function closeCommissionModal() {
+        const modal = document.getElementById('commissionModal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        updateModalExample();
+
+        const amountInput = document.getElementById('amount');
+        if (amountInput) {
+            updateCommissionCalculator(amountInput.value || 0);
+            amountInput.addEventListener('input', function() {
+                updateCommissionCalculator(this.value);
+            });
+        }
+
+        document.querySelectorAll('.quick-amount').forEach(button => {
+            button.addEventListener('click', function() {
+                const amount = this.getAttribute('data-amount');
+                const amountInput = document.getElementById('amount');
+                if (amountInput) {
+                    amountInput.value = amount;
+                    updateCommissionCalculator(amount);
+                    amountInput.style.borderColor = '#d4737a';
+                }
+            });
+        });
+
+        const form = document.getElementById('donationForm');
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                const amountInput = document.getElementById('amount');
+                const amount = parseFloat(amountInput?.value || 0);
+                const balance = parseFloat({{ user.balance.amount|floatformat:2 }});
+
+                if (isNaN(amount) || amount < 1) {
+                    e.preventDefault();
+                    alert('Пожалуйста, введите корректную сумму (минимум 1 ₽)');
+                    amountInput?.focus();
+                    return false;
+                }
+
+                if (amount > balance) {
+                    e.preventDefault();
+                    alert(`Недостаточно средств. Ваш баланс: ${balance} ₽\nПожалуйста, пополните баланс.`);
+                    return false;
+                }
+
+                if (amount > 1000000) {
+                    e.preventDefault();
+                    alert('Максимальная сумма пожертвования - 1 000 000 ₽');
+                    return false;
+                }
+
+                const commission = (amount * commissionPercent) / 100;
+                const confirmMsg = `Подтвердите пожертвование:\n\n` +
+                    `Сумма: ${amount} ₽\n` +
+                    `Комиссия (${commissionPercent}%): ${commission.toFixed(2)} ₽\n` +
+                    `Автор получит: ${(amount - commission).toFixed(2)} ₽\n\n` +
+                    `Продолжить?`;
+
+                if (!confirm(confirmMsg)) {
+                    e.preventDefault();
+                    return false;
+                }
+                return true;
+            });
+        }
+    });
+
     window.onclick = function(event) {
         const modal = document.getElementById('commissionModal');
         if (event.target === modal) {
@@ -603,18 +569,10 @@
         }
     }
 
-    // Закрытие по Escape
     document.addEventListener('keydown', function(event) {
         if (event.key === 'Escape') {
             closeCommissionModal();
         }
     });
-
-    // Инициализация калькулятора
-    if (amountInput && amountInput.value) {
-        updateCommissionCalculator(amountInput.value);
-    } else if (amountInput) {
-        updateCommissionCalculator(0);
-    }
 </script>
 {% endblock %}

@@ -109,12 +109,16 @@ class DonationSerializer(serializers.ModelSerializer):
 
 
 class DonationCreateSerializer(serializers.Serializer):
-    amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('1.00'))
+    amount = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=Decimal('1.00')
+    )
     message = serializers.CharField(required=False, allow_blank=True)
     is_anonymous = serializers.BooleanField(default=False)
     
     def validate_amount(self, value):
-        if value > 1000000:
+        if value > Decimal('1000000.00'):
             raise serializers.ValidationError("Максимальная сумма - 1 000 000 ₽")
         return value
 
@@ -133,7 +137,11 @@ class TransactionSerializer(serializers.ModelSerializer):
 
 class TransferSerializer(serializers.Serializer):
     receiver_username = serializers.CharField()
-    amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0.01)
+    amount = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=Decimal('0.01')
+    )
     comment = serializers.CharField(required=False, allow_blank=True)
     
     def validate_receiver_username(self, value):
