@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, include
 from django.contrib.auth import views as auth_views
 from . import views
 
@@ -9,6 +9,8 @@ urlpatterns = [
     path('register/', views.register_page, name='register'),
     path('login/', views.login_page, name='login'),
     path('logout/', views.logout_page, name='logout'),
+    # API для мобильного приложения
+    path('api/', include('main.api.urls')),
     
     # Основные страницы
     path('', views.dashboard, name='dashboard'),
