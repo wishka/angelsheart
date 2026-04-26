@@ -41,4 +41,7 @@ urlpatterns = [
     path('my-donations/', views.my_donations, name='my_donations'),
     path('fundraise/<int:pk>/complete/', views.complete_fundraise, name='complete_fundraise'),
     path('fundraise/<int:pk>/cancel/', views.cancel_fundraise, name='cancel_fundraise'),
+    path('withdrawal/', views.create_withdrawal_request, name='withdrawal'),
+    path('my-withdrawals/', views.my_withdrawals, name='my_withdrawals'),
+    path('withdrawal/<int:pk>/cancel/', views.cancel_withdrawal, name='cancel_withdrawal'),
 ]

@@ -37,6 +37,8 @@
                 <a href="{% url 'main:history' %}"><i class="fas fa-history"></i> История</a>
                 <a href="{% url 'main:leaders' %}"><i class="fas fa-crown"></i> Лидеры</a>
                 <a href="{% url 'main:profile' %}"><i class="fas fa-user-circle"></i> Профиль</a>
+                <a href="{% url 'main:withdrawal' %}"><i class="fas fa-money-bill-wave"></i> Вывод средств</a>
+                <a href="{% url 'main:my_withdrawals' %}"><i class="fas fa-history"></i> Мои выводы</a>
                 <div class="balance-card-mini">
                     <i class="fas fa-coins"></i>
                     <span>{{ user.balance.amount|floatformat:2 }} ₽</span>

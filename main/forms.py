@@ -1,7 +1,7 @@
 from django import forms
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.models import User
-from .models import Transaction, Fundraise, Donation
+from .models import Transaction, Fundraise, Donation, WithdrawalRequest
 
 
 class RegisterForm(UserCreationForm):
@@ -71,4 +71,68 @@ class DonationForm(forms.ModelForm):
     def clean(self):
         cleaned_data = super().clean()
         # Эта проверка будет дополнена в view, так как там есть request.user
+        return cleaned_data
+
+
+class WithdrawalForm(forms.Form):
+    payment_method = forms.ChoiceField(
+        choices=WithdrawalRequest.PAYMENT_METHOD_CHOICES,
+        widget=forms.Select(attrs={'class': 'form-control'})
+    )
+    amount = forms.DecimalField(
+        min_value=500,
+        max_value=100000,
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Сумма вывода'})
+    )
+    
+    # Для карты
+    card_number = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': '0000 0000 0000 0000'})
+    )
+    card_holder = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'NAME SURNAME'})
+    )
+    expiry_date = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'MM/YY'})
+    )
+    
+    # Для СБП
+    phone_number = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': '+7 XXX XXX-XX-XX'})
+    )
+    
+    # Для ЮMoney
+    wallet_number = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': '41001XXXXXXXXXX'})
+    )
+    
+    def clean_amount(self):
+        amount = self.cleaned_data['amount']
+        if amount < 500:
+            raise forms.ValidationError('Минимальная сумма вывода - 500 ₽')
+        if amount > 100000:
+            raise forms.ValidationError('Максимальная сумма вывода - 100 000 ₽')
+        return amount
+    
+    def clean(self):
+        cleaned_data = super().clean()
+        payment_method = cleaned_data.get('payment_method')
+        
+        if payment_method == 'card':
+            if not cleaned_data.get('card_number'):
+                self.add_error('card_number', 'Введите номер карты')
+            if not cleaned_data.get('card_holder'):
+                self.add_error('card_holder', 'Введите имя держателя карты')
+        elif payment_method == 'sbp':
+            if not cleaned_data.get('phone_number'):
+                self.add_error('phone_number', 'Введите номер телефона')
+        elif payment_method == 'yoomoney':
+            if not cleaned_data.get('wallet_number'):
+                self.add_error('wallet_number', 'Введите номер кошелька')
+        
         return cleaned_data

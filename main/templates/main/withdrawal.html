@@ -1,0 +1,341 @@
+{% extends 'base.html' %}
+
+{% block title %}Вывод средств | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div style="max-width: 700px; margin: 0 auto;">
+    <div class="card">
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <div style="background: linear-gradient(135deg, #ffe6e8, #ffe0e3); width: 70px; height: 70px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 1rem;">
+                <i class="fas fa-money-bill-wave" style="font-size: 2rem; color: #d4737a;"></i>
+            </div>
+            <h1 style="color: #d4737a; margin-top: 0; margin-bottom: 0.5rem;">Вывод средств</h1>
+            <p style="color: #6b5a5a; margin: 0;">Выведите средства на свой счет</p>
+        </div>
+
+        <!-- Баланс пользователя -->
+        <div style="background: linear-gradient(135deg, #fdf4f0, #fff5f0); padding: 1rem 1.5rem; border-radius: 20px; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <i class="fas fa-wallet" style="font-size: 1.5rem; color: #d4737a;"></i>
+                <div>
+                    <div style="font-size: 0.85rem; color: #b89a9a;">Доступно для вывода</div>
+                    <div style="font-size: 1.8rem; font-weight: 700; color: #d4737a;">{{ current_balance|floatformat:2 }} ₽</div>
+                </div>
+            </div>
+            <a href="{% url 'main:my_withdrawals' %}" class="btn btn-secondary" style="padding: 8px 20px;">
+                <i class="fas fa-history"></i> История выводов
+            </a>
+        </div>
+
+        <!-- Информация о лимитах -->
+        <div style="background: #fff3cd; padding: 0.75rem 1rem; border-radius: 12px; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 10px;">
+            <i class="fas fa-info-circle" style="color: #856404;"></i>
+            <div style="font-size: 0.85rem; color: #856404;">
+                <strong>Условия вывода:</strong> Минимальная сумма — {{ min_amount }} ₽, 
+                максимальная — {{ max_amount }} ₽. Комиссия — 3%.
+                Срок обработки — до 3 рабочих дней.
+            </div>
+        </div>
+
+        <form method="post" id="withdrawalForm">
+            {% csrf_token %}
+
+            <div class="form-group">
+                <label><i class="fas fa-coins"></i> Сумма вывода (₽)</label>
+                <input type="number" 
+                       name="amount" 
+                       id="amount" 
+                       class="form-control" 
+                       min="{{ min_amount }}" 
+                       max="{{ max_amount }}" 
+                       step="1"
+                       required 
+                       placeholder="Введите сумму от {{ min_amount }} до {{ max_amount }} ₽">
+                <small style="color: #b89a9a; display: block; margin-top: 5px;">
+                    Минимальная сумма - {{ min_amount }} ₽, максимальная - {{ max_amount }} ₽
+                </small>
+            </div>
+
+            <div class="form-group">
+                <label><i class="fas fa-credit-card"></i> Способ вывода</label>
+                {{ form.payment_method }}
+            </div>
+
+            <!-- Блок для банковской карты -->
+            <div id="cardFields" class="payment-fields" style="display: none;">
+                <div class="form-group">
+                    <label><i class="fas fa-credit-card"></i> Номер карты</label>
+                    <input type="text" 
+                           name="card_number" 
+                           id="card_number" 
+                           class="form-control" 
+                           placeholder="0000 0000 0000 0000"
+                           maxlength="19">
+                    <small style="color: #b89a9a;">16 цифр без пробелов</small>
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-user"></i> Владелец карты</label>
+                    <input type="text" 
+                           name="card_holder" 
+                           id="card_holder" 
+                           class="form-control" 
+                           placeholder="NAME SURNAME">
+                </div>
+                <div class="row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-group">
+                        <label><i class="fas fa-calendar"></i> Срок действия</label>
+                        <input type="text" 
+                               name="expiry_date" 
+                               id="expiry_date" 
+                               class="form-control" 
+                               placeholder="MM/YY">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-lock"></i> CVV/CVC</label>
+                        <input type="password" 
+                               name="cvv" 
+                               id="cvv" 
+                               class="form-control" 
+                               placeholder="***"
+                               maxlength="3">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Блок для СБП -->
+            <div id="sbpFields" class="payment-fields" style="display: none;">
+                <div class="form-group">
+                    <label><i class="fas fa-phone"></i> Номер телефона</label>
+                    <input type="tel" 
+                           name="phone_number" 
+                           id="phone_number" 
+                           class="form-control" 
+                           placeholder="+7 999 999-99-99">
+                    <small>Номер, привязанный к счету в банке</small>
+                </div>
+            </div>
+
+            <!-- Блок для ЮMoney -->
+            <div id="yoomoneyFields" class="payment-fields" style="display: none;">
+                <div class="form-group">
+                    <label><i class="fas fa-wallet"></i> Номер кошелька</label>
+                    <input type="text" 
+                           name="wallet_number" 
+                           id="wallet_number" 
+                           class="form-control" 
+                           placeholder="41001XXXXXXXXXX">
+                    <small>Номер кошелька в системе ЮMoney</small>
+                </div>
+            </div>
+
+            <!-- Блок для криптовалюты -->
+            <div id="cryptoFields" class="payment-fields" style="display: none;">
+                <div class="form-group">
+                    <label><i class="fab fa-bitcoin"></i> Адрес кошелька</label>
+                    <input type="text" 
+                           name="crypto_address" 
+                           id="crypto_address" 
+                           class="form-control" 
+                           placeholder="BTC/ETH/USDT адрес">
+                    <small>Поддерживаются BTC, ETH, USDT (ERC20/TRC20)</small>
+                </div>
+                <div class="form-group">
+                    <label>Выберите валюту</label>
+                    <select name="crypto_currency" id="crypto_currency" class="form-control">
+                        <option value="BTC">Bitcoin (BTC)</option>
+                        <option value="ETH">Ethereum (ETH)</option>
+                        <option value="USDT_ERC20">USDT (ERC20)</option>
+                        <option value="USDT_TRC20">USDT (TRC20)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div style="background: #fdf4f0; padding: 1rem; border-radius: 16px; margin: 1rem 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span><i class="fas fa-calculator"></i> К получению:</span>
+                    <strong style="color: #28a745; font-size: 1.2rem;" id="netAmount">0 ₽</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px; font-size: 0.85rem;">
+                    <span>Комиссия сервиса:</span>
+                    <span style="color: #856404;">0% (0 ₽)</span>
+                </div>
+            </div>
+
+            <div style="background: #e8f4fd; padding: 1rem; border-radius: 16px; margin: 1rem 0; font-size: 0.85rem;">
+                <p style="margin: 0 0 5px 0;"><i class="fas fa-clock"></i> <strong>Сроки обработки:</strong></p>
+                <p style="margin: 0 0 5px 25px;">• Заявки обрабатываются в течение 1-3 рабочих дней</p>
+                <p style="margin: 0 0 5px 25px;">• После подтверждения средства поступают в течение 1-5 дней</p>
+                <p style="margin: 0 0 0 25px;">• Статус заявки можно отслеживать в разделе "Мои выводы"</p>
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="width: 100%;" id="submitBtn">
+                <i class="fas fa-paper-plane"></i> Отправить заявку
+            </button>
+        </form>
+    </div>
+</div>
+
+<script>
+    // Переключение полей в зависимости от способа вывода
+    const paymentMethod = document.getElementById('id_payment_method');
+    const cardFields = document.getElementById('cardFields');
+    const sbpFields = document.getElementById('sbpFields');
+    const yoomoneyFields = document.getElementById('yoomoneyFields');
+    const cryptoFields = document.getElementById('cryptoFields');
+    
+    function togglePaymentFields() {
+        const method = paymentMethod.value;
+        
+        // Скрываем все поля
+        cardFields.style.display = 'none';
+        sbpFields.style.display = 'none';
+        yoomoneyFields.style.display = 'none';
+        cryptoFields.style.display = 'none';
+        
+        // Показываем нужные
+        if (method === 'card') {
+            cardFields.style.display = 'block';
+        } else if (method === 'sbp') {
+            sbpFields.style.display = 'block';
+        } else if (method === 'yoomoney') {
+            yoomoneyFields.style.display = 'block';
+        } else if (method === 'crypto') {
+            cryptoFields.style.display = 'block';
+        }
+    }
+    
+    paymentMethod.addEventListener('change', togglePaymentFields);
+    togglePaymentFields();
+    
+    // Форматирование номера карты
+    const cardNumber = document.getElementById('card_number');
+    if (cardNumber) {
+        cardNumber.addEventListener('input', function(e) {
+            let value = e.target.value.replace(/\D/g, '');
+            if (value.length > 16) value = value.slice(0, 16);
+            value = value.replace(/(\d{4})(?=\d)/g, '$1 ');
+            e.target.value = value;
+        });
+    }
+    
+    // Форматирование срока действия карты
+    const expiryDate = document.getElementById('expiry_date');
+    if (expiryDate) {
+        expiryDate.addEventListener('input', function(e) {
+            let value = e.target.value.replace(/\D/g, '');
+            if (value.length > 4) value = value.slice(0, 4);
+            if (value.length > 2) {
+                value = value.slice(0, 2) + '/' + value.slice(2);
+            }
+            e.target.value = value;
+        });
+    }
+    
+    // Форматирование номера телефона
+    const phoneNumber = document.getElementById('phone_number');
+    if (phoneNumber) {
+        phoneNumber.addEventListener('input', function(e) {
+            let value = e.target.value.replace(/\D/g, '');
+            if (value.length > 11) value = value.slice(0, 11);
+            if (value.length > 0) {
+                if (value[0] === '7' || value[0] === '8') {
+                    value = '+' + value;
+                }
+            }
+            e.target.value = value;
+        });
+    }
+    
+    // Расчет суммы к получению
+    const amountInput = document.getElementById('amount');
+    const netAmountSpan = document.getElementById('netAmount');
+    
+    function updateNetAmount() {
+        const amount = parseFloat(amountInput.value) || 0;
+        netAmountSpan.textContent = amount.toFixed(2) + ' ₽';
+    }
+    
+    amountInput.addEventListener('input', updateNetAmount);
+    updateNetAmount();
+    
+    // Валидация перед отправкой
+    const form = document.getElementById('withdrawalForm');
+    form.addEventListener('submit', function(e) {
+        const amount = parseFloat(amountInput.value);
+        const balance = {{ current_balance|floatformat:2 }};
+        
+        if (isNaN(amount) || amount < {{ min_amount }}) {
+            e.preventDefault();
+            alert(`Минимальная сумма вывода - {{ min_amount }} ₽`);
+            return false;
+        }
+        
+        if (amount > {{ max_amount }}) {
+            e.preventDefault();
+            alert(`Максимальная сумма вывода - {{ max_amount }} ₽`);
+            return false;
+        }
+        
+        if (amount > balance) {
+            e.preventDefault();
+            alert(`Недостаточно средств. Доступно: ${balance} ₽`);
+            return false;
+        }
+        
+        const method = paymentMethod.value;
+        if (method === 'card') {
+            const card = document.getElementById('card_number').value.replace(/\s/g, '');
+            if (card.length !== 16) {
+                e.preventDefault();
+                alert('Введите корректный номер карты (16 цифр)');
+                return false;
+            }
+        } else if (method === 'sbp') {
+            const phone = document.getElementById('phone_number').value;
+            if (!phone || phone.length < 10) {
+                e.preventDefault();
+                alert('Введите корректный номер телефона');
+                return false;
+            }
+        } else if (method === 'yoomoney') {
+            const wallet = document.getElementById('wallet_number').value;
+            if (!wallet || wallet.length < 10) {
+                e.preventDefault();
+                alert('Введите корректный номер кошелька');
+                return false;
+            }
+        }
+        
+        const confirmMsg = `Подтвердите вывод средств:\n\n` +
+            `Сумма: ${amount} ₽\n` +
+            `Комиссия: 0 ₽\n` +
+            `К получению: ${amount} ₽\n` +
+            `Способ: ${paymentMethod.options[paymentMethod.selectedIndex].text}\n\n` +
+            `Продолжить?`;
+        
+        if (!confirm(confirmMsg)) {
+            e.preventDefault();
+            return false;
+        }
+        
+        return true;
+    });
+</script>
+
+<style>
+    .payment-fields {
+        animation: fadeIn 0.3s ease;
+    }
+    
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+</style>
+{% endblock %}

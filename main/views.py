@@ -9,9 +9,13 @@ from django.db.models import Q, Sum
 from django.contrib.auth.models import User
 from django.core.paginator import Paginator
 from django.http import JsonResponse
-from .models import Balance, Transaction, Fundraise, Donation, UserConsent, ConsentLog
-from .forms import RegisterForm, TransferForm, FundraiseForm, DonationForm
+from .models import Balance, Transaction, Fundraise, Donation, UserConsent, ConsentLog, WithdrawalRequest
+from .forms import RegisterForm, TransferForm, FundraiseForm, DonationForm, WithdrawalForm
+from django.core.cache import cache
+import logging
 
+logger = logging.getLogger('withdrawals')
+security_logger = logging.getLogger('security')
 
 # ==================== АУТЕНТИФИКАЦИЯ ====================
 
@@ -727,6 +731,121 @@ def complete_fundraise(request, pk):
     
     return redirect('main:my_fundraises')
 
+
+@login_required
+def create_withdrawal_request(request):
+    """Создание заявки на вывод средств"""
+    if request.method == 'POST':
+        form = WithdrawalForm(request.POST)
+        if form.is_valid():
+            amount = form.cleaned_data['amount']
+            
+            # Проверка минимальной суммы
+            if amount < settings.MIN_WITHDRAWAL_AMOUNT:
+                messages.error(request, f'Минимальная сумма вывода - {settings.MIN_WITHDRAWAL_AMOUNT} ₽')
+                return redirect('main:withdrawal')
+            
+            if amount > settings.MAX_WITHDRAWAL_AMOUNT:
+                messages.error(request, f'Максимальная сумма вывода - {settings.MAX_WITHDRAWAL_AMOUNT} ₽')
+                return redirect('main:withdrawal')
+            
+            # Проверка баланса
+            if request.user.balance.amount < amount:
+                messages.error(request, 'Недостаточно средств')
+                return redirect('main:withdrawal')
+            
+            # Проверка на дубликаты (3 заявки в день)
+            today_requests = WithdrawalRequest.objects.filter(
+                user=request.user,
+                created_at__date=timezone.now().date(),
+                status__in=['pending', 'processing']
+            ).count()
+            
+            if today_requests >= 3:
+                messages.error(request, 'Вы можете создать не более 3 заявок в день')
+                return redirect('main:withdrawal')
+            
+            # Получаем реквизиты
+            payment_method = form.cleaned_data['payment_method']
+            payment_details = {}
+            
+            if payment_method == 'card':
+                payment_details = {
+                    'card_number': form.cleaned_data.get('card_number'),
+                    'card_holder': form.cleaned_data.get('card_holder'),
+                    'expiry_date': form.cleaned_data.get('expiry_date'),
+                }
+            elif payment_method == 'sbp':
+                payment_details = {
+                    'phone_number': form.cleaned_data.get('phone_number'),
+                }
+            elif payment_method == 'yoomoney':
+                payment_details = {
+                    'wallet_number': form.cleaned_data.get('wallet_number'),
+                }
+            
+            try:
+                with db_transaction.atomic():
+                    # Блокируем средства
+                    balance = Balance.objects.select_for_update().get(user=request.user)
+                    balance.amount -= amount
+                    balance.save()
+                    
+                    # Создаем заявку
+                    withdrawal = WithdrawalRequest.objects.create(
+                        user=request.user,
+                        amount=amount,
+                        payment_method=payment_method,
+                        payment_details=payment_details
+                    )
+                    
+                    logger.info(f"Создана заявка #{withdrawal.id} на вывод {amount} ₽ от {request.user.username}")
+                    
+                    messages.success(
+                        request,
+                        f'Заявка на вывод {amount} ₽ создана. Статус: {withdrawal.get_status_display()}'
+                    )
+                    return redirect('main:my_withdrawals')
+            
+            except Exception as e:
+                logger.error(f"Ошибка при создании заявки: {str(e)}")
+                messages.error(request, 'Ошибка при создании заявки')
+                return redirect('main:withdrawal')
+    else:
+        form = WithdrawalForm()
+    
+    context = {
+        'form': form,
+        'current_balance': request.user.balance.amount,
+        'min_amount': settings.MIN_WITHDRAWAL_AMOUNT,
+        'max_amount': settings.MAX_WITHDRAWAL_AMOUNT,
+    }
+    return render(request, 'main/withdrawal.html', context)
+
+
+@login_required
+def my_withdrawals(request):
+    """Список моих заявок на вывод"""
+    withdrawals = WithdrawalRequest.objects.filter(user=request.user).order_by('-created_at')
+    
+    context = {
+        'withdrawals': withdrawals,
+        'pending_count': withdrawals.filter(status='pending').count(),
+    }
+    return render(request, 'main/my_withdrawals.html', context)
+
+
+@login_required
+def cancel_withdrawal(request, pk):
+    """Отмена заявки пользователем"""
+    withdrawal = get_object_or_404(WithdrawalRequest, pk=pk, user=request.user)
+    
+    if withdrawal.cancel():
+        messages.success(request, f'Заявка #{withdrawal.id} отменена, средства возвращены на баланс')
+    else:
+        messages.error(request, 'Невозможно отменить заявку в текущем статусе')
+    
+    return redirect('main:my_withdrawals')
 
 @login_required
 def cancel_fundraise(request, pk):

@@ -255,3 +255,133 @@ class CommissionTransaction(models.Model):
     
     def __str__(self):
         return f"Комиссия {self.percent}% с пожертвования #{self.donation.id}: {self.amount} ₽"
+
+
+class WithdrawalRequest(models.Model):
+    """Модель для заявок на вывод средств"""
+    
+    STATUS_CHOICES = [
+        ('pending', 'На рассмотрении'),
+        ('processing', 'В обработке'),
+        ('completed', 'Выполнен'),
+        ('rejected', 'Отклонен'),
+        ('cancelled', 'Отменен пользователем'),
+    ]
+    
+    PAYMENT_METHOD_CHOICES = [
+        ('card', 'Банковская карта'),
+        ('sbp', 'СБП'),
+        ('yoomoney', 'ЮMoney'),
+        ('crypto', 'Криптовалюта'),
+    ]
+    
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='withdrawal_requests',
+        verbose_name='Пользователь'
+    )
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        verbose_name='Сумма вывода'
+    )
+    payment_method = models.CharField(
+        max_length=20,
+        choices=PAYMENT_METHOD_CHOICES,
+        verbose_name='Способ вывода'
+    )
+    payment_details = models.JSONField(
+        verbose_name='Реквизиты для вывода',
+        help_text='Данные для перевода (карта, номер телефона, кошелек и т.д.)'
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        verbose_name='Статус'
+    )
+    comment = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name='Комментарий администратора'
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Дата создания'
+    )
+    processed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Дата обработки'
+    )
+    processed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='processed_withdrawals',
+        verbose_name='Обработал'
+    )
+    transaction_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name='ID транзакции в платежной системе'
+    )
+    
+    class Meta:
+        verbose_name = 'Заявка на вывод'
+        verbose_name_plural = 'Заявки на вывод'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"#{self.id} - {self.user.username} - {self.amount} ₽ - {self.get_status_display()}"
+    
+    def approve(self, admin_user, transaction_id=None):
+        """Подтверждение заявки администратором"""
+        from django.utils import timezone
+        self.status = 'processing'
+        self.processed_at = timezone.now()
+        self.processed_by = admin_user
+        self.transaction_id = transaction_id
+        self.save()
+        
+        # Здесь должна быть интеграция с платежной системой
+        # Для реального вывода средств
+    
+    def complete(self, admin_user, transaction_id=None):
+        """Завершение выплаты"""
+        from django.utils import timezone
+        self.status = 'completed'
+        self.processed_at = timezone.now()
+        self.processed_by = admin_user
+        if transaction_id:
+            self.transaction_id = transaction_id
+        self.save()
+    
+    def reject(self, admin_user, reason):
+        """Отклонение заявки"""
+        from django.utils import timezone
+        self.status = 'rejected'
+        self.comment = reason
+        self.processed_at = timezone.now()
+        self.processed_by = admin_user
+        self.save()
+        
+        # Возвращаем средства пользователю
+        balance = Balance.objects.get(user=self.user)
+        balance.amount += self.amount
+        balance.save()
+    
+    def cancel(self):
+        """Отмена заявки пользователем"""
+        if self.status == 'pending':
+            self.status = 'cancelled'
+            self.save()
+            # Возвращаем средства
+            balance = Balance.objects.get(user=self.user)
+            balance.amount += self.amount
+            balance.save()
+            return True
+        return False

@@ -1,0 +1,253 @@
+{% extends 'base.html' %}
+
+{% block title %}Мои выводы | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem;">
+        <div>
+            <h1 style="color: #d4737a; margin-bottom: 0.5rem;">
+                <i class="fas fa-history"></i> Мои выводы
+            </h1>
+            <p style="color: #6b5a5a;">История ваших заявок на вывод средств</p>
+        </div>
+        <a href="{% url 'main:withdrawal' %}" class="btn btn-primary">
+            <i class="fas fa-plus-circle"></i> Новая заявка
+        </a>
+    </div>
+
+    <!-- Статистика -->
+    {% if pending_count > 0 %}
+    <div style="background: #fff3cd; padding: 1rem; border-radius: 16px; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <i class="fas fa-clock" style="color: #856404; font-size: 1.5rem;"></i>
+        <div>
+            <strong style="color: #856404;">У вас {{ pending_count }} активных заяв{{ pending_count|pluralize:"ка,ки,ок" }}</strong>
+            <p style="color: #856404; margin: 0; font-size: 0.85rem;">Заявки обрабатываются в течение 1-3 рабочих дней</p>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if withdrawals %}
+    <div style="overflow-x: auto;">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Сумма</th>
+                    <th>Способ</th>
+                    <th>Статус</th>
+                    <th>Дата заявки</th>
+                    <th>Дата обработки</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for withdrawal in withdrawals %}
+                <tr>
+                    <td>#{{ withdrawal.id }}</td>
+                    <td style="font-weight: 700; color: #d4737a;">
+                        {{ withdrawal.amount }} ₽
+                    </td>
+                    <td>
+                        {% if withdrawal.payment_method == 'card' %}
+                            <i class="fas fa-credit-card"></i> Карта
+                        {% elif withdrawal.payment_method == 'sbp' %}
+                            <i class="fas fa-mobile-alt"></i> СБП
+                        {% elif withdrawal.payment_method == 'yoomoney' %}
+                            <i class="fas fa-wallet"></i> ЮMoney
+                        {% elif withdrawal.payment_method == 'crypto' %}
+                            <i class="fab fa-bitcoin"></i> Криптовалюта
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if withdrawal.status == 'pending' %}
+                            <span style="background: #fff3cd; color: #856404; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem;">
+                                <i class="fas fa-clock"></i> На рассмотрении
+                            </span>
+                        {% elif withdrawal.status == 'processing' %}
+                            <span style="background: #d1ecf1; color: #0c5460; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem;">
+                                <i class="fas fa-spinner fa-pulse"></i> В обработке
+                            </span>
+                        {% elif withdrawal.status == 'completed' %}
+                            <span style="background: #d4edda; color: #155724; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem;">
+                                <i class="fas fa-check-circle"></i> Выполнен
+                            </span>
+                        {% elif withdrawal.status == 'rejected' %}
+                            <span style="background: #f8d7da; color: #721c24; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem;">
+                                <i class="fas fa-times-circle"></i> Отклонен
+                            </span>
+                        {% elif withdrawal.status == 'cancelled' %}
+                            <span style="background: #e2e3e5; color: #383d41; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem;">
+                                <i class="fas fa-ban"></i> Отменен
+                            </span>
+                        {% endif %}
+                    </td>
+                    <td>{{ withdrawal.created_at|date:"d.m.Y H:i" }}</td>
+                    <td>
+                        {% if withdrawal.processed_at %}
+                            {{ withdrawal.processed_at|date:"d.m.Y H:i" }}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if withdrawal.status == 'pending' %}
+                            <button onclick="cancelWithdrawal({{ withdrawal.id }})" 
+                                    class="btn btn-secondary" 
+                                    style="padding: 5px 12px; font-size: 0.85rem;">
+                                <i class="fas fa-times"></i> Отменить
+                            </button>
+                        {% else %}
+                            <span style="color: #b89a9a;">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div style="text-align: center; padding: 3rem; color: #b89a9a;">
+        <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 1rem; display: inline-block;"></i>
+        <h3>У вас пока нет заявок на вывод</h3>
+        <p>Создайте первую заявку, чтобы вывести средства</p>
+        <a href="{% url 'main:withdrawal' %}" class="btn btn-primary" style="margin-top: 1rem;">
+            <i class="fas fa-plus-circle"></i> Создать заявку
+        </a>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Модальное окно с деталями заявки -->
+<div id="withdrawalModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Детали заявки #<span id="modalWithdrawalId"></span></h2>
+            <span class="modal-close" onclick="closeModal()">&times;</span>
+        </div>
+        <div class="modal-body" id="modalBody">
+            <!-- Данные загрузятся через JS -->
+        </div>
+    </div>
+</div>
+
+<script>
+    function cancelWithdrawal(withdrawalId) {
+        if (confirm('Вы уверены, что хотите отменить эту заявку? Средства будут возвращены на ваш баланс.')) {
+            fetch(`/withdrawal/${withdrawalId}/cancel/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || '',
+                },
+            }).then(response => {
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    alert('Ошибка при отмене заявки');
+                }
+            }).catch(error => {
+                alert('Ошибка: ' + error);
+            });
+        }
+    }
+    
+    function showDetails(withdrawalId) {
+        fetch(`/api/withdrawal/${withdrawalId}/details/`)
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('modalWithdrawalId').textContent = withdrawalId;
+                document.getElementById('modalBody').innerHTML = `
+                    <div style="display: grid; gap: 1rem;">
+                        <div><strong>Сумма:</strong> ${data.amount} ₽</div>
+                        <div><strong>Способ вывода:</strong> ${data.payment_method_display}</div>
+                        <div><strong>Реквизиты:</strong><br><pre style="background: #f5f5f5; padding: 10px; border-radius: 8px;">${JSON.stringify(data.payment_details, null, 2)}</pre></div>
+                        <div><strong>Статус:</strong> ${data.status_display}</div>
+                        <div><strong>Дата создания:</strong> ${data.created_at}</div>
+                        ${data.comment ? `<div><strong>Комментарий:</strong> ${data.comment}</div>` : ''}
+                    </div>
+                `;
+                document.getElementById('withdrawalModal').style.display = 'flex';
+            });
+    }
+    
+    function closeModal() {
+        document.getElementById('withdrawalModal').style.display = 'none';
+    }
+    
+    window.onclick = function(event) {
+        const modal = document.getElementById('withdrawalModal');
+        if (event.target === modal) {
+            modal.style.display = 'none';
+        }
+    }
+</script>
+
+<style>
+    .modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 10001;
+        display: none;
+        justify-content: center;
+        align-items: center;
+    }
+    
+    .modal-content {
+        background: white;
+        width: 90%;
+        max-width: 500px;
+        border-radius: 20px;
+        overflow: hidden;
+        animation: modalSlideIn 0.3s ease;
+    }
+    
+    .modal-header {
+        background: linear-gradient(135deg, #d4737a, #e8a4aa);
+        padding: 1.5rem;
+        color: white;
+        position: relative;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .modal-header h2 {
+        margin: 0;
+        font-size: 1.3rem;
+    }
+    
+    .modal-close {
+        font-size: 2rem;
+        cursor: pointer;
+        line-height: 1;
+    }
+    
+    .modal-body {
+        padding: 1.5rem;
+        max-height: 60vh;
+        overflow-y: auto;
+    }
+    
+    @keyframes modalSlideIn {
+        from {
+            transform: translateY(-50px);
+            opacity: 0;
+        }
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
+    
+    pre {
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        font-family: monospace;
+        font-size: 0.85rem;
+    }
+</style>
+{% endblock %}

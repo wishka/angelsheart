@@ -1,13 +1,13 @@
-# main/admin.py
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
 from django.db import models
+from django.contrib.admin import AdminSite
 from django.utils.safestring import mark_safe
 from django.db.models import Sum, Count
 from .models import (
     Balance, Transaction, UserConsent, ConsentLog,
-    Fundraise, Donation, CommissionTransaction
+    Fundraise, Donation, CommissionTransaction, WithdrawalRequest
 )
 
 # ==================== НАСТРОЙКИ ОБЩЕЙ АДМИНКИ ====================
@@ -16,6 +16,44 @@ admin.site.site_header = 'Ангел-Хранитель - Администрат
 admin.site.site_title = 'Ангел-Хранитель Admin'
 admin.site.index_title = 'Управление платформой взаимопомощи'
 
+
+class CustomAdminSite(AdminSite):
+    site_header = 'Ангел-Хранитель - Административная панель'
+    
+    def get_app_list(self, request):
+        app_list = super().get_app_list(request)
+        
+        # Добавляем кастомные разделы
+        custom_sections = [
+            {
+                'name': 'Финансовые операции',
+                'app_label': 'finance',
+                'models': [
+                    {
+                        'name': 'Заявки на вывод',
+                        'object_name': 'WithdrawalRequest',
+                        'admin_url': '/admin/main/withdrawalrequest/',
+                        'view_only': False,
+                    },
+                    {
+                        'name': 'Транзакции',
+                        'object_name': 'Transaction',
+                        'admin_url': '/admin/main/transaction/',
+                        'view_only': False,
+                    },
+                    {
+                        'name': 'Сборы',
+                        'object_name': 'Fundraise',
+                        'admin_url': '/admin/main/fundraise/',
+                        'view_only': False,
+                    },
+                ]
+            }
+        ]
+        
+        # Добавляем кастомные разделы в начало
+        app_list = custom_sections + app_list
+        return app_list
 
 # ==================== КАСТОМНЫЙ ПОЛЬЗОВАТЕЛЬ ====================
 
@@ -450,3 +488,177 @@ class CommissionTransactionAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
         }),
     )
+
+
+@admin.register(WithdrawalRequest)
+class WithdrawalRequestAdmin(admin.ModelAdmin):
+    list_display = ['id', 'user_link', 'amount_display', 'status', 'status_badge', 'payment_method_display',
+                    'created_at', 'processed_at']
+    list_filter = ['status', 'payment_method', 'created_at']
+    search_fields = ['id', 'user__username', 'user__email', 'transaction_id', 'comment']
+    readonly_fields = ['created_at', 'payment_details_display']
+    list_per_page = 50
+    list_editable = ['status']
+    
+    def user_link(self, obj):
+        return mark_safe(f'<a href="/admin/auth/user/{obj.user.id}/change/">{obj.user.username}</a>')
+    
+    user_link.short_description = 'Пользователь'
+    
+    def amount_display(self, obj):
+        return mark_safe(f'<span style="color: #d4737a; font-weight: bold;">{obj.amount} ₽</span>')
+    
+    amount_display.short_description = 'Сумма'
+    
+    def status_badge(self, obj):
+        status_colors = {
+            'pending': '#ffc107',
+            'processing': '#17a2b8',
+            'completed': '#28a745',
+            'rejected': '#dc3545',
+            'cancelled': '#6c757d',
+        }
+        status_text = {
+            'pending': '⏳ На рассмотрении',
+            'processing': '🔄 В обработке',
+            'completed': '✅ Выполнен',
+            'rejected': '❌ Отклонен',
+            'cancelled': '🗑️ Отменен',
+        }
+        color = status_colors.get(obj.status, '#6c757d')
+        text = status_text.get(obj.status, obj.status)
+        return mark_safe(
+            f'<span style="background: {color}; color: white; padding: 2px 8px; border-radius: 12px;">{text}</span>')
+    
+    status_badge.short_description = 'Статус'
+    
+    def payment_method_display(self, obj):
+        methods = {
+            'card': '💳 Банковская карта',
+            'sbp': '📱 СБП',
+            'yoomoney': '💰 ЮMoney',
+            'crypto': '🪙 Криптовалюта',
+        }
+        return methods.get(obj.payment_method, obj.payment_method)
+    
+    payment_method_display.short_description = 'Способ вывода'
+    
+    def payment_details_display(self, obj):
+        details = []
+        for key, value in obj.payment_details.items():
+            if 'card_number' in key and value:
+                masked = f'****{str(value)[-4:]}'
+                details.append(f'💳 Номер карты: {masked}')
+            elif 'card_holder' in key and value:
+                details.append(f'👤 Владелец: {value}')
+            elif 'expiry_date' in key and value:
+                details.append(f'📅 Срок: {value}')
+            elif 'phone' in key and value:
+                phone = str(value)
+                masked = phone[:4] + '***' + phone[-4:] if len(phone) > 7 else '***'
+                details.append(f'📱 Телефон: {masked}')
+            elif 'wallet' in key and value:
+                masked = '***' + str(value)[-8:]
+                details.append(f'💰 Кошелек: {masked}')
+            else:
+                details.append(f'📝 {key}: {value}')
+        return mark_safe('<br>'.join(details) if details else '—')
+    
+    payment_details_display.short_description = 'Реквизиты'
+    
+    actions = ['approve_withdrawals', 'complete_withdrawals', 'reject_withdrawals']
+    
+    @admin.action(description='✅ Подтвердить выбранные заявки')
+    def approve_withdrawals(self, request, queryset):
+        for withdrawal in queryset.filter(status='pending'):
+            withdrawal.approve(request.user)
+        self.message_user(request, f'{queryset.count()} заявок подтверждены')
+    
+    @admin.action(description='💸 Завершить выбранные заявки')
+    def complete_withdrawals(self, request, queryset):
+        for withdrawal in queryset.filter(status='processing'):
+            withdrawal.complete(request.user)
+        self.message_user(request, f'{queryset.count()} заявок завершены')
+    
+    @admin.action(description='❌ Отклонить выбранные заявки')
+    def reject_withdrawals(self, request, queryset):
+        for withdrawal in queryset.filter(status='pending'):
+            withdrawal.reject(request.user, 'Отклонено администратором')
+        self.message_user(request, f'{queryset.count()} заявок отклонены')
+    
+    fieldsets = (
+        ('Заявитель', {
+            'fields': ('user_link',)
+        }),
+        ('Сумма и статус', {
+            'fields': ('amount_display', 'status_badge', 'comment')
+        }),
+        ('Реквизиты', {
+            'fields': ('payment_method_display', 'payment_details_display')
+        }),
+        ('Информация о транзакции', {
+            'fields': ('transaction_id',),
+            'classes': ('collapse',),
+        }),
+        ('Временные метки', {
+            'fields': ('created_at', 'processed_at', 'processed_by'),
+            'classes': ('collapse',),
+        }),
+    )
+    
+    payment_details_display.short_description = 'Реквизиты'
+    
+    actions = ['approve_withdrawals', 'complete_withdrawals', 'reject_withdrawals']
+    
+    @admin.action(description='Подтвердить выбранные заявки')
+    def approve_withdrawals(self, request, queryset):
+        for withdrawal in queryset.filter(status='pending'):
+            withdrawal.approve(request.user)
+        self.message_user(request, f'{queryset.count()} заявок подтверждены')
+    
+    @admin.action(description='Завершить выбранные заявки')
+    def complete_withdrawals(self, request, queryset):
+        for withdrawal in queryset.filter(status='processing'):
+            withdrawal.complete(request.user)
+        self.message_user(request, f'{queryset.count()} заявок завершены')
+    
+    @admin.action(description='Отклонить выбранные заявки')
+    def reject_withdrawals(self, request, queryset):
+        for withdrawal in queryset.filter(status='pending'):
+            withdrawal.reject(request.user, 'Отклонено администратором')
+        self.message_user(request, f'{queryset.count()} заявок отклонены')
+    
+    fieldsets = (
+        ('Заявитель', {
+            'fields': ('user_link',)
+        }),
+        ('Сумма и статус', {
+            'fields': ('amount_display', 'status_badge', 'comment')
+        }),
+        ('Реквизиты', {
+            'fields': ('payment_method', 'payment_details_display')
+        }),
+        ('Информация о транзакции', {
+            'fields': ('transaction_id',),
+            'classes': ('collapse',),
+        }),
+        ('Временные метки', {
+            'fields': ('created_at', 'processed_at', 'processed_by'),
+            'classes': ('collapse',),
+        }),
+    )
+
+
+def get_admin_stats():
+    """Статистика для главной страницы админки"""
+    from django.db.models import Sum
+    
+    return {
+        'total_withdrawals_pending': WithdrawalRequest.objects.filter(status='pending').count(),
+        'total_withdrawals_processing': WithdrawalRequest.objects.filter(status='processing').count(),
+        'total_withdrawals_completed': WithdrawalRequest.objects.filter(status='completed').count(),
+        'total_withdrawals_rejected': WithdrawalRequest.objects.filter(status='rejected').count(),
+        'total_withdrawals_amount': WithdrawalRequest.objects.filter(
+            status__in=['pending', 'processing', 'completed']
+        ).aggregate(Sum('amount'))['amount__sum'] or 0,
+    }
