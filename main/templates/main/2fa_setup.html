@@ -1,0 +1,92 @@
+{% extends 'base.html' %}
+
+{% block title %}Настройка 2FA | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <i class="fas fa-shield-alt" style="font-size: 3rem; color: #e8a4aa;"></i>
+        <h1 style="color: #d4737a; margin-top: 1rem;">Двухфакторная аутентификация</h1>
+        <p style="color: #6b5a5a;">Дополнительный уровень защиты вашего аккаунта</p>
+    </div>
+
+    {% if is_enabled %}
+        <div style="background: #d4edda; padding: 1rem; border-radius: 16px; margin-bottom: 1.5rem; text-align: center;">
+            <i class="fas fa-check-circle" style="color: #28a745; font-size: 2rem;"></i>
+            <p style="color: #155724; margin-top: 0.5rem;">
+                <strong>2FA уже включена!</strong><br>
+                Ваш аккаунт защищен дополнительным кодом.
+            </p>
+        </div>
+        
+        <div style="background: #fdf4f0; padding: 1rem; border-radius: 16px; margin-bottom: 1.5rem;">
+            <h3 style="color: #d4737a;">Резервные коды</h3>
+            <p style="color: #6b5a5a;">Сохраните эти коды в надежном месте. Они понадобятся, если вы потеряете доступ к приложению-аутентификатору.</p>
+            <div style="background: white; padding: 1rem; border-radius: 12px; font-family: monospace; display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem;">
+                {% for code in backup_codes %}
+                    <code>{{ code }}</code>
+                {% endfor %}
+            </div>
+        </div>
+        
+        <a href="{% url 'main:profile' %}" class="btn btn-primary" style="width: 100%; text-align: center;">
+            <i class="fas fa-arrow-left"></i> Вернуться в профиль
+        </a>
+        
+    {% else %}
+        <div style="background: #fff3cd; padding: 1rem; border-radius: 16px; margin-bottom: 1.5rem;">
+            <i class="fas fa-info-circle" style="color: #856404;"></i>
+            <p style="color: #856404; margin: 0; display: inline-block; margin-left: 10px;">
+                Включите 2FA для дополнительной защиты вашего аккаунта и средств.
+            </p>
+        </div>
+        
+        <div style="text-align: center; margin-bottom: 1.5rem;">
+            <h3 style="color: #d4737a;">Шаг 1: Установите приложение</h3>
+            <p>Установите Google Authenticator или любой другой TOTP-аутентификатор:</p>
+            <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+                <a href="https://apps.apple.com/ru/app/google-authenticator/id388497605" target="_blank" class="btn btn-secondary">
+                    <i class="fab fa-apple"></i> App Store
+                </a>
+                <a href="https://play.google.com/store/apps/details?id=com.google.android.apps.authenticator2" target="_blank" class="btn btn-secondary">
+                    <i class="fab fa-google-play"></i> Google Play
+                </a>
+            </div>
+        </div>
+        
+        <div style="text-align: center; margin-bottom: 1.5rem;">
+            <h3 style="color: #d4737a;">Шаг 2: Отсканируйте QR-код</h3>
+            <div style="background: white; padding: 1rem; border-radius: 16px; display: inline-block;">
+                <img src="{{ qr_code }}" alt="QR Code" style="width: 200px; height: 200px;">
+            </div>
+            <p style="margin-top: 0.5rem; font-size: 0.85rem; color: #b89a9a;">
+                Или введите код вручную: <code>{{ secret_key }}</code>
+            </p>
+        </div>
+        
+        <div style="text-align: center;">
+            <h3 style="color: #d4737a;">Шаг 3: Подтвердите код</h3>
+            <form method="post" style="max-width: 300px; margin: 0 auto;">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label>Код из приложения</label>
+                    <input type="text" name="code" class="form-control" placeholder="000000" required autocomplete="off">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">
+                    <i class="fas fa-check"></i> Подтвердить и включить
+                </button>
+            </form>
+        </div>
+    {% endif %}
+</div>
+
+<style>
+    code {
+        background: #f5f5f5;
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 14px;
+        text-align: center;
+    }
+</style>
+{% endblock %}

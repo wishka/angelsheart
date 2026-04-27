@@ -9,9 +9,16 @@ from django.db.models import Q, Sum
 from django.contrib.auth.models import User
 from django.core.paginator import Paginator
 from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
 from .models import Balance, Transaction, Fundraise, Donation, UserConsent, ConsentLog, WithdrawalRequest
 from .forms import RegisterForm, TransferForm, FundraiseForm, DonationForm, WithdrawalForm
 from django.core.cache import cache
+from decimal import Decimal
+from main.payments.yookassa import YooKassaProvider, MockPaymentProvider, SBPProvider, StripeProvider
+from main.payments.security import TwoFactorAuthService, AntiFraudService
+from main.payments.verification import KYCService
+from main.models import PaymentTransaction, TwoFactorAuth, SecurityLog, UserVerification, KYCDocument
 import logging
 
 logger = logging.getLogger('withdrawals')
@@ -272,18 +279,61 @@ def transaction_history(request):
 
 @login_required
 def top_up_balance(request):
-    """Пополнение баланса"""
+    """Пополнение баланса через платежную систему"""
+    
+    # Определяем, использовать реальные платежи или симуляцию
+    USE_REAL_PAYMENTS = getattr(settings, 'USE_REAL_PAYMENTS', False)
+    
     if request.method == 'POST':
-        try:
-            amount = float(request.POST.get('amount', 0))
-            if amount <= 0:
-                messages.error(request, 'Сумма должна быть больше 0')
-                return redirect('main:topup')
+        amount = Decimal(request.POST.get('amount', '0'))
+        
+        if amount <= 0:
+            messages.error(request, 'Сумма должна быть больше 0')
+            return redirect('main:topup')
+        
+        if amount > Decimal('100000'):
+            messages.error(request, 'Максимальная сумма пополнения 100 000 ₽')
+            return redirect('main:topup')
+        
+        if USE_REAL_PAYMENTS:
+            # Реальный платеж через ЮKassa
+            try:
+                provider = YooKassaProvider()
+                
+                result = provider.create_payment(
+                    amount=amount,
+                    user_id=request.user.id,
+                    metadata={
+                        'payment_method': 'card',
+                        'user_email': request.user.email
+                    }
+                )
+                
+                if result['success']:
+                    # Сохраняем информацию о платеже
+                    PaymentTransaction.objects.create(
+                        user=request.user,
+                        amount=amount,
+                        payment_method='card',
+                        payment_id=result['payment_id'],
+                        status='pending',
+                        metadata={
+                            'confirmation_url': result['confirmation_url']
+                        }
+                    )
+                    
+                    # Редирект на страницу оплаты
+                    return redirect(result['confirmation_url'])
+                else:
+                    messages.error(request, f'Ошибка: {result.get("error", "Не удалось создать платеж")}')
+                    return redirect('main:topup')
             
-            if amount > 100000:
-                messages.error(request, 'Максимальная сумма пополнения 100 000 ₽')
+            except Exception as e:
+                messages.error(request, f'Ошибка подключения к платежной системе: {str(e)}')
                 return redirect('main:topup')
-            
+        
+        else:
+            # Симуляция пополнения (для разработки)
             with db_transaction.atomic():
                 balance = Balance.objects.select_for_update().get(user=request.user)
                 balance.amount += amount
@@ -293,15 +343,12 @@ def top_up_balance(request):
                     sender=request.user,
                     receiver=request.user,
                     amount=amount,
-                    comment='Пополнение баланса',
+                    comment='Пополнение баланса (тестовый режим)',
                     status='completed'
                 )
             
-            messages.success(request, f'💰 Баланс пополнен на {amount} ₽')
+            messages.success(request, f'💰 Баланс пополнен на {amount} ₽ (тестовый режим)')
             return redirect('main:dashboard')
-        
-        except ValueError:
-            messages.error(request, 'Введите корректную сумму')
     
     return render(request, 'main/topup.html')
 
@@ -398,10 +445,11 @@ def quick_help(request):
 
 @login_required
 def check_username(request):
-    """Проверка существования username"""
+    """Проверка существования username (не чувствительна к регистру)"""
     username = request.GET.get('username', '')
     if username:
-        exists = User.objects.filter(username=username).exists()
+        # icontains делает поиск нечувствительным к регистру
+        exists = User.objects.filter(username__icontains=username).exists()
         return JsonResponse({'exists': exists, 'username': username})
     return JsonResponse({'exists': False})
 
@@ -467,7 +515,7 @@ def fundraise_detail(request, pk):
     fundraise = get_object_or_404(Fundraise, pk=pk)
     donations = fundraise.donations.all()[:20]
     
-    # Последние 5 пожертвований
+    # Последние пожертвования
     recent_donations = fundraise.donations.select_related('donor').order_by('-created_at')[:10]
     
     # Проверка, является ли пользователь автором сбора
@@ -495,11 +543,6 @@ def fundraise_detail(request, pk):
                 messages.error(request, f'Недостаточно средств. Ваш баланс: {request.user.balance.amount} ₽')
                 return redirect('main:fundraise_detail', pk=pk)
             
-            # Расчет комиссии
-            commission_percent = settings.SERVICE_COMMISSION_PERCENT
-            commission_amount = (amount * commission_percent) / 100
-            author_amount = amount - commission_amount
-            
             try:
                 with db_transaction.atomic():
                     # Обновляем баланс пользователя (донора) - списываем полную сумму
@@ -507,15 +550,14 @@ def fundraise_detail(request, pk):
                     user_balance.amount -= amount
                     user_balance.save()
                     
-                    # Обновляем баланс автора сбора - зачисляем сумму за вычетом комиссии
+                    # Обновляем баланс автора сбора - зачисляем полную сумму (без комиссии!)
                     author_balance = Balance.objects.select_for_update().get(user=fundraise.author)
-                    author_balance.amount += author_amount
+                    author_balance.amount += amount
                     author_balance.save()
                     
-                    # Обновляем сумму сбора (показываем полную сумму донатов)
+                    # Обновляем сумму сбора
                     fundraise.current_amount += amount
                     fundraise.donors_count += 1
-                    fundraise.total_commission += commission_amount
                     fundraise.save()
                     
                     # Создаем пожертвование
@@ -527,7 +569,7 @@ def fundraise_detail(request, pk):
                         is_anonymous=is_anonymous
                     )
                     
-                    # Создаем транзакцию для автора (сумма за вычетом комиссии)
+                    # Создаем транзакцию (полная сумма!)
                     transaction_comment = f'Пожертвование на сбор "{fundraise.title}"'
                     if message:
                         transaction_comment += f' - "{message[:50]}"'
@@ -535,32 +577,17 @@ def fundraise_detail(request, pk):
                     Transaction.objects.create(
                         sender=request.user,
                         receiver=fundraise.author,
-                        amount=author_amount,
+                        amount=amount,  # Полная сумма, без вычета комиссии
                         comment=transaction_comment,
                         status='completed',
                         is_donation=True,
                         fundraise_id=fundraise.id
                     )
                     
-                    # Создаем транзакцию комиссии (если комиссия > 0)
-                    if commission_amount > 0:
-                        # Создаем системный аккаунт или записываем в специальную таблицу
-                        # Для простоты создадим транзакцию с receiver=null или специальным пользователем
-                        Transaction.objects.create(
-                            sender=request.user,
-                            receiver=None,  # Комиссия уходит в систему
-                            amount=commission_amount,
-                            comment=f'Комиссия сервиса {commission_percent}% за пожертвование на сбор "{fundraise.title}"',
-                            status='completed',
-                            is_donation=True,
-                            fundraise_id=fundraise.id
-                        )
-                    
                     messages.success(
                         request,
                         f'✅ Спасибо за пожертвование! '
-                        f'{amount} ₽ отправлено в сбор "{fundraise.title}". '
-                        f'Комиссия сервиса: {commission_amount:.2f} ₽ ({commission_percent}%)'
+                        f'{amount} ₽ отправлено в сбор "{fundraise.title}".'
                     )
                     return redirect('main:fundraise_detail', pk=pk)
             
@@ -579,7 +606,7 @@ def fundraise_detail(request, pk):
         'form': form,
         'progress_percent': fundraise.get_progress_percent(),
         'is_author': is_author,
-        'commission_percent': settings.SERVICE_COMMISSION_PERCENT,
+        'commission_percent': 0,  # Комиссия 0%
     }
     return render(request, 'main/fundraise_detail.html', context)
 
@@ -864,6 +891,295 @@ def cancel_fundraise(request, pk):
         messages.error(request, 'Этот сбор уже завершен или отменен')
     
     return redirect('main:my_fundraises')
+
+
+# ==================== ПЛАТЕЖИ ====================
+
+@login_required
+def create_payment(request):
+    """Создание платежа на пополнение"""
+    if request.method == 'POST':
+        amount = Decimal(request.POST.get('amount', '0'))
+        payment_method = request.POST.get('payment_method', 'card')
+        
+        # Проверка суммы
+        if amount < 100:
+            messages.error(request, 'Минимальная сумма пополнения - 100 ₽')
+            return redirect('main:topup')
+        
+        # Выбор провайдера
+        if payment_method == 'card':
+            provider = YooKassaProvider()
+        elif payment_method == 'stripe':
+            provider = StripeProvider()
+        elif payment_method == 'sbp':
+            provider = SBPProvider()
+        else:
+            provider = YooKassaProvider()
+        
+        # Создание платежа
+        result = provider.create_payment(
+            amount=amount,
+            user_id=request.user.id,
+            metadata={'payment_method': payment_method}
+        )
+        
+        if result['success']:
+            # Сохраняем платеж в БД
+            PaymentTransaction.objects.create(
+                user=request.user,
+                amount=amount,
+                payment_method=payment_method,
+                payment_id=result['payment_id'],
+                status='pending',
+                metadata={'confirmation_url': result['confirmation_url']}
+            )
+            
+            # Логируем
+            AntiFraudService(request.user).log_security_event('payment', request, {
+                'amount': amount,
+                'payment_method': payment_method
+            })
+            
+            # Редирект на оплату
+            return redirect(result['confirmation_url'])
+        else:
+            messages.error(request, f'Ошибка: {result.get("error", "Неизвестная ошибка")}')
+            return redirect('main:topup')
+    
+    return redirect('main:topup')
+
+
+@csrf_exempt
+def payment_webhook(request):
+    """
+    Webhook для обработки статусов платежей от ЮKassa
+    """
+    import json
+    
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
+    
+    try:
+        # Получаем тело запроса
+        body = json.loads(request.body)
+        
+        # Проверяем тип события
+        event = body.get('event')
+        
+        if event == 'payment.succeeded':
+            payment_id = body.get('object', {}).get('id')
+            
+            try:
+                # Находим платеж в нашей системе
+                payment_tx = PaymentTransaction.objects.get(payment_id=payment_id)
+                
+                if payment_tx.status != 'paid':
+                    # Обновляем статус
+                    payment_tx.status = 'paid'
+                    payment_tx.paid_at = timezone.now()
+                    payment_tx.save()
+                    
+                    # Начисляем баланс пользователю
+                    with db_transaction.atomic():
+                        balance = Balance.objects.select_for_update().get(user=payment_tx.user)
+                        balance.amount += payment_tx.amount
+                        balance.save()
+                        
+                        # Создаем транзакцию
+                        Transaction.objects.create(
+                            sender=payment_tx.user,
+                            receiver=payment_tx.user,
+                            amount=payment_tx.amount,
+                            comment='Пополнение баланса через ЮKassa',
+                            status='completed'
+                        )
+                    
+                    # Логируем успешный платеж
+                    logger.info(f"Payment succeeded: #{payment_id} for user {payment_tx.user.username}")
+            
+            except PaymentTransaction.DoesNotExist:
+                logger.warning(f"Payment not found: {payment_id}")
+        
+        elif event == 'payment.canceled':
+            payment_id = body.get('object', {}).get('id')
+            try:
+                payment_tx = PaymentTransaction.objects.get(payment_id=payment_id)
+                payment_tx.status = 'cancelled'
+                payment_tx.save()
+                logger.info(f"Payment cancelled: #{payment_id}")
+            except PaymentTransaction.DoesNotExist:
+                pass
+        
+        return JsonResponse({'status': 'ok'})
+    
+    except json.JSONDecodeError:
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        logger.error(f"Webhook error: {str(e)}")
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+
+
+@login_required
+def payment_success(request):
+    """Страница успешной оплаты"""
+    messages.success(request, '✅ Ваш платеж успешно прошел! Средства зачислены на баланс.')
+    return redirect('main:dashboard')
+
+@login_required
+def payment_cancel(request):
+    """Страница отмены оплаты"""
+    messages.warning(request, '❌ Платеж был отменен. Попробуйте снова или выберите другой способ оплаты.')
+    return redirect('main:topup')
+
+@login_required
+def initiate_sbp_payment(request, fundraise_id):
+    # ... получаете fundraise и сумму ...
+    provider = YooKassaProvider()
+    result = provider.create_sbp_qr_payment(amount, order_id=str(fundraise_id), description=fundraise.title)
+
+    if result['success']:
+        # Отдаем QR-код в шаблон страницы оплаты
+        return render(request, 'main/payment_sbp.html', {'qr_code': result['qr_code']})
+    else:
+        messages.error(request, 'Ошибка при создании платежа. Попробуйте позже.')
+        return redirect('main:fundraise_detail', pk=fundraise_id)
+    
+# ==================== ДВУХФАКТОРНАЯ АУТЕНТИФИКАЦИЯ ====================
+
+@login_required
+def setup_2fa(request):
+    """Настройка двухфакторной аутентификации"""
+    two_factor, created = TwoFactorAuth.objects.get_or_create(user=request.user)
+    
+    if not two_factor.secret_key:
+        two_factor.secret_key = TwoFactorAuthService.generate_secret()
+        two_factor.save()
+    
+    if request.method == 'POST':
+        code = request.POST.get('code')
+        
+        if TwoFactorAuthService.verify_code(two_factor.secret_key, code):
+            two_factor.is_enabled = True
+            two_factor.backup_codes = TwoFactorAuthService.generate_backup_codes()
+            two_factor.save()
+            
+            AntiFraudService(request.user).log_security_event('2fa_enabled', request)
+            
+            messages.success(request, 'Двухфакторная аутентификация включена!')
+            return redirect('main:profile')
+        else:
+            messages.error(request, 'Неверный код подтверждения')
+    
+    qr_code = TwoFactorAuthService.generate_qr_code(two_factor.secret_key, request.user.email)
+    
+    context = {
+        'secret_key': two_factor.secret_key,
+        'qr_code': qr_code,
+        'backup_codes': two_factor.backup_codes if two_factor.is_enabled else None,
+        'is_enabled': two_factor.is_enabled
+    }
+    return render(request, 'main/2fa_setup.html', context)
+
+
+# ==================== ВЕРИФИКАЦИЯ (KYC) ====================
+
+@login_required
+def verification_page(request):
+    """Страница верификации пользователя"""
+    verification, created = UserVerification.objects.get_or_create(user=request.user)
+    documents = KYCDocument.objects.filter(user=request.user)
+    limits = KYCService.get_verification_limits(verification.level)
+    
+    if request.method == 'POST':
+        # Обработка данных верификации
+        full_name = request.POST.get('full_name')
+        birth_date = request.POST.get('birth_date')
+        passport_series = request.POST.get('passport_series')
+        passport_number = request.POST.get('passport_number')
+        
+        # Валидация
+        name_error = KYCService.validate_name(full_name)
+        if name_error:
+            messages.error(request, name_error)
+            return redirect('main:verification')
+        
+        passport_errors = KYCService.validate_passport({
+            'passport_series': passport_series,
+            'passport_number': passport_number
+        })
+        
+        if passport_errors:
+            for error in passport_errors.values():
+                messages.error(request, error)
+            return redirect('main:verification')
+        
+        verification.full_name = full_name
+        verification.birth_date = birth_date
+        verification.passport_series = passport_series
+        verification.passport_number = passport_number
+        verification.level = 'basic'  # После заполнения данных - базовая верификация
+        verification.verified_at = timezone.now()
+        verification.save()
+        
+        AntiFraudService(request.user).log_security_event('verification', request)
+        
+        messages.success(request, 'Данные верификации сохранены!')
+        return redirect('main:verification')
+    
+    context = {
+        'verification': verification,
+        'documents': documents,
+        'limits': limits,
+        'verification_levels': dict(UserVerification.VERIFICATION_LEVELS)
+    }
+    return render(request, 'main/verification.html', context)
+
+
+@login_required
+def upload_document(request):
+    """Загрузка документа для верификации"""
+    if request.method == 'POST':
+        document_type = request.POST.get('document_type')
+        document_image = request.FILES.get('document_image')
+        
+        if not document_image:
+            messages.error(request, 'Выберите файл')
+            return redirect('main:verification')
+        
+        KYCDocument.objects.create(
+            user=request.user,
+            document_type=document_type,
+            document_number=request.POST.get('document_number', ''),
+            document_image=document_image,
+            status='pending'
+        )
+        
+        messages.success(request, 'Документ загружен на проверку')
+        return redirect('main:verification')
+    
+    return redirect('main:verification')
+
+
+@login_required
+def search_users(request):
+    """API поиск пользователей по username/email (нечувствительный к регистру)"""
+    query = request.GET.get('q', '').strip()
+    users = []
+    
+    if len(query) >= 3:
+        from django.contrib.auth.models import User
+        from django.db.models import Q
+        
+        # Поиск без учета регистра
+        users_list = User.objects.filter(
+            Q(username__icontains=query) | Q(email__icontains=query)
+        ).exclude(id=request.user.id)[:10]
+        
+        # Формируем результат с оригинальным регистром username
+        users = [{'username': u.username, 'email': u.email} for u in users_list]
+    
+    return JsonResponse({'users': users})
 
 def privacy_policy(request):
     """Страница политики конфиденциальности"""

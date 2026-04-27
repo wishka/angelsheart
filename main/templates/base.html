@@ -33,17 +33,37 @@
             <div class="nav-links">
                 <a href="{% url 'main:dashboard' %}"><i class="fas fa-home"></i> Главная</a>
                 <a href="{% url 'main:fundraises' %}"><i class="fas fa-hand-holding-heart"></i> Сборы</a>
-                <a href="{% url 'main:transfer' %}"><i class="fas fa-paper-plane"></i> Перевести</a>
-                <a href="{% url 'main:history' %}"><i class="fas fa-history"></i> История</a>
                 <a href="{% url 'main:leaders' %}"><i class="fas fa-crown"></i> Лидеры</a>
-                <a href="{% url 'main:profile' %}"><i class="fas fa-user-circle"></i> Профиль</a>
-                <a href="{% url 'main:withdrawal' %}"><i class="fas fa-money-bill-wave"></i> Вывод средств</a>
-                <a href="{% url 'main:my_withdrawals' %}"><i class="fas fa-history"></i> Мои выводы</a>
+
+                <!-- Баланс -->
                 <div class="balance-card-mini">
                     <i class="fas fa-coins"></i>
                     <span>{{ user.balance.amount|floatformat:2 }} ₽</span>
                 </div>
-                <a href="{% url 'main:logout' %}" style="color: #c96b72;"><i class="fas fa-sign-out-alt"></i> Выход</a>
+
+                <!-- Дропдаун профиля -->
+                <div class="dropdown">
+                    <button class="dropdown-btn">
+                        <i class="fas fa-user-circle"></i> {{ user.username }} <i class="fas fa-chevron-down"></i>
+                    </button>
+                    <div class="dropdown-content">
+                        <a href="{% url 'main:profile' %}"><i class="fas fa-user"></i> Мой профиль</a>
+                        <a href="{% url 'main:transfer' %}"><i class="fas fa-paper-plane"></i> Перевести</a>
+                        <a href="{% url 'main:history' %}"><i class="fas fa-history"></i> История транзакций</a>
+                        <div class="dropdown-divider"></div>
+                        <a href="{% url 'main:my_fundraises' %}"><i class="fas fa-hand-holding-heart"></i> Мои сборы</a>
+                        <a href="{% url 'main:my_donations' %}"><i class="fas fa-heart"></i> Мои пожертвования</a>
+                        <div class="dropdown-divider"></div>
+                        <a href="{% url 'main:withdrawal' %}"><i class="fas fa-money-bill-wave"></i> Вывод средств</a>
+                        <a href="{% url 'main:my_withdrawals' %}"><i class="fas fa-clock"></i> История выводов</a>
+                        <div class="dropdown-divider"></div>
+                        <a href="{% url 'main:setup_2fa' %}"><i class="fas fa-shield-alt"></i> Двухфакторная 2FA</a>
+                        <a href="{% url 'main:verification' %}"><i class="fas fa-id-card"></i> Верификация (KYC)</a>
+                        <a href="{% url 'main:my_consents' %}"><i class="fas fa-file-signature"></i> Мои согласия</a>
+                        <div class="dropdown-divider"></div>
+                        <a href="{% url 'main:logout' %}" style="color: #c96b72;"><i class="fas fa-sign-out-alt"></i> Выход</a>
+                    </div>
+                </div>
             </div>
         </div>
     </nav>
@@ -121,6 +141,25 @@
             </div>
         </div>
     </div>
+
+    <!-- Универсальное модальное окно для подтверждений -->
+<div id="confirmModal" class="confirm-modal" style="display: none;">
+    <div class="confirm-modal-content">
+        <div class="confirm-modal-header" id="confirmModalHeader">
+            <i class="fas fa-question-circle" id="confirmIcon"></i>
+            <h2 id="confirmTitle">Подтверждение действия</h2>
+            <span class="confirm-close" onclick="closeConfirmModal()">&times;</span>
+        </div>
+        <div class="confirm-modal-body">
+            <p id="confirmMessage">Вы уверены, что хотите выполнить это действие?</p>
+            <div class="confirm-details" id="confirmDetails" style="display: none;"></div>
+        </div>
+        <div class="confirm-modal-footer">
+            <button class="btn btn-secondary" id="confirmCancelBtn" onclick="closeConfirmModal()">Отмена</button>
+            <button class="btn btn-primary" id="confirmOkBtn">Подтвердить</button>
+        </div>
+    </div>
+</div>
 
     <style>
         * {
@@ -237,6 +276,142 @@
             font-weight: 700;
             color: #c96b72;
             border: 1px solid rgba(212, 115, 122, 0.3);
+        }
+
+        /* Стили для дропдауна */
+        .dropdown {
+            position: relative;
+            display: inline-block;
+        }
+
+        .dropdown-btn {
+            background: linear-gradient(135deg, #ffe6e8, #ffe0e3);
+            border: none;
+            padding: 8px 18px;
+            border-radius: 50px;
+            font-family: 'Quicksand', sans-serif;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #c96b72;
+            transition: all 0.3s;
+            position: relative;
+            z-index: 1002;
+        }
+
+        .dropdown-btn:hover {
+            background: #d4737a;
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        .dropdown-content {
+            display: none;
+            position: absolute;
+            right: 0;
+            margin-top: 0;
+            padding-top: 5px;
+            top: calc(100% - 5px); /* Поднимаем меню вверх на 5px */
+            background: white;
+            min-width: 260px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            border-radius: 16px;
+            z-index: 1001;
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.98);
+        }
+
+        /* Невидимый мост между кнопкой и меню */
+        .dropdown-content::before {
+            content: '';
+            position: absolute;
+            top: -10px;
+            right: 20px;
+            width: 30px;
+            height: 15px;
+            background: transparent;
+        }
+
+        /* Меню появляется при наведении на кнопку ИЛИ на само меню */
+        .dropdown:hover .dropdown-content,
+        .dropdown-content:hover {
+            display: block;
+        }
+
+        .dropdown-content a {
+            padding: 12px 20px;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #6b5a5a;
+            transition: all 0.3s;
+            font-size: 0.95rem;
+        }
+
+        .dropdown-content a i {
+            width: 20px;
+            text-align: center;
+        }
+
+        .dropdown-content a:hover {
+            background: #fdf4f0;
+            color: #d4737a;
+        }
+
+        .dropdown-divider {
+            height: 1px;
+            background: #f0e0e0;
+            margin: 8px 0;
+        }
+
+        /* Анимация появления */
+        @keyframes dropdownFadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-5px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .dropdown:hover .dropdown-content,
+        .dropdown-content:hover {
+            animation: dropdownFadeIn 0.2s ease;
+            display: block;
+        }
+
+        /* Адаптация для мобильных */
+        @media (max-width: 768px) {
+            .dropdown-content {
+                position: fixed;
+                top: auto;
+                right: 10px;
+                left: 10px;
+                bottom: auto;
+                margin-top: 10px;
+                width: auto;
+                max-height: 80vh;
+                overflow-y: auto;
+            }
+
+            .dropdown-content::before {
+                display: none;
+            }
+
+            /* На мобильных - по клику, не по наведению */
+            .dropdown-content {
+                display: none;
+            }
+
+            .dropdown.open .dropdown-content {
+                display: block;
+            }
         }
 
         .container {
@@ -411,6 +586,13 @@
             .container {
                 padding: 1rem;
             }
+            .dropdown-content {
+                position: fixed;
+                top: auto;
+                right: 10px;
+                left: 10px;
+                width: auto;
+            }
         }
 
         .dove {
@@ -531,12 +713,123 @@
                 justify-content: center;
             }
         }
+
+        .confirm-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 20000;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(4px);
+        }
+
+        .confirm-modal-content {
+            background: white;
+            width: 90%;
+            max-width: 450px;
+            border-radius: 24px;
+            overflow: hidden;
+            animation: confirmSlideIn 0.3s ease;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        @keyframes confirmSlideIn {
+            from {
+                transform: scale(0.9);
+                opacity: 0;
+            }
+            to {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .confirm-modal-header {
+            background: linear-gradient(135deg, #d4737a, #e8a4aa);
+            padding: 1.2rem 1.5rem;
+            color: white;
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .confirm-modal-header i {
+            font-size: 1.8rem;
+        }
+
+        .confirm-modal-header h2 {
+            margin: 0;
+            font-size: 1.2rem;
+            flex: 1;
+        }
+
+        .confirm-close {
+            font-size: 1.8rem;
+            cursor: pointer;
+            line-height: 1;
+            transition: transform 0.2s;
+        }
+
+        .confirm-close:hover {
+            transform: scale(1.1);
+        }
+
+        .confirm-modal-body {
+            padding: 1.5rem;
+            color: #6b5a5a;
+            line-height: 1.5;
+        }
+
+        .confirm-modal-body p {
+            margin: 0 0 1rem 0;
+        }
+
+        .confirm-details {
+            background: #fdf4f0;
+            padding: 1rem;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            margin-top: 1rem;
+        }
+
+        .confirm-details p {
+            margin: 5px 0;
+        }
+
+        .confirm-details hr {
+            margin: 10px 0;
+            border: none;
+            border-top: 1px solid #e0d0d0;
+        }
+
+        .confirm-modal-footer {
+            padding: 1rem 1.5rem;
+            background: #fdf4f0;
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+        }
+
+        @media (max-width: 768px) {
+            .confirm-modal-footer {
+                flex-direction: column;
+            }
+            .confirm-modal-footer .btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
     </style>
 
     <script>
-        // Единый DOMContentLoaded для всего
         document.addEventListener('DOMContentLoaded', function() {
-            // 1. Добавляем летающих горлиц
+            // Летающие горлицы
             for(let i = 0; i < 5; i++) {
                 let dove = document.createElement('div');
                 dove.className = 'dove';
@@ -547,7 +840,7 @@
                 document.body.appendChild(dove);
             }
 
-            // 2. Управление cookie consent
+            // Cookie consent
             function setCookie(name, value, days) {
                 let expires = "";
                 if (days) {
@@ -577,7 +870,6 @@
                 if (modal) modal.style.display = 'none';
             }
 
-            // Показываем модальное окно, если согласие не дано
             const cookieConsent = getCookie('cookie_consent');
             const modal = document.getElementById('cookieModal');
 
@@ -587,7 +879,6 @@
                 }, 500);
             }
 
-            // Кнопки модального окна
             const acceptAllBtn = document.getElementById('acceptAllCookies');
             if (acceptAllBtn) {
                 acceptAllBtn.addEventListener('click', function() {
@@ -613,7 +904,7 @@
             }
         });
 
-        // Автоматическое скрытие сообщений через 5 секунд
+        // Автоматическое скрытие сообщений
         setTimeout(() => {
             document.querySelectorAll('.alert').forEach(alert => {
                 alert.style.animation = 'slideOut 0.3s ease forwards';
@@ -622,6 +913,171 @@
                 }, 300);
             });
         }, 5000);
+
+        // ==================== ДРОПДАУН ПРОФИЛЯ ====================
+        (function() {
+            const dropdown = document.querySelector('.dropdown');
+            const dropdownBtn = document.querySelector('.dropdown-btn');
+            const dropdownContent = document.querySelector('.dropdown-content');
+
+            if (!dropdown || !dropdownBtn) return;
+
+            let isOpen = false;
+            let hoverTimeout;
+
+            // Функция открытия меню
+            function openMenu() {
+                clearTimeout(hoverTimeout);
+                if (!isOpen) {
+                    dropdownContent.style.display = 'block';
+                    isOpen = true;
+                    dropdown.classList.add('open');
+                }
+            }
+
+            // Функция закрытия меню
+            function closeMenu() {
+                hoverTimeout = setTimeout(() => {
+                    if (isOpen) {
+                        dropdownContent.style.display = 'none';
+                        isOpen = false;
+                        dropdown.classList.remove('open');
+                    }
+                }, 150);
+            }
+
+            // Для десктопа - при наведении
+            if (window.innerWidth > 768) {
+                dropdown.addEventListener('mouseenter', openMenu);
+                dropdown.addEventListener('mouseleave', closeMenu);
+                dropdownContent.addEventListener('mouseenter', openMenu);
+                dropdownContent.addEventListener('mouseleave', closeMenu);
+            }
+
+            // Для мобильных - по клику
+            dropdownBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                if (window.innerWidth <= 768) {
+                    if (isOpen) {
+                        dropdownContent.style.display = 'none';
+                        isOpen = false;
+                        dropdown.classList.remove('open');
+                    } else {
+                        // Закрываем другие открытые меню
+                        document.querySelectorAll('.dropdown').forEach(drop => {
+                            if (drop !== dropdown) {
+                                const content = drop.querySelector('.dropdown-content');
+                                if (content) content.style.display = 'none';
+                                drop.classList.remove('open');
+                            }
+                        });
+                        dropdownContent.style.display = 'block';
+                        isOpen = true;
+                        dropdown.classList.add('open');
+                    }
+                }
+            });
+
+            // Закрытие при клике вне меню (для мобильных)
+            document.addEventListener('click', function(e) {
+                if (window.innerWidth <= 768 && isOpen && !dropdown.contains(e.target)) {
+                    dropdownContent.style.display = 'none';
+                    isOpen = false;
+                    dropdown.classList.remove('open');
+                }
+            });
+
+            // Закрытие при нажатии Escape
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && isOpen) {
+                    dropdownContent.style.display = 'none';
+                    isOpen = false;
+                    dropdown.classList.remove('open');
+                }
+            });
+
+            // Обработка изменения размера окна
+            let resizeTimeout;
+            window.addEventListener('resize', function() {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(() => {
+                    if (window.innerWidth > 768) {
+                        // На десктопе убираем клик-режим
+                        if (isOpen) {
+                            dropdownContent.style.display = 'none';
+                            isOpen = false;
+                            dropdown.classList.remove('open');
+                        }
+                    }
+                }, 200);
+            });
+        })();
+
+        let confirmCallback = null;
+
+        function showConfirmModal(options) {
+            // options = { title, message, details, icon, onConfirm }
+            document.getElementById('confirmTitle').textContent = options.title || 'Подтверждение действия';
+            document.getElementById('confirmMessage').innerHTML = options.message || 'Вы уверены, что хотите выполнить это действие?';
+
+            const icon = document.getElementById('confirmIcon');
+            icon.className = options.icon || 'fas fa-question-circle';
+
+            // Детали (опционально)
+            const detailsDiv = document.getElementById('confirmDetails');
+            if (options.details) {
+                detailsDiv.innerHTML = options.details;
+                detailsDiv.style.display = 'block';
+            } else {
+                detailsDiv.style.display = 'none';
+            }
+
+            // Цвет заголовка в зависимости от типа действия
+            const header = document.getElementById('confirmModalHeader');
+            if (options.type === 'danger') {
+                header.style.background = 'linear-gradient(135deg, #dc3545, #e8a4aa)';
+            } else if (options.type === 'success') {
+                header.style.background = 'linear-gradient(135deg, #28a745, #8bc34a)';
+            } else {
+                header.style.background = 'linear-gradient(135deg, #d4737a, #e8a4aa)';
+            }
+
+            // Сохраняем callback
+            confirmCallback = options.onConfirm;
+
+            // Показываем модальное окно
+            document.getElementById('confirmModal').style.display = 'flex';
+        }
+
+        function closeConfirmModal() {
+            document.getElementById('confirmModal').style.display = 'none';
+            confirmCallback = null;
+        }
+
+        // Обработчик подтверждения
+        document.getElementById('confirmOkBtn').addEventListener('click', function() {
+            if (confirmCallback) {
+                confirmCallback();
+            }
+            closeConfirmModal();
+        });
+
+        // Закрытие по Escape
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeConfirmModal();
+            }
+        });
+
+        // Закрытие по клику вне окна
+        window.onclick = function(event) {
+            const modal = document.getElementById('confirmModal');
+            if (event.target === modal) {
+                closeConfirmModal();
+            }
+        }
     </script>
 
     {% block extra_js %}{% endblock %}

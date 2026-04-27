@@ -7,7 +7,8 @@ from django.utils.safestring import mark_safe
 from django.db.models import Sum, Count
 from .models import (
     Balance, Transaction, UserConsent, ConsentLog,
-    Fundraise, Donation, CommissionTransaction, WithdrawalRequest
+    Fundraise, Donation, WithdrawalRequest,
+    PaymentTransaction, TwoFactorAuth, SecurityLog, UserVerification, KYCDocument
 )
 
 # ==================== НАСТРОЙКИ ОБЩЕЙ АДМИНКИ ====================
@@ -23,42 +24,44 @@ class CustomAdminSite(AdminSite):
     def get_app_list(self, request):
         app_list = super().get_app_list(request)
         
-        # Добавляем кастомные разделы
         custom_sections = [
             {
                 'name': 'Финансовые операции',
                 'app_label': 'finance',
                 'models': [
-                    {
-                        'name': 'Заявки на вывод',
-                        'object_name': 'WithdrawalRequest',
-                        'admin_url': '/admin/main/withdrawalrequest/',
-                        'view_only': False,
-                    },
-                    {
-                        'name': 'Транзакции',
-                        'object_name': 'Transaction',
-                        'admin_url': '/admin/main/transaction/',
-                        'view_only': False,
-                    },
-                    {
-                        'name': 'Сборы',
-                        'object_name': 'Fundraise',
-                        'admin_url': '/admin/main/fundraise/',
-                        'view_only': False,
-                    },
+                    {'name': 'Заявки на вывод', 'object_name': 'WithdrawalRequest',
+                     'admin_url': '/admin/main/withdrawalrequest/', 'view_only': False},
+                    {'name': 'Транзакции', 'object_name': 'Transaction',
+                     'admin_url': '/admin/main/transaction/', 'view_only': False},
+                    {'name': 'Сборы', 'object_name': 'Fundraise',
+                     'admin_url': '/admin/main/fundraise/', 'view_only': False},
+                    {'name': 'Платежи', 'object_name': 'PaymentTransaction',
+                     'admin_url': '/admin/main/paymenttransaction/', 'view_only': False},
+                ]
+            },
+            {
+                'name': 'Безопасность',
+                'app_label': 'security',
+                'models': [
+                    {'name': 'Логи безопасности', 'object_name': 'SecurityLog',
+                     'admin_url': '/admin/main/securitylog/', 'view_only': False},
+                    {'name': '2FA', 'object_name': 'TwoFactorAuth',
+                     'admin_url': '/admin/main/twofactorauth/', 'view_only': False},
+                    {'name': 'Верификация', 'object_name': 'UserVerification',
+                     'admin_url': '/admin/main/userverification/', 'view_only': False},
+                    {'name': 'KYC документы', 'object_name': 'KYCDocument',
+                     'admin_url': '/admin/main/kycdocument/', 'view_only': False},
                 ]
             }
         ]
         
-        # Добавляем кастомные разделы в начало
         app_list = custom_sections + app_list
         return app_list
+
 
 # ==================== КАСТОМНЫЙ ПОЛЬЗОВАТЕЛЬ ====================
 
 class BalanceInline(admin.StackedInline):
-    """Баланс пользователя в карточке пользователя"""
     model = Balance
     can_delete = False
     verbose_name = 'Баланс'
@@ -73,7 +76,6 @@ class BalanceInline(admin.StackedInline):
 
 
 class UserConsentInline(admin.TabularInline):
-    """Согласия пользователя"""
     model = UserConsent
     extra = 0
     fields = ['consent_type', 'version', 'is_accepted', 'agreed_at', 'ip_address']
@@ -83,9 +85,9 @@ class UserConsentInline(admin.TabularInline):
 
 
 class CustomUserAdmin(BaseUserAdmin):
-    """Расширенная админка пользователя"""
     inlines = [BalanceInline, UserConsentInline]
-    list_display = ['username', 'email', 'first_name', 'last_name', 'balance_display', 'is_staff', 'date_joined']
+    list_display = ['username', 'email', 'first_name', 'last_name', 'balance_display', 'verification_level', 'is_staff',
+                    'date_joined']
     list_filter = ['is_staff', 'is_superuser', 'is_active', 'date_joined']
     search_fields = ['username', 'email', 'first_name', 'last_name']
     ordering = ['-date_joined']
@@ -100,16 +102,23 @@ class CustomUserAdmin(BaseUserAdmin):
     
     balance_display.short_description = 'Баланс'
     
+    def verification_level(self, obj):
+        try:
+            level = obj.verification.level
+            levels = {'unverified': '🔴 Не верифицирован', 'basic': '🟡 Базовая', 'full': '🟢 Полная'}
+            return levels.get(level, level)
+        except UserVerification.DoesNotExist:
+            return '🔴 Не верифицирован'
+    
+    verification_level.short_description = 'Верификация'
+    
     fieldsets = BaseUserAdmin.fieldsets + (
-        ('Финансовая информация', {
-            'fields': ('balance_display',),
-            'classes': ('collapse',),
-        }),
+        ('Финансовая информация', {'fields': ('balance_display',), 'classes': ('collapse',)}),
+        ('Верификация', {'fields': ('verification_level',), 'classes': ('collapse',)}),
     )
-    readonly_fields = ['balance_display']
+    readonly_fields = ['balance_display', 'verification_level']
 
 
-# Заменяем стандартную админку пользователя
 admin.site.unregister(User)
 admin.site.register(User, CustomUserAdmin)
 
@@ -146,20 +155,6 @@ class BalanceAdmin(admin.ModelAdmin):
         return last_tx.created_at if last_tx else '—'
     
     last_transaction_date.short_description = 'Последняя транзакция'
-    
-    fieldsets = (
-        ('Информация о пользователе', {
-            'fields': ('user_link',)
-        }),
-        ('Баланс', {
-            'fields': ('amount_display',),
-            'classes': ('wide',),
-        }),
-        ('Статистика', {
-            'fields': ('last_transaction_date',),
-            'classes': ('collapse',),
-        }),
-    )
 
 
 # ==================== ТРАНЗАКЦИИ ====================
@@ -193,39 +188,14 @@ class TransactionAdmin(admin.ModelAdmin):
     amount_display.short_description = 'Сумма'
     
     def status_badge(self, obj):
-        status_colors = {
-            'completed': '#28a745',
-            'pending': '#ffc107',
-            'failed': '#dc3545',
-        }
-        status_text = {
-            'completed': '✅ Завершена',
-            'pending': '⏳ Ожидает',
-            'failed': '❌ Ошибка',
-        }
-        color = status_colors.get(obj.status, '#6c757d')
-        text = status_text.get(obj.status, obj.status)
+        colors = {'completed': '#28a745', 'pending': '#ffc107', 'failed': '#dc3545'}
+        texts = {'completed': '✅ Завершена', 'pending': '⏳ Ожидает', 'failed': '❌ Ошибка'}
+        color = colors.get(obj.status, '#6c757d')
+        text = texts.get(obj.status, obj.status)
         return mark_safe(
             f'<span style="background: {color}; color: white; padding: 2px 8px; border-radius: 12px;">{text}</span>')
     
     status_badge.short_description = 'Статус'
-    
-    fieldsets = (
-        ('Участники транзакции', {
-            'fields': ('sender_link', 'receiver_link')
-        }),
-        ('Детали', {
-            'fields': ('amount_display', 'comment', 'status_badge', 'is_donation')
-        }),
-        ('Информация о сборе', {
-            'fields': ('fundraise_id',),
-            'classes': ('collapse',),
-        }),
-        ('Временные метки', {
-            'fields': ('created_at',),
-            'classes': ('collapse',),
-        }),
-    )
     
     actions = ['mark_as_completed', 'mark_as_failed']
     
@@ -248,7 +218,7 @@ class FundraiseAdmin(admin.ModelAdmin):
     list_filter = ['status', 'category', 'created_at', 'is_featured']
     search_fields = ['title', 'description', 'author__username']
     ordering = ['-created_at']
-    readonly_fields = ['current_amount', 'donors_count', 'total_commission', 'progress_percent']
+    readonly_fields = ['current_amount', 'donors_count', 'progress_percent']
     list_per_page = 30
     date_hierarchy = 'created_at'
     
@@ -259,30 +229,20 @@ class FundraiseAdmin(admin.ModelAdmin):
     
     def progress_bar(self, obj):
         percent = obj.get_progress_percent()
-        return mark_safe(
-            f'''
+        return mark_safe(f'''
             <div style="width: 150px; background: #f0e0e0; border-radius: 10px; overflow: hidden;">
                 <div style="background: linear-gradient(90deg, #d4737a, #e8a4aa); width: {percent}%; height: 8px;"></div>
             </div>
             <span style="font-size: 11px;">{percent}% ({int(obj.current_amount)} / {int(obj.target_amount)})</span>
-            '''
-        )
+        ''')
     
     progress_bar.short_description = 'Прогресс'
     
     def status_badge(self, obj):
-        status_colors = {
-            'active': '#28a745',
-            'completed': '#17a2b8',
-            'cancelled': '#dc3545',
-        }
-        status_text = {
-            'active': 'Активный',
-            'completed': 'Завершен',
-            'cancelled': 'Отменен',
-        }
-        color = status_colors.get(obj.status, '#6c757d')
-        text = status_text.get(obj.status, obj.status)
+        colors = {'active': '#28a745', 'completed': '#17a2b8', 'cancelled': '#dc3545'}
+        texts = {'active': 'Активный', 'completed': 'Завершен', 'cancelled': 'Отменен'}
+        color = colors.get(obj.status, '#6c757d')
+        text = texts.get(obj.status, obj.status)
         return mark_safe(
             f'<span style="background: {color}; color: white; padding: 2px 8px; border-radius: 12px;">{text}</span>')
     
@@ -292,22 +252,6 @@ class FundraiseAdmin(admin.ModelAdmin):
         return f"{obj.get_progress_percent()}%"
     
     progress_percent.short_description = 'Процент выполнения'
-    
-    fieldsets = (
-        ('Основная информация', {
-            'fields': ('title', 'description', 'category', 'author_link')
-        }),
-        ('Финансы', {
-            'fields': ('target_amount', 'current_amount', 'total_commission', 'progress_percent', 'donors_count')
-        }),
-        ('Статус и даты', {
-            'fields': ('status', 'end_date', 'created_at')
-        }),
-        ('Внешний вид', {
-            'fields': ('image_url', 'is_featured'),
-            'classes': ('collapse',),
-        }),
-    )
     
     actions = ['activate_fundraises', 'complete_fundraises', 'cancel_fundraises', 'feature_fundraises']
     
@@ -352,31 +296,17 @@ class DonationAdmin(admin.ModelAdmin):
         return mark_safe(f'<a href="/admin/main/fundraise/{obj.fundraise.id}/change/">{obj.fundraise.title}</a>')
     
     fundraise_link.short_description = 'Сбор'
-    
-    fieldsets = (
-        ('Участники', {
-            'fields': ('donor_link', 'fundraise_link')
-        }),
-        ('Детали', {
-            'fields': ('amount', 'message', 'is_anonymous')
-        }),
-        ('Временные метки', {
-            'fields': ('created_at',),
-            'classes': ('collapse',),
-        }),
-    )
 
 
 # ==================== СОГЛАСИЯ ====================
 
 @admin.register(UserConsent)
 class UserConsentAdmin(admin.ModelAdmin):
-    list_display = ['id', 'user_link', 'consent_type_display', 'version', 'accepted_badge', 'agreed_at', 'ip_address']
+    list_display = ['id', 'user_link', 'consent_type_display', 'version', 'accepted_badge', 'agreed_at']
     list_filter = ['consent_type', 'version', 'is_accepted', 'agreed_at']
-    search_fields = ['user__username', 'ip_address']
+    search_fields = ['user__username']
     ordering = ['-agreed_at']
     readonly_fields = ['agreed_at', 'ip_address', 'user_agent', 'revoked_at']
-    list_per_page = 50
     
     def user_link(self, obj):
         return mark_safe(f'<a href="/admin/auth/user/{obj.user.id}/change/">{obj.user.username}</a>')
@@ -396,35 +326,15 @@ class UserConsentAdmin(admin.ModelAdmin):
         return mark_safe('<span style="color: #ffc107;">⏳ Ожидает</span>')
     
     accepted_badge.short_description = 'Статус'
-    
-    fieldsets = (
-        ('Пользователь', {
-            'fields': ('user_link',)
-        }),
-        ('Согласие', {
-            'fields': ('consent_type_display', 'version', 'accepted_badge')
-        }),
-        ('Техническая информация', {
-            'fields': ('ip_address', 'user_agent'),
-            'classes': ('collapse',),
-        }),
-        ('Временные метки', {
-            'fields': ('agreed_at', 'revoked_at', 'revocation_reason'),
-            'classes': ('collapse',),
-        }),
-    )
 
-
-# ==================== ЛОГИ СОГЛАСИЙ ====================
 
 @admin.register(ConsentLog)
 class ConsentLogAdmin(admin.ModelAdmin):
-    list_display = ['id', 'user_link', 'action_badge', 'consent_type_display', 'version', 'created_at', 'ip_address']
+    list_display = ['id', 'user_link', 'action_badge', 'consent_type_display', 'version', 'created_at']
     list_filter = ['action', 'consent_type', 'version', 'created_at']
-    search_fields = ['user__username', 'ip_address']
+    search_fields = ['user__username']
     ordering = ['-created_at']
     readonly_fields = ['created_at', 'ip_address', 'user_agent']
-    list_per_page = 100
     
     def user_link(self, obj):
         return mark_safe(f'<a href="/admin/auth/user/{obj.user.id}/change/">{obj.user.username}</a>')
@@ -437,65 +347,20 @@ class ConsentLogAdmin(admin.ModelAdmin):
     consent_type_display.short_description = 'Тип согласия'
     
     def action_badge(self, obj):
-        if obj.action == 'accept':
-            return mark_safe('<span style="color: #28a745;">✅ Принятие</span>')
-        return mark_safe('<span style="color: #dc3545;">❌ Отзыв</span>')
+        return mark_safe('<span style="color: #28a745;">✅ Принятие</span>' if obj.action == 'accept'
+                         else '<span style="color: #dc3545;">❌ Отзыв</span>')
     
     action_badge.short_description = 'Действие'
-    
-    fieldsets = (
-        ('Пользователь', {
-            'fields': ('user_link',)
-        }),
-        ('Действие', {
-            'fields': ('action_badge', 'consent_type_display', 'version')
-        }),
-        ('Техническая информация', {
-            'fields': ('ip_address', 'user_agent'),
-            'classes': ('collapse',),
-        }),
-        ('Временные метки', {
-            'fields': ('created_at',),
-            'classes': ('collapse',),
-        }),
-    )
 
 
-# ==================== КОМИССИИ ====================
-
-@admin.register(CommissionTransaction)
-class CommissionTransactionAdmin(admin.ModelAdmin):
-    list_display = ['id', 'donation_link', 'amount', 'percent', 'created_at']
-    list_filter = ['percent', 'created_at']
-    ordering = ['-created_at']
-    readonly_fields = ['created_at']
-    
-    def donation_link(self, obj):
-        return mark_safe(
-            f'<a href="/admin/main/donation/{obj.donation.id}/change/">Пожертвование #{obj.donation.id}</a>')
-    
-    donation_link.short_description = 'Пожертвование'
-    
-    fieldsets = (
-        ('Пожертвование', {
-            'fields': ('donation_link',)
-        }),
-        ('Комиссия', {
-            'fields': ('amount', 'percent')
-        }),
-        ('Временные метки', {
-            'fields': ('created_at',),
-            'classes': ('collapse',),
-        }),
-    )
-
+# ==================== ЗАЯВКИ НА ВЫВОД ====================
 
 @admin.register(WithdrawalRequest)
 class WithdrawalRequestAdmin(admin.ModelAdmin):
     list_display = ['id', 'user_link', 'amount_display', 'status', 'status_badge', 'payment_method_display',
-                    'created_at', 'processed_at']
+                    'created_at']
     list_filter = ['status', 'payment_method', 'created_at']
-    search_fields = ['id', 'user__username', 'user__email', 'transaction_id', 'comment']
+    search_fields = ['id', 'user__username', 'transaction_id', 'comment']
     readonly_fields = ['created_at', 'payment_details_display']
     list_per_page = 50
     list_editable = ['status']
@@ -511,34 +376,20 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
     amount_display.short_description = 'Сумма'
     
     def status_badge(self, obj):
-        status_colors = {
-            'pending': '#ffc107',
-            'processing': '#17a2b8',
-            'completed': '#28a745',
-            'rejected': '#dc3545',
-            'cancelled': '#6c757d',
-        }
-        status_text = {
-            'pending': '⏳ На рассмотрении',
-            'processing': '🔄 В обработке',
-            'completed': '✅ Выполнен',
-            'rejected': '❌ Отклонен',
-            'cancelled': '🗑️ Отменен',
-        }
-        color = status_colors.get(obj.status, '#6c757d')
-        text = status_text.get(obj.status, obj.status)
+        colors = {'pending': '#ffc107', 'processing': '#17a2b8', 'completed': '#28a745',
+                  'rejected': '#dc3545', 'cancelled': '#6c757d'}
+        texts = {'pending': '⏳ На рассмотрении', 'processing': '🔄 В обработке',
+                 'completed': '✅ Выполнен', 'rejected': '❌ Отклонен', 'cancelled': '🗑️ Отменен'}
+        color = colors.get(obj.status, '#6c757d')
+        text = texts.get(obj.status, obj.status)
         return mark_safe(
             f'<span style="background: {color}; color: white; padding: 2px 8px; border-radius: 12px;">{text}</span>')
     
     status_badge.short_description = 'Статус'
     
     def payment_method_display(self, obj):
-        methods = {
-            'card': '💳 Банковская карта',
-            'sbp': '📱 СБП',
-            'yoomoney': '💰 ЮMoney',
-            'crypto': '🪙 Криптовалюта',
-        }
+        methods = {'card': '💳 Банковская карта', 'sbp': '📱 СБП',
+                   'yoomoney': '💰 ЮMoney', 'crypto': '🪙 Криптовалюта'}
         return methods.get(obj.payment_method, obj.payment_method)
     
     payment_method_display.short_description = 'Способ вывода'
@@ -546,20 +397,16 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
     def payment_details_display(self, obj):
         details = []
         for key, value in obj.payment_details.items():
-            if 'card_number' in key and value:
-                masked = f'****{str(value)[-4:]}'
-                details.append(f'💳 Номер карты: {masked}')
-            elif 'card_holder' in key and value:
+            if 'card_number' in key:
+                details.append(f'💳 Номер карты: ****{str(value)[-4:]}')
+            elif 'card_holder' in key:
                 details.append(f'👤 Владелец: {value}')
-            elif 'expiry_date' in key and value:
-                details.append(f'📅 Срок: {value}')
-            elif 'phone' in key and value:
+            elif 'phone' in key:
                 phone = str(value)
                 masked = phone[:4] + '***' + phone[-4:] if len(phone) > 7 else '***'
                 details.append(f'📱 Телефон: {masked}')
-            elif 'wallet' in key and value:
-                masked = '***' + str(value)[-8:]
-                details.append(f'💰 Кошелек: {masked}')
+            elif 'wallet' in key:
+                details.append(f'💰 Кошелек: ***{str(value)[-8:]}')
             else:
                 details.append(f'📝 {key}: {value}')
         return mark_safe('<br>'.join(details) if details else '—')
@@ -585,74 +432,158 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
         for withdrawal in queryset.filter(status='pending'):
             withdrawal.reject(request.user, 'Отклонено администратором')
         self.message_user(request, f'{queryset.count()} заявок отклонены')
-    
-    fieldsets = (
-        ('Заявитель', {
-            'fields': ('user_link',)
-        }),
-        ('Сумма и статус', {
-            'fields': ('amount_display', 'status_badge', 'comment')
-        }),
-        ('Реквизиты', {
-            'fields': ('payment_method_display', 'payment_details_display')
-        }),
-        ('Информация о транзакции', {
-            'fields': ('transaction_id',),
-            'classes': ('collapse',),
-        }),
-        ('Временные метки', {
-            'fields': ('created_at', 'processed_at', 'processed_by'),
-            'classes': ('collapse',),
-        }),
-    )
-    
-    payment_details_display.short_description = 'Реквизиты'
-    
-    actions = ['approve_withdrawals', 'complete_withdrawals', 'reject_withdrawals']
-    
-    @admin.action(description='Подтвердить выбранные заявки')
-    def approve_withdrawals(self, request, queryset):
-        for withdrawal in queryset.filter(status='pending'):
-            withdrawal.approve(request.user)
-        self.message_user(request, f'{queryset.count()} заявок подтверждены')
-    
-    @admin.action(description='Завершить выбранные заявки')
-    def complete_withdrawals(self, request, queryset):
-        for withdrawal in queryset.filter(status='processing'):
-            withdrawal.complete(request.user)
-        self.message_user(request, f'{queryset.count()} заявок завершены')
-    
-    @admin.action(description='Отклонить выбранные заявки')
-    def reject_withdrawals(self, request, queryset):
-        for withdrawal in queryset.filter(status='pending'):
-            withdrawal.reject(request.user, 'Отклонено администратором')
-        self.message_user(request, f'{queryset.count()} заявок отклонены')
-    
-    fieldsets = (
-        ('Заявитель', {
-            'fields': ('user_link',)
-        }),
-        ('Сумма и статус', {
-            'fields': ('amount_display', 'status_badge', 'comment')
-        }),
-        ('Реквизиты', {
-            'fields': ('payment_method', 'payment_details_display')
-        }),
-        ('Информация о транзакции', {
-            'fields': ('transaction_id',),
-            'classes': ('collapse',),
-        }),
-        ('Временные метки', {
-            'fields': ('created_at', 'processed_at', 'processed_by'),
-            'classes': ('collapse',),
-        }),
-    )
 
+
+# ==================== НОВЫЕ МОДЕЛИ ====================
+
+@admin.register(PaymentTransaction)
+class PaymentTransactionAdmin(admin.ModelAdmin):
+    list_display = ['id', 'user_link', 'amount', 'payment_method', 'status_badge', 'created_at']
+    list_filter = ['status', 'payment_method', 'created_at']
+    search_fields = ['user__username', 'payment_id']
+    readonly_fields = ['created_at', 'paid_at']
+    list_per_page = 50
+    
+    def user_link(self, obj):
+        return mark_safe(f'<a href="/admin/auth/user/{obj.user.id}/change/">{obj.user.username}</a>')
+    
+    user_link.short_description = 'Пользователь'
+    
+    def status_badge(self, obj):
+        colors = {'pending': '#ffc107', 'processing': '#17a2b8', 'paid': '#28a745',
+                  'failed': '#dc3545', 'refunded': '#6c757d', 'cancelled': '#6c757d'}
+        texts = {'pending': '⏳ Ожидает', 'processing': '🔄 В обработке', 'paid': '✅ Оплачен',
+                 'failed': '❌ Ошибка', 'refunded': '↩️ Возвращен', 'cancelled': '🗑️ Отменен'}
+        color = colors.get(obj.status, '#6c757d')
+        text = texts.get(obj.status, obj.status)
+        return mark_safe(
+            f'<span style="background: {color}; color: white; padding: 2px 8px; border-radius: 12px;">{text}</span>')
+    
+    status_badge.short_description = 'Статус'
+
+
+@admin.register(TwoFactorAuth)
+class TwoFactorAuthAdmin(admin.ModelAdmin):
+    list_display = ['user_link', 'is_enabled', 'created_at', 'last_used']
+    list_filter = ['is_enabled', 'created_at']
+    search_fields = ['user__username']
+    readonly_fields = ['secret_key', 'backup_codes']
+    
+    def user_link(self, obj):
+        return mark_safe(f'<a href="/admin/auth/user/{obj.user.id}/change/">{obj.user.username}</a>')
+    
+    user_link.short_description = 'Пользователь'
+    
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(SecurityLog)
+class SecurityLogAdmin(admin.ModelAdmin):
+    list_display = ['id', 'user_link', 'action', 'ip_address', 'created_at']
+    list_filter = ['action', 'created_at']
+    search_fields = ['user__username', 'ip_address']
+    readonly_fields = ['created_at', 'ip_address', 'user_agent', 'details']
+    
+    def user_link(self, obj):
+        return mark_safe(
+            f'<a href="/admin/auth/user/{obj.user.id}/change/">{obj.user.username}</a>' if obj.user else 'Аноним')
+    
+    user_link.short_description = 'Пользователь'
+    
+    def has_add_permission(self, request):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(UserVerification)
+class UserVerificationAdmin(admin.ModelAdmin):
+    list_display = ['user_link', 'level_badge', 'full_name', 'verified_at']
+    list_filter = ['level', 'verified_at']
+    search_fields = ['user__username', 'full_name', 'passport_number']
+    readonly_fields = ['user_link', 'verified_at', 'updated_at']
+    
+    def user_link(self, obj):
+        return mark_safe(f'<a href="/admin/auth/user/{obj.user.id}/change/">{obj.user.username}</a>')
+    
+    user_link.short_description = 'Пользователь'
+    
+    def level_badge(self, obj):
+        colors = {'unverified': '#dc3545', 'basic': '#ffc107', 'full': '#28a745'}
+        texts = {'unverified': '🔴 Не верифицирован', 'basic': '🟡 Базовая', 'full': '🟢 Полная'}
+        return mark_safe(
+            f'<span style="color: {colors.get(obj.level, "#6c757d")};">{texts.get(obj.level, obj.level)}</span>')
+    
+    level_badge.short_description = 'Уровень'
+    
+    actions = ['approve_verification', 'reject_verification']
+    
+    @admin.action(description='✅ Подтвердить верификацию (полная)')
+    def approve_verification(self, request, queryset):
+        from django.utils import timezone
+        updated = queryset.update(level='full', verified_at=timezone.now())
+        self.message_user(request, f'{updated} пользователей верифицированы.')
+    
+    @admin.action(description='❌ Отклонить верификацию')
+    def reject_verification(self, request, queryset):
+        updated = queryset.update(level='unverified')
+        self.message_user(request, f'{updated} пользователей отклонены.')
+
+
+@admin.register(KYCDocument)
+class KYCDocumentAdmin(admin.ModelAdmin):
+    list_display = ['id', 'user_link', 'document_type_display', 'status_badge', 'uploaded_at']
+    list_filter = ['document_type', 'status', 'uploaded_at']
+    search_fields = ['user__username', 'document_number']
+    readonly_fields = ['uploaded_at', 'document_image_preview']
+    
+    def user_link(self, obj):
+        return mark_safe(f'<a href="/admin/auth/user/{obj.user.id}/change/">{obj.user.username}</a>')
+    
+    user_link.short_description = 'Пользователь'
+    
+    def document_type_display(self, obj):
+        types = {'passport': '📘 Паспорт РФ', 'driver_license': '🚗 Водительское удостоверение',
+                 'snils': '🆔 СНИЛС', 'inn': '📄 ИНН'}
+        return types.get(obj.document_type, obj.document_type)
+    
+    document_type_display.short_description = 'Тип документа'
+    
+    def status_badge(self, obj):
+        colors = {'pending': '#ffc107', 'approved': '#28a745', 'rejected': '#dc3545'}
+        texts = {'pending': '⏳ На проверке', 'approved': '✅ Подтвержден', 'rejected': '❌ Отклонен'}
+        return mark_safe(
+            f'<span style="background: {colors.get(obj.status, "#6c757d")}; color: white; padding: 2px 8px; border-radius: 12px;">{texts.get(obj.status, obj.status)}</span>')
+    
+    status_badge.short_description = 'Статус'
+    
+    def document_image_preview(self, obj):
+        if obj.document_image:
+            return mark_safe(
+                f'<a href="{obj.document_image.url}" target="_blank"><img src="{obj.document_image.url}" style="max-width: 200px; max-height: 150px;" /></a>')
+        return 'Нет изображения'
+    
+    document_image_preview.short_description = 'Превью'
+    
+    actions = ['approve_documents', 'reject_documents']
+    
+    @admin.action(description='✅ Подтвердить выбранные документы')
+    def approve_documents(self, request, queryset):
+        from django.utils import timezone
+        updated = queryset.update(status='approved', verified_at=timezone.now(), verified_by=request.user)
+        self.message_user(request, f'{updated} документов подтверждены.')
+    
+    @admin.action(description='❌ Отклонить выбранные документы')
+    def reject_documents(self, request, queryset):
+        updated = queryset.update(status='rejected')
+        self.message_user(request, f'{updated} документов отклонены.')
+
+
+# ==================== СТАТИСТИКА ====================
 
 def get_admin_stats():
-    """Статистика для главной страницы админки"""
-    from django.db.models import Sum
-    
     return {
         'total_withdrawals_pending': WithdrawalRequest.objects.filter(status='pending').count(),
         'total_withdrawals_processing': WithdrawalRequest.objects.filter(status='processing').count(),
@@ -661,4 +592,7 @@ def get_admin_stats():
         'total_withdrawals_amount': WithdrawalRequest.objects.filter(
             status__in=['pending', 'processing', 'completed']
         ).aggregate(Sum('amount'))['amount__sum'] or 0,
+        'total_payments_pending': PaymentTransaction.objects.filter(status='pending').count(),
+        'total_unverified_users': UserVerification.objects.filter(level='unverified').count(),
+        'total_kyc_pending': KYCDocument.objects.filter(status='pending').count(),
     }

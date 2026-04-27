@@ -6,23 +6,25 @@
 <div style="max-width: 600px; margin: 0 auto;">
     <div class="card">
         <div style="text-align: center; margin-bottom: 2rem;">
-            <div style="background: linear-gradient(135deg, #ffe6e8, #ffe0e3); width: 70px; height: 70px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 1rem;">
-                <i class="fas fa-paper-plane" style="font-size: 2rem; color: #d4737a;"></i>
+            <div class="icon-circle">
+                <i class="fas fa-paper-plane"></i>
             </div>
             <h1 style="color: #d4737a; margin-top: 0; margin-bottom: 0.5rem;">Совершить перевод</h1>
             <p style="color: #6b5a5a; margin: 0;">Переведите средства нуждающемуся в помощи</p>
         </div>
 
         <!-- Баланс пользователя -->
-        <div style="background: linear-gradient(135deg, #fdf4f0, #fff5f0); padding: 1rem 1.5rem; border-radius: 20px; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
-            <div style="display: flex; align-items: center; gap: 12px;">
-                <i class="fas fa-wallet" style="font-size: 1.5rem; color: #d4737a;"></i>
+        <div class="balance-card">
+            <div class="balance-info">
+                <div class="balance-icon">
+                    <i class="fas fa-wallet"></i>
+                </div>
                 <div>
-                    <div style="font-size: 0.85rem; color: #b89a9a;">Ваш баланс</div>
-                    <div style="font-size: 1.5rem; font-weight: 700; color: #d4737a;">{{ current_balance|floatformat:2 }} ₽</div>
+                    <div class="balance-label">ВАШ БАЛАНС</div>
+                    <div class="balance-amount" id="userBalance">{{ current_balance|floatformat:2 }} ₽</div>
                 </div>
             </div>
-            <a href="{% url 'main:topup' %}" class="btn btn-secondary" style="padding: 8px 20px;">
+            <a href="{% url 'main:topup' %}" class="topup-btn">
                 <i class="fas fa-plus-circle"></i> Пополнить
             </a>
         </div>
@@ -30,30 +32,42 @@
         <form method="post" id="transferForm">
             {% csrf_token %}
 
-            <!-- Получатель -->
+            <!-- Получатель с поиском -->
             <div class="form-group">
-                <label style="display: flex; align-items: center; gap: 8px;">
-                    <i class="fas fa-user-friends" style="color: #d4737a;"></i>
+                <label class="form-label">
+                    <i class="fas fa-user-friends"></i>
                     <span>Кому помочь?</span>
                 </label>
-                <div style="position: relative;">
-                    {{ form.receiver_username }}
-                    <div id="usernameCheckResult" style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%);"></div>
+                <div class="input-wrapper">
+                    <i class="fas fa-search input-icon"></i>
+                    <input type="text"
+                           name="receiver_username"
+                           id="receiverSearch"
+                           class="form-control"
+                           placeholder="Введите имя пользователя..."
+                           autocomplete="off"
+                           required>
+                    <div id="usernameCheckResult" class="input-check"></div>
                 </div>
-                <small style="color: #b89a9a; display: block; margin-top: 5px;">
-                    <i class="fas fa-info-circle"></i> Введите username получателя
-                </small>
+
+                <!-- Выпадающий список с результатами поиска -->
+                <div id="searchResults" class="search-results" style="display: none;"></div>
+
+                <div class="form-hint">
+                    <i class="fas fa-info-circle"></i> Введите минимум 3 символа для поиска
+                </div>
             </div>
 
             <!-- Быстрые получатели -->
             {% if recent_receivers %}
-            <div style="margin-bottom: 1.5rem;">
-                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #6b5a5a;">
-                    <i class="fas fa-clock"></i> Недавние получатели:
+            <div class="recent-section">
+                <label class="form-label">
+                    <i class="fas fa-clock"></i>
+                    <span>Недавние получатели</span>
                 </label>
-                <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                <div class="receiver-buttons">
                     {% for username in recent_receivers %}
-                    <button type="button" class="receiver-quick-btn" data-username="{{ username }}" style="background: #fdf4f0; border: 1px solid #e0d0d0; padding: 6px 15px; border-radius: 50px; cursor: pointer; transition: all 0.3s; color: #6b5a5a;">
+                    <button type="button" class="receiver-quick-btn" data-username="{{ username }}">
                         <i class="fas fa-user"></i> {{ username }}
                     </button>
                     {% endfor %}
@@ -63,17 +77,21 @@
 
             <!-- Сумма перевода -->
             <div class="form-group">
-                <label style="display: flex; align-items: center; gap: 8px;">
-                    <i class="fas fa-coins" style="color: #d4737a;"></i>
-                    <span>Сумма перевода (₽)</span>
+                <label class="form-label">
+                    <i class="fas fa-coins"></i>
+                    <span>Сумма перевода</span>
                 </label>
-                <div style="position: relative;">
-                    {{ form.amount }}
-                    <span style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%); color: #b89a9a;">₽</span>
+                <div class="input-wrapper">
+                    <i class="fas fa-ruble-sign input-icon"></i>
+                    <input type="number" name="amount" id="amountInput" class="form-control" placeholder="Введите сумму" step="1" min="1" required>
+                    <span class="input-suffix">₽</span>
+                </div>
+                <div class="form-hint">
+                    <i class="fas fa-shield-alt"></i> Минимальная сумма — 1 ₽
                 </div>
 
                 <!-- Быстрые суммы -->
-                <div style="display: flex; gap: 0.5rem; margin-top: 10px; flex-wrap: wrap;">
+                <div class="quick-amounts">
                     <button type="button" class="amount-quick-btn" data-amount="100">100 ₽</button>
                     <button type="button" class="amount-quick-btn" data-amount="300">300 ₽</button>
                     <button type="button" class="amount-quick-btn" data-amount="500">500 ₽</button>
@@ -84,59 +102,332 @@
 
             <!-- Комментарий -->
             <div class="form-group">
-                <label style="display: flex; align-items: center; gap: 8px;">
-                    <i class="fas fa-comment" style="color: #d4737a;"></i>
-                    <span>Теплые слова (необязательно)</span>
+                <label class="form-label">
+                    <i class="fas fa-comment"></i>
+                    <span>Теплые слова <span class="optional">(необязательно)</span></span>
                 </label>
-                {{ form.comment }}
-                <small style="color: #b89a9a; display: block; margin-top: 5px;">
-                    <i class="fas fa-heart"></i> Напишите добрые слова получателю
-                </small>
+                <div class="input-wrapper">
+                    <i class="fas fa-heart input-icon"></i>
+                    {{ form.comment }}
+                </div>
+                <div class="form-hint">
+                    <i class="fas fa-smile"></i> Напишите добрые слова получателю
+                </div>
             </div>
 
             <!-- Кнопки -->
-            <div style="display: flex; gap: 1rem; margin-top: 2rem;">
-                <button type="submit" class="btn btn-primary" style="flex: 1;" id="submitBtn">
+            <div class="action-buttons">
+                <button type="submit" class="btn btn-primary" id="submitBtn">
                     <i class="fas fa-paper-plane"></i> Перевести
                 </button>
-                <a href="{% url 'main:dashboard' %}" class="btn btn-secondary" style="flex: 1; text-align: center;">
+                <a href="{% url 'main:dashboard' %}" class="btn btn-secondary">
                     Отмена
                 </a>
             </div>
         </form>
 
         <!-- Напоминание о безопасности -->
-        <div style="margin-top: 1.5rem; text-align: center; padding: 0.75rem; background: #fdf4f0; border-radius: 12px;">
-            <div style="display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.85rem; color: #6b5a5a;">
-                <i class="fas fa-shield-alt" style="color: #d4737a;"></i>
+        <div class="security-note">
+            <div>
+                <i class="fas fa-shield-alt"></i>
                 <span>Все переводы защищены и безопасны</span>
-                <i class="fas fa-lock" style="color: #d4737a;"></i>
+                <i class="fas fa-lock"></i>
             </div>
-        </div>
-
-        <!-- Информация о комиссии -->
-        <div style="margin-top: 1rem; text-align: center; font-size: 0.8rem; color: #b89a9a;">
-            <i class="fas fa-info-circle"></i>
-            При переводе через сборы взимается комиссия 3%.
-            <a href="/user-agreement/#commission" style="color: #d4737a;">Подробнее</a>
         </div>
     </div>
 </div>
 
 <style>
-    /* Стили для быстрых кнопок */
-    .receiver-quick-btn:hover {
-        background: #d4737a;
-        border-color: #d4737a;
-        color: white;
-        transform: translateY(-2px);
+    .icon-circle {
+        background: linear-gradient(135deg, #ffe6e8, #ffe0e3);
+        width: 70px;
+        height: 70px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 1rem;
+        transition: transform 0.3s;
     }
 
-    .amount-quick-btn {
+    .icon-circle:hover {
+        transform: scale(1.05);
+    }
+
+    .icon-circle i {
+        font-size: 2rem;
+        color: #d4737a;
+    }
+
+    .balance-card {
+        background: linear-gradient(135deg, #fdf4f0, #fff5f0);
+        padding: 1rem 1.5rem;
+        border-radius: 24px;
+        margin-bottom: 1.5rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        transition: all 0.3s;
+    }
+
+    .balance-card:hover {
+        box-shadow: 0 4px 12px rgba(212, 115, 122, 0.1);
+    }
+
+    .balance-info {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .balance-icon {
         background: white;
+        width: 45px;
+        height: 45px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.3s;
+    }
+
+    .balance-icon i {
+        font-size: 1.3rem;
+        color: #d4737a;
+    }
+
+    .balance-label {
+        font-size: 0.7rem;
+        color: #b89a9a;
+        letter-spacing: 0.5px;
+    }
+
+    .balance-amount {
+        font-size: 1.4rem;
+        font-weight: 700;
+        color: #d4737a;
+    }
+
+    .topup-btn {
+        padding: 8px 20px;
+        border-radius: 40px;
+        text-decoration: none;
+        font-size: 0.85rem;
+        background: white;
+        color: #d4737a;
+        border: 2px solid #d4737a;
+        transition: all 0.3s;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .topup-btn:hover {
+        background: #d4737a;
+        color: white;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(212, 115, 122, 0.3);
+    }
+
+    .form-group {
+        margin-bottom: 1.5rem;
+        position: relative;
+    }
+
+    .form-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+        font-weight: 600;
+        color: #6b5a5a;
+        font-size: 0.9rem;
+    }
+
+    .form-label i {
+        color: #d4737a;
+        width: 18px;
+    }
+
+    .optional {
+        color: #b89a9a;
+        font-weight: normal;
+        font-size: 0.75rem;
+    }
+
+    .input-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+
+    .input-wrapper input,
+    .input-wrapper textarea {
+        width: 100%;
+        padding: 14px 50px 14px 48px;
+        border: 2px solid #f0e0e0;
+        border-radius: 60px;
+        font-family: 'Quicksand', sans-serif;
+        font-size: 1rem;
+        transition: all 0.3s;
+        background: white;
+    }
+
+    .input-wrapper textarea {
+        border-radius: 24px;
+        padding: 14px 20px 14px 48px;
+        resize: vertical;
+        min-height: 80px;
+    }
+
+    .input-icon {
+        position: absolute;
+        left: 18px;
+        color: #b89a9a;
+        font-size: 1rem;
+        pointer-events: none;
+        transition: all 0.3s;
+        z-index: 1;
+    }
+
+    .input-suffix {
+        position: absolute;
+        right: 18px;
+        color: #b89a9a;
+        font-size: 0.9rem;
+        pointer-events: none;
+    }
+
+    .input-check {
+        position: absolute;
+        right: 18px;
+        top: 50%;
+        transform: translateY(-50%);
+    }
+
+    .input-wrapper input:hover,
+    .input-wrapper textarea:hover {
+        border-color: #e8a4aa;
+        transform: translateY(-1px);
+    }
+
+    .input-wrapper input:focus,
+    .input-wrapper textarea:focus {
+        outline: none;
+        border-color: #d4737a;
+        box-shadow: 0 0 0 3px rgba(212, 115, 122, 0.15);
+        transform: translateY(-1px);
+    }
+
+    .input-wrapper:focus-within .input-icon {
+        color: #d4737a;
+    }
+
+    .input-wrapper input::placeholder,
+    .input-wrapper textarea::placeholder {
+        color: #d0c0c0;
+        font-size: 0.9rem;
+    }
+
+    .form-hint {
+        margin-top: 8px;
+        font-size: 0.7rem;
+        color: #b89a9a;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .form-hint i {
+        font-size: 0.7rem;
+    }
+
+    /* Стили для выпадающего списка поиска */
+    .search-results {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: white;
+        border: 2px solid #f0e0e0;
+        border-top: none;
+        border-radius: 0 0 20px 20px;
+        max-height: 250px;
+        overflow-y: auto;
+        z-index: 1000;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        margin-top: -2px;
+    }
+
+    .search-result-item {
+        padding: 12px 18px;
+        cursor: pointer;
+        transition: all 0.3s;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        border-bottom: 1px solid #f0e0e0;
+    }
+
+    .search-result-item:last-child {
+        border-bottom: none;
+    }
+
+    .search-result-item:hover {
+        background: #fdf4f0;
+    }
+
+    .search-result-avatar {
+        width: 32px;
+        height: 32px;
+        background: linear-gradient(135deg, #ffe6e8, #ffe0e3);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .search-result-avatar i {
+        color: #d4737a;
+        font-size: 1rem;
+    }
+
+    .search-result-info {
+        flex: 1;
+    }
+
+    .search-result-username {
+        font-weight: 600;
+        color: #d4737a;
+    }
+
+    .search-result-email {
+        font-size: 0.7rem;
+        color: #b89a9a;
+    }
+
+    .search-result-item.selected {
+        background: #fdf4f0;
+        border-left: 3px solid #d4737a;
+    }
+
+    .recent-section {
+        margin-bottom: 1.5rem;
+    }
+
+    .receiver-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .receiver-quick-btn {
+        background: #fdf4f0;
         border: 1px solid #e0d0d0;
-        padding: 5px 12px;
-        border-radius: 50px;
+        padding: 8px 18px;
+        border-radius: 60px;
         cursor: pointer;
         transition: all 0.3s;
         color: #6b5a5a;
@@ -144,11 +435,92 @@
         font-family: 'Quicksand', sans-serif;
     }
 
+    .receiver-quick-btn:hover {
+        background: #d4737a;
+        border-color: #d4737a;
+        color: white;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(212, 115, 122, 0.3);
+    }
+
+    .quick-amounts {
+        display: flex;
+        gap: 0.6rem;
+        margin-top: 14px;
+        flex-wrap: wrap;
+    }
+
+    .amount-quick-btn {
+        background: white;
+        border: 2px solid #e8d8d8;
+        padding: 7px 16px;
+        border-radius: 60px;
+        cursor: pointer;
+        transition: all 0.3s;
+        color: #6b5a5a;
+        font-size: 0.8rem;
+        font-family: 'Quicksand', sans-serif;
+        font-weight: 600;
+    }
+
     .amount-quick-btn:hover {
         background: #d4737a;
         border-color: #d4737a;
         color: white;
         transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(212, 115, 122, 0.3);
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 1rem;
+        margin-top: 2rem;
+    }
+
+    .action-buttons .btn {
+        flex: 1;
+        justify-content: center;
+        padding: 14px 20px;
+        border-radius: 60px;
+        font-weight: 700;
+        transition: all 0.3s;
+    }
+
+    .action-buttons .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(212, 115, 122, 0.4);
+    }
+
+    .action-buttons .btn-secondary:hover {
+        transform: translateY(-2px);
+        background: #d4737a;
+        color: white;
+    }
+
+    .security-note {
+        margin-top: 1.5rem;
+        text-align: center;
+        padding: 0.85rem;
+        background: #fdf4f0;
+        border-radius: 50px;
+        transition: all 0.3s;
+    }
+
+    .security-note:hover {
+        background: #fff0ea;
+    }
+
+    .security-note div {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-size: 0.8rem;
+        color: #6b5a5a;
+    }
+
+    .security-note i {
+        color: #d4737a;
     }
 
     .username-valid {
@@ -159,152 +531,306 @@
         color: #dc3545;
     }
 
-    .form-control:focus {
-        outline: none;
-        border-color: #d4737a;
-        box-shadow: 0 0 0 3px rgba(212, 115, 122, 0.1);
+    @media (max-width: 480px) {
+        .action-buttons {
+            flex-direction: column;
+        }
+
+        .quick-amounts {
+            gap: 0.4rem;
+        }
+
+        .amount-quick-btn {
+            padding: 5px 12px;
+            font-size: 0.7rem;
+        }
+
+        .receiver-quick-btn {
+            padding: 5px 14px;
+            font-size: 0.75rem;
+        }
+
+        .input-wrapper input,
+        .input-wrapper textarea {
+            padding: 12px 45px 12px 42px;
+            font-size: 0.9rem;
+        }
+
+        .input-icon {
+            left: 14px;
+        }
+
+        .search-result-item {
+            padding: 10px 14px;
+        }
     }
 </style>
 
 <script>
-    // Быстрые суммы
-    document.querySelectorAll('.amount-quick-btn').forEach(button => {
-        button.addEventListener('click', function() {
-            const amount = this.getAttribute('data-amount');
-            const amountInput = document.getElementById('id_amount');
-            if (amountInput) {
-                amountInput.value = amount;
-                amountInput.style.borderColor = '#d4737a';
-                // Проверка баланса
-                checkBalance(amount);
+    (function() {
+        // Получаем баланс из DOM
+        const balanceElement = document.getElementById('userBalance');
+        let currentBalance = 0;
+        if (balanceElement) {
+            const balanceText = balanceElement.innerText.replace('₽', '').trim();
+            currentBalance = parseFloat(balanceText) || 0;
+        }
+
+        // Элементы поиска
+        const searchInput = document.getElementById('receiverSearch');
+        const searchResults = document.getElementById('searchResults');
+        const usernameInput = document.getElementById('id_receiver_username');
+        const transferForm = document.getElementById('transferForm');
+
+        let searchTimeout;
+        let selectedIndex = -1;
+        let currentResults = [];
+
+        // Функция поиска пользователей (без учета регистра)
+        async function searchUsers(query) {
+            if (query.length < 3) {
+                searchResults.style.display = 'none';
+                searchResults.innerHTML = '';
+                return;
             }
-        });
-    });
 
-    // Быстрые получатели
-    document.querySelectorAll('.receiver-quick-btn').forEach(button => {
-        button.addEventListener('click', function() {
-            const username = this.getAttribute('data-username');
-            const usernameInput = document.getElementById('id_receiver_username');
-            if (usernameInput) {
-                usernameInput.value = username;
-                usernameInput.style.borderColor = '#d4737a';
-                checkUsername(username);
+            try {
+                // Отправляем запрос как есть, API уже обрабатывает без учета регистра
+                const response = await fetch(`/api/search-users/?q=${encodeURIComponent(query)}`);
+                const data = await response.json();
+                currentResults = data.users;
+
+                if (currentResults.length > 0) {
+                    displaySearchResults(currentResults);
+                    searchResults.style.display = 'block';
+                } else {
+                    searchResults.innerHTML = '<div class="search-result-item" style="justify-content: center; color: #b89a9a;">Пользователи не найдены</div>';
+                    searchResults.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Ошибка поиска:', error);
             }
-        });
-    });
+        }
 
-    // Проверка существования пользователя (AJAX)
-    let typingTimer;
-    const usernameInput = document.getElementById('id_receiver_username');
+        // Отображение результатов поиска
+        function displaySearchResults(users) {
+            searchResults.innerHTML = '';
+            users.forEach((user, index) => {
+                const item = document.createElement('div');
+                item.className = 'search-result-item';
+                if (index === selectedIndex) item.classList.add('selected');
+                item.innerHTML = `
+                    <div class="search-result-avatar">
+                        <i class="fas fa-user"></i>
+                    </div>
+                    <div class="search-result-info">
+                        <div class="search-result-username">${escapeHtml(user.username)}</div>
+                        <div class="search-result-email">${escapeHtml(user.email || '')}</div>
+                    </div>
+                `;
+                item.addEventListener('click', () => selectUser(user.username));
+                searchResults.appendChild(item);
+            });
+        }
 
-    function checkUsername(username) {
-        if (username && username.length > 2) {
-            fetch(`/api/check-username/?username=${encodeURIComponent(username)}`)
-                .then(response => response.json())
-                .then(data => {
-                    const resultDiv = document.getElementById('usernameCheckResult');
-                    if (data.exists) {
-                        resultDiv.innerHTML = '<i class="fas fa-check-circle username-valid" style="font-size: 1.2rem;"></i>';
-                        usernameInput.style.borderColor = '#28a745';
-                    } else {
-                        resultDiv.innerHTML = '<i class="fas fa-times-circle username-invalid" style="font-size: 1.2rem;"></i>';
-                        usernameInput.style.borderColor = '#dc3545';
-                    }
-                })
-                .catch(error => {
-                    console.error('Ошибка:', error);
+        // Выбор пользователя
+        function selectUser(username) {
+            searchInput.value = username;
+            searchResults.style.display = 'none';
+            selectedIndex = -1;
+
+            // Проверяем существование пользователя
+            checkUsername(username);
+        }
+
+        // Экранирование HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Проверка существования пользователя (без учета регистра)
+        function checkUsername(username) {
+            if (username && username.length > 2) {
+                fetch(`/api/check-username/?username=${encodeURIComponent(username)}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        const resultDiv = document.getElementById('usernameCheckResult');
+                        if (data.exists) {
+                            resultDiv.innerHTML = '<i class="fas fa-check-circle username-valid" style="font-size: 1.2rem;"></i>';
+                            searchInput.style.borderColor = '#28a745';
+                        } else {
+                            resultDiv.innerHTML = '<i class="fas fa-times-circle username-invalid" style="font-size: 1.2rem;"></i>';
+                            searchInput.style.borderColor = '#dc3545';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Ошибка:', error);
+                    });
+            } else if (username && username.length > 0 && username.length <= 2) {
+                document.getElementById('usernameCheckResult').innerHTML = '<i class="fas fa-spinner fa-pulse" style="color: #b89a9a;"></i>';
+                searchInput.style.borderColor = '#f0e0e0';
+            } else {
+                document.getElementById('usernameCheckResult').innerHTML = '';
+                searchInput.style.borderColor = '#f0e0e0';
+            }
+        }
+
+        // Обработчик ввода в поле поиска
+        if (searchInput) {
+            searchInput.addEventListener('input', function(e) {
+                clearTimeout(searchTimeout);
+                const query = this.value.trim();
+
+                if (query.length >= 3) {
+                    searchTimeout = setTimeout(() => searchUsers(query), 300);
+                } else {
+                    searchResults.style.display = 'none';
+                    searchResults.innerHTML = '';
+                }
+
+                if (query.length > 0) {
+                    checkUsername(query);
+                } else {
+                    document.getElementById('usernameCheckResult').innerHTML = '';
+                    searchInput.style.borderColor = '#f0e0e0';
+                }
+            });
+
+            // Навигация по клавишам
+            searchInput.addEventListener('keydown', function(e) {
+                const items = document.querySelectorAll('.search-result-item');
+                if (items.length === 0) return;
+
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
+                    updateSelectedItem(items);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    selectedIndex = Math.max(selectedIndex - 1, -1);
+                    updateSelectedItem(items);
+                } else if (e.key === 'Enter' && selectedIndex >= 0 && currentResults[selectedIndex]) {
+                    e.preventDefault();
+                    selectUser(currentResults[selectedIndex].username);
+                } else if (e.key === 'Escape') {
+                    searchResults.style.display = 'none';
+                    selectedIndex = -1;
+                }
+            });
+
+            // Закрытие результатов при клике вне поля
+            document.addEventListener('click', function(e) {
+                if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+                    searchResults.style.display = 'none';
+                    selectedIndex = -1;
+                }
+            });
+        }
+
+        function updateSelectedItem(items) {
+            items.forEach((item, index) => {
+                if (index === selectedIndex) {
+                    item.classList.add('selected');
+                    item.scrollIntoView({ block: 'nearest' });
+                } else {
+                    item.classList.remove('selected');
+                }
+            });
+        }
+
+        // Остальные элементы
+        const amountInput = document.getElementById('amountInput');
+        const quickAmountBtns = document.querySelectorAll('.amount-quick-btn');
+
+        // Функция проверки баланса
+        function checkBalance(amount) {
+            if (!amountInput) return;
+            const amountValue = parseFloat(amount);
+            if (amountValue > currentBalance) {
+                amountInput.style.borderColor = '#dc3545';
+                let warningDiv = document.getElementById('balanceWarning');
+                if (!warningDiv) {
+                    warningDiv = document.createElement('div');
+                    warningDiv.id = 'balanceWarning';
+                    warningDiv.style.cssText = 'color: #dc3545; font-size: 0.7rem; margin-top: 6px; display: flex; align-items: center; gap: 5px;';
+                    amountInput.parentNode.appendChild(warningDiv);
+                }
+                warningDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Недостаточно средств. Ваш баланс: ' + currentBalance + ' ₽';
+            } else {
+                amountInput.style.borderColor = '#28a745';
+                const warningDiv = document.getElementById('balanceWarning');
+                if (warningDiv) warningDiv.remove();
+            }
+        }
+
+        // Быстрые суммы
+        if (quickAmountBtns.length > 0 && amountInput) {
+            quickAmountBtns.forEach(button => {
+                button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const amount = this.getAttribute('data-amount');
+                    amountInput.value = amount;
+                    amountInput.style.borderColor = '#d4737a';
+                    checkBalance(amount);
+
+                    this.style.transform = 'scale(0.95)';
+                    setTimeout(() => {
+                        this.style.transform = '';
+                    }, 150);
                 });
-        } else if (username && username.length > 0 && username.length <= 2) {
-            document.getElementById('usernameCheckResult').innerHTML = '<i class="fas fa-spinner fa-pulse" style="color: #b89a9a;"></i>';
-        } else {
-            document.getElementById('usernameCheckResult').innerHTML = '';
-            usernameInput.style.borderColor = '#f0e0e0';
+            });
         }
-    }
 
-    if (usernameInput) {
-        usernameInput.addEventListener('keyup', function() {
-            clearTimeout(typingTimer);
-            typingTimer = setTimeout(() => {
-                checkUsername(this.value);
-            }, 500);
-        });
-
-        usernameInput.addEventListener('blur', function() {
-            if (this.value) {
-                checkUsername(this.value);
-            }
-        });
-    }
-
-    // Проверка баланса
-    const currentBalance = {{ current_balance|floatformat:2 }};
-    const amountField = document.getElementById('id_amount');
-
-    function checkBalance(amount) {
-        const amountValue = parseFloat(amount);
-        if (amountValue > currentBalance) {
-            amountField.style.borderColor = '#dc3545';
-            // Показываем предупреждение
-            let warningDiv = document.getElementById('balanceWarning');
-            if (!warningDiv) {
-                warningDiv = document.createElement('div');
-                warningDiv.id = 'balanceWarning';
-                warningDiv.style.color = '#dc3545';
-                warningDiv.style.fontSize = '0.8rem';
-                warningDiv.style.marginTop = '5px';
-                amountField.parentNode.appendChild(warningDiv);
-            }
-            warningDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Недостаточно средств. Ваш баланс: ' + currentBalance + ' ₽';
-        } else {
-            amountField.style.borderColor = '#28a745';
-            const warningDiv = document.getElementById('balanceWarning');
-            if (warningDiv) {
-                warningDiv.remove();
-            }
+        if (amountInput) {
+            amountInput.addEventListener('input', function() {
+                checkBalance(this.value);
+            });
         }
-    }
 
-    if (amountField) {
-        amountField.addEventListener('input', function() {
-            checkBalance(this.value);
+        // Быстрые получатели
+        const receiverBtns = document.querySelectorAll('.receiver-quick-btn');
+        receiverBtns.forEach(button => {
+            button.addEventListener('click', function() {
+                const username = this.getAttribute('data-username');
+                if (searchInput) {
+                    searchInput.value = username;
+                    checkUsername(username);
+                    searchResults.style.display = 'none';
+                }
+            });
         });
-    }
 
-    // Валидация перед отправкой
-    const transferForm = document.getElementById('transferForm');
-    if (transferForm) {
-        transferForm.addEventListener('submit', function(e) {
-            const username = usernameInput?.value.trim();
-            const amount = parseFloat(amountField?.value || 0);
-
-            // Проверка получателя
-            if (!username) {
+        // Валидация перед отправкой
+        if (transferForm) {
+            transferForm.addEventListener('submit', function(e) {
                 e.preventDefault();
-                alert('Пожалуйста, укажите получателя');
-                usernameInput.focus();
-                return false;
-            }
 
-            // Проверка суммы
-            if (isNaN(amount) || amount <= 0) {
-                e.preventDefault();
-                alert('Пожалуйста, укажите корректную сумму (больше 0)');
-                amountField.focus();
-                return false;
-            }
+                const username = searchInput?.value.trim();
+                const amount = parseFloat(amountInput?.value || 0);
 
-            // Проверка баланса
-            if (amount > currentBalance) {
-                e.preventDefault();
-                alert(`Недостаточно средств. Ваш баланс: ${currentBalance} ₽`);
-                return false;
-            }
+                if (!username) {
+                    alert('Пожалуйста, укажите получателя');
+                    searchInput.focus();
+                    return false;
+                }
 
-            // Подтверждение
-            return confirm(`Подтвердите перевод:\n\nОтправитель: Вы\nПолучатель: ${username}\nСумма: ${amount} ₽\n\nПродолжить?`);
-        });
-    }
+                if (isNaN(amount) || amount <= 0) {
+                    alert('Пожалуйста, укажите корректную сумму (больше 0)');
+                    amountInput.focus();
+                    return false;
+                }
+
+                if (amount > currentBalance) {
+                    alert(`Недостаточно средств. Ваш баланс: ${currentBalance} ₽`);
+                    return false;
+                }
+
+                transferForm.submit();
+            });
+        }
+    })();
 </script>
 {% endblock %}

@@ -162,10 +162,6 @@
                         <strong>{{ fundraise.current_amount|floatformat:0 }} ₽</strong>
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                        <span>Комиссия сервиса:</span>
-                        <strong>{{ fundraise.total_commission|floatformat:2 }} ₽</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
                         <span>Вы получите:</span>
                         <strong style="color: #28a745;">{{ fundraise.current_amount|floatformat:0 }} ₽</strong>
                     </div>
@@ -227,19 +223,9 @@
                     </div>
 
                     <!-- Калькулятор комиссии -->
-                    <div style="background: #fdf4f0; padding: 0.75rem; border-radius: 12px; margin-bottom: 1rem; font-size: 0.85rem;">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                            <span>Сумма пожертвования:</span>
-                            <span id="displayAmount">0 ₽</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                            <span>Комиссия ({{ commission_percent }}%):</span>
-                            <span id="displayCommission" style="color: #856404;">0 ₽</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; font-weight: 600; padding-top: 5px; border-top: 1px solid #e0d0d0;">
-                            <span>Получит автор:</span>
-                            <span id="displayAuthorAmount" style="color: #28a745;">0 ₽</span>
-                        </div>
+                    <div style="background: #fdf4f0; padding: 0.75rem; border-radius: 12px; margin-bottom: 1rem; font-size: 0.85rem; text-align: center;">
+                        <i class="fas fa-heart" style="color: #d4737a;"></i>
+                        <span>100% вашего пожертвования получит автор сбора</span>
                     </div>
 
                     <div class="form-group">
@@ -267,78 +253,6 @@
                     </button>
                 </form>
             {% endif %}
-        </div>
-
-        <!-- ИНФОРМАЦИЯ О КОМИССИИ (статичный блок, но внутри sticky-контейнера) -->
-        <div style="margin-top: 1rem; text-align: center; background: #fdf4f0; border-radius: 16px; padding: 0.75rem;">
-            <div style="font-size: 0.8rem; color: #6b5a5a; display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap;">
-                <span><i class="fas fa-percent" style="color: #d4737a;"></i> Комиссия: {{ commission_percent }}%</span>
-                <span><i class="fas fa-chart-line" style="color: #d4737a;"></i> На развитие</span>
-                <span><i class="fas fa-clock" style="color: #d4737a;"></i> Мгновенно</span>
-            </div>
-        </div>
-
-        <!-- ССЫЛКИ НА ПОДРОБНОСТИ (статичный блок, но внутри sticky-контейнера) -->
-        <div style="margin-top: 0.5rem; text-align: center; padding: 0.5rem; background: rgba(253, 244, 240, 0.5); border-radius: 12px;">
-            <a href="#" onclick="showCommissionInfo(); return false;" style="color: #d4737a; text-decoration: none; font-size: 0.8rem;">
-                <i class="fas fa-info-circle"></i> Подробнее о комиссии
-            </a>
-            <span style="color: #b89a9a; margin: 0 8px;">•</span>
-            <a href="/user-agreement/" target="_blank" style="color: #d4737a; text-decoration: none; font-size: 0.8rem;">
-                <i class="fas fa-file-contract"></i> Правила
-            </a>
-        </div>
-    </div>
-</div>
-
-<!-- МОДАЛЬНОЕ ОКНО С ИНФОРМАЦИЕЙ О КОМИССИИ -->
-<div id="commissionModal" class="policy-modal" style="display: none;">
-    <div class="policy-modal-content" style="max-width: 500px;">
-        <div class="policy-modal-header">
-            <i class="fas fa-coins"></i>
-            <h2>О комиссии сервиса</h2>
-            <span class="policy-close" onclick="closeCommissionModal()">&times;</span>
-        </div>
-        <div class="policy-modal-body">
-            <h3>Почему мы берем комиссию?</h3>
-            <p>Комиссия в размере <strong>{{ commission_percent }}%</strong> от каждого пожертвования направляется на:</p>
-            <ul>
-                <li>🌐 Поддержание работы сервера и хостинга</li>
-                <li>🛡️ Обеспечение безопасности и защиту данных</li>
-                <li>⚡ Разработку новых функций и улучшение сервиса</li>
-                <li>💬 Поддержку пользователей</li>
-                <li>📱 Развитие мобильных приложений</li>
-                <li>🎨 Улучшение дизайна и юзабилити</li>
-            </ul>
-
-            <h3>Как рассчитывается комиссия?</h3>
-            <p>Пример: при пожертвовании <strong>1000 ₽</strong>:</p>
-            <ul>
-                <li>📊 Комиссия ({{ commission_percent }}%) = <strong id="exampleCommission">30 ₽</strong></li>
-                <li>💝 Получатель получит = <strong id="exampleAuthorAmount">970 ₽</strong></li>
-            </ul>
-            <p style="font-size: 0.9rem; color: #6b5a5a; margin-top: 5px;">
-                <i class="fas fa-calculator"></i> Формула: Сумма × {{ commission_percent }}% = Комиссия<br>
-                1000 × {{ commission_percent }} / 100 = <strong id="formulaCommission">30 ₽</strong>
-            </p>
-
-            <h3>Прозрачность</h3>
-            <p>Мы обязуемся использовать все средства от комиссии исключительно на развитие платформы «Ангел-Хранитель» и повышение качества услуг.</p>
-
-            <h3>Когда комиссия не взимается?</h3>
-            <ul>
-                <li>❌ При прямых переводах между пользователями (не через сборы)</li>
-                <li>❌ При выводе средств</li>
-                <li>❌ При пополнении баланса</li>
-            </ul>
-
-            <div style="margin-top: 1rem; padding: 0.75rem; background: #fdf4f0; border-radius: 12px;">
-                <i class="fas fa-heart" style="color: #d4737a;"></i>
-                <span style="font-size: 0.85rem;">Спасибо, что помогаете нам делать платформу лучше!</span>
-            </div>
-        </div>
-        <div class="policy-modal-footer">
-            <button class="btn btn-primary" onclick="closeCommissionModal()">Понятно</button>
         </div>
     </div>
 </div>
@@ -523,41 +437,69 @@
         const form = document.getElementById('donationForm');
         if (form) {
             form.addEventListener('submit', function(e) {
+                e.preventDefault();
+
                 const amountInput = document.getElementById('amount');
                 const amount = parseFloat(amountInput?.value || 0);
                 const balance = parseFloat({{ user.balance.amount|floatformat:2 }});
 
                 if (isNaN(amount) || amount < 1) {
-                    e.preventDefault();
-                    alert('Пожалуйста, введите корректную сумму (минимум 1 ₽)');
-                    amountInput?.focus();
+                    showConfirmModal({
+                        title: 'Ошибка',
+                        message: 'Пожалуйста, введите корректную сумму (минимум 1 ₽)',
+                        icon: 'fas fa-exclamation-triangle',
+                        type: 'danger',
+                        onConfirm: function() {
+                            amountInput?.focus();
+                        }
+                    });
                     return false;
                 }
 
                 if (amount > balance) {
-                    e.preventDefault();
-                    alert(`Недостаточно средств. Ваш баланс: ${balance} ₽\nПожалуйста, пополните баланс.`);
+                    showConfirmModal({
+                        title: 'Недостаточно средств',
+                        message: `Ваш баланс: ${balance} ₽<br>Пожалуйста, пополните баланс для совершения пожертвования.`,
+                        icon: 'fas fa-wallet',
+                        type: 'danger',
+                        onConfirm: function() {
+                            window.location.href = '/topup/';
+                        }
+                    });
                     return false;
                 }
 
                 if (amount > 1000000) {
-                    e.preventDefault();
-                    alert('Максимальная сумма пожертвования - 1 000 000 ₽');
+                    showConfirmModal({
+                        title: 'Слишком большая сумма',
+                        message: 'Максимальная сумма пожертвования - 1 000 000 ₽',
+                        icon: 'fas fa-exclamation-triangle',
+                        type: 'danger'
+                    });
                     return false;
                 }
 
                 const commission = (amount * commissionPercent) / 100;
-                const confirmMsg = `Подтвердите пожертвование:\n\n` +
-                    `Сумма: ${amount} ₽\n` +
-                    `Комиссия (${commissionPercent}%): ${commission.toFixed(2)} ₽\n` +
-                    `Автор получит: ${(amount - commission).toFixed(2)} ₽\n\n` +
-                    `Продолжить?`;
+                const authorAmount = amount - commission;
 
-                if (!confirm(confirmMsg)) {
-                    e.preventDefault();
-                    return false;
-                }
-                return true;
+                const details = `
+                    <p><strong>Сумма пожертвования:</strong> ${amount} ₽</p>
+                    <p><strong>Комиссия (${commissionPercent}%):</strong> ${commission.toFixed(2)} ₽</p>
+                    <p><strong>Автор получит:</strong> ${authorAmount.toFixed(2)} ₽</p>
+                    <hr>
+                    <p><i class="fas fa-heart"></i> ${amount - commission > 0 ? 'Ваша помощь будет отправлена автору сбора' : ''}</p>
+                `;
+
+                showConfirmModal({
+                    title: 'Подтверждение пожертвования',
+                    message: 'Пожалуйста, проверьте данные пожертвования:',
+                    details: details,
+                    icon: 'fas fa-hand-holding-heart',
+                    type: 'success',
+                    onConfirm: function() {
+                        form.submit();
+                    }
+                });
             });
         }
     });

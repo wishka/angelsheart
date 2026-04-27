@@ -26,6 +26,7 @@ urlpatterns = [
     path('api/check-username/', views.check_username, name='check_username'),
     path('api/get-balance/', views.get_balance_json, name='get_balance_json'),
     path('api/cancel/<int:transaction_id>/', views.cancel_transaction, name='cancel_transaction'),
+    path('api/search-users/', views.search_users, name='search_users'),
     
     # Документы и согласия
     path('privacy-policy/', views.privacy_policy, name='privacy_policy'),
@@ -44,4 +45,17 @@ urlpatterns = [
     path('withdrawal/', views.create_withdrawal_request, name='withdrawal'),
     path('my-withdrawals/', views.my_withdrawals, name='my_withdrawals'),
     path('withdrawal/<int:pk>/cancel/', views.cancel_withdrawal, name='cancel_withdrawal'),
+    
+    # Платежи
+    path('payment/create/', views.create_payment, name='create_payment'),
+    path('payment/webhook/', views.payment_webhook, name='payment_webhook'),
+    path('payment/success/', views.payment_success, name='payment_success'),
+    path('payment/cancel/', views.payment_cancel, name='payment_cancel'),
+    
+    # Безопасность
+    path('2fa/setup/', views.setup_2fa, name='setup_2fa'),
+    
+    # Верификация
+    path('verification/', views.verification_page, name='verification'),
+    path('verification/upload/', views.upload_document, name='upload_document'),
 ]

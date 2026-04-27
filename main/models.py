@@ -198,13 +198,6 @@ class Fundraise(models.Model):
     is_featured = models.BooleanField(default=False, verbose_name='Рекомендуемый')
     donors_count = models.IntegerField(default=0, verbose_name='Количество донатеров')
     
-    total_commission = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        default=0.00,
-        verbose_name='Всего комиссии'
-    )
-    
     class Meta:
         ordering = ['-created_at']
         verbose_name = 'Сбор средств'
@@ -385,3 +378,136 @@ class WithdrawalRequest(models.Model):
             balance.save()
             return True
         return False
+
+
+# ==================== ПЛАТЕЖИ И БЕЗОПАСНОСТЬ ====================
+
+class PaymentTransaction(models.Model):
+    """Модель для отслеживания платежей"""
+    STATUS_CHOICES = [
+        ('pending', 'Ожидает оплаты'),
+        ('processing', 'В обработке'),
+        ('paid', 'Оплачен'),
+        ('failed', 'Ошибка'),
+        ('refunded', 'Возвращен'),
+        ('cancelled', 'Отменен'),
+    ]
+    
+    METHOD_CHOICES = [
+        ('card', 'Банковская карта'),
+        ('sbp', 'СБП'),
+        ('yoomoney', 'ЮMoney'),
+        ('crypto', 'Криптовалюта'),
+    ]
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='payments')
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    payment_method = models.CharField(max_length=20, choices=METHOD_CHOICES)
+    payment_id = models.CharField(max_length=100, unique=True)  # ID в платежной системе
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"#{self.payment_id} - {self.user.username} - {self.amount}₽"
+
+
+class TwoFactorAuth(models.Model):
+    """Модель для двухфакторной аутентификации"""
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='two_factor_auth')
+    secret_key = models.CharField(max_length=32)
+    is_enabled = models.BooleanField(default=False)
+    backup_codes = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used = models.DateTimeField(null=True, blank=True)
+    
+    def __str__(self):
+        return f"2FA {'включена' if self.is_enabled else 'выключена'} для {self.user.username}"
+
+
+class KYCDocument(models.Model):
+    """Модель для хранения документов верификации"""
+    DOCUMENT_TYPES = [
+        ('passport', 'Паспорт РФ'),
+        ('driver_license', 'Водительское удостоверение'),
+        ('snils', 'СНИЛС'),
+        ('inn', 'ИНН'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('pending', 'На проверке'),
+        ('approved', 'Подтвержден'),
+        ('rejected', 'Отклонен'),
+    ]
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='kyc_documents')
+    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPES)
+    document_number = models.CharField(max_length=50)
+    document_image = models.FileField(upload_to='kyc/%Y/%m/%d/')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    verification_comment = models.TextField(blank=True, null=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    verified_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name='verified_documents')
+    
+    class Meta:
+        ordering = ['-uploaded_at']
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.get_document_type_display()} - {self.get_status_display()}"
+
+
+class UserVerification(models.Model):
+    """Модель для статуса верификации пользователя"""
+    VERIFICATION_LEVELS = [
+        ('unverified', 'Не верифицирован'),
+        ('basic', 'Базовая верификация'),
+        ('full', 'Полная верификация'),
+    ]
+    
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='verification')
+    level = models.CharField(max_length=20, choices=VERIFICATION_LEVELS, default='unverified')
+    full_name = models.CharField(max_length=200, blank=True, null=True)
+    birth_date = models.DateField(null=True, blank=True)
+    passport_series = models.CharField(max_length=10, blank=True, null=True)
+    passport_number = models.CharField(max_length=10, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.get_level_display()}"
+
+
+class SecurityLog(models.Model):
+    """Модель для логирования безопасности"""
+    ACTION_CHOICES = [
+        ('login', 'Вход'),
+        ('logout', 'Выход'),
+        ('failed_login', 'Неудачный вход'),
+        ('2fa_enabled', 'Включена 2FA'),
+        ('2fa_disabled', 'Выключена 2FA'),
+        ('password_change', 'Смена пароля'),
+        ('withdrawal', 'Вывод средств'),
+        ('payment', 'Платеж'),
+        ('verification', 'Верификация'),
+        ('suspicious', 'Подозрительная активность'),
+    ]
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='security_logs', null=True, blank=True)
+    action = models.CharField(max_length=30, choices=ACTION_CHOICES)
+    ip_address = models.GenericIPAddressField()
+    user_agent = models.TextField()
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.created_at} - {self.user} - {self.get_action_display()}"

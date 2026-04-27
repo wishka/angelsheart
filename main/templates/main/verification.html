@@ -1,0 +1,180 @@
+{% extends 'base.html' %}
+
+{% block title %}Верификация | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <i class="fas fa-id-card" style="font-size: 3rem; color: #e8a4aa;"></i>
+        <h1 style="color: #d4737a; margin-top: 1rem;">Верификация личности</h1>
+        <p style="color: #6b5a5a;">Пройдите верификацию для увеличения лимитов</p>
+    </div>
+
+    <!-- Текущий уровень -->
+    <div style="background: #fdf4f0; padding: 1rem; border-radius: 16px; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+        <div>
+            <span style="font-size: 0.85rem; color: #b89a9a;">Ваш уровень верификации</span>
+            <div>
+                {% if verification.level == 'unverified' %}
+                    <span style="background: #dc3545; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem;">
+                        🔴 Не верифицирован
+                    </span>
+                {% elif verification.level == 'basic' %}
+                    <span style="background: #ffc107; color: #333; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem;">
+                        🟡 Базовая верификация
+                    </span>
+                {% else %}
+                    <span style="background: #28a745; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem;">
+                        🟢 Полная верификация
+                    </span>
+                {% endif %}
+            </div>
+        </div>
+        <div>
+            <span style="font-size: 0.85rem; color: #b89a9a;">Лимит вывода в день</span>
+            <div style="font-weight: 700; color: #d4737a;">{{ limits.daily_withdrawal }} ₽</div>
+        </div>
+    </div>
+
+    <!-- Таблица лимитов -->
+    <div style="overflow-x: auto; margin-bottom: 2rem;">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Уровень</th>
+                    <th>Дневной вывод</th>
+                    <th>Месячный вывод</th>
+                    <th>Разовый вывод</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr style="{% if verification.level == 'unverified' %}background: #fff3cd;{% endif %}">
+                    <td>🔴 Не верифицирован</td>
+                    <td>1 000 ₽</td>
+                    <td>5 000 ₽</td>
+                    <td>500 ₽</td>
+                </tr>
+                <tr style="{% if verification.level == 'basic' %}background: #fff3cd;{% endif %}">
+                    <td>🟡 Базовая</td>
+                    <td>10 000 ₽</td>
+                    <td>50 000 ₽</td>
+                    <td>5 000 ₽</td>
+                </tr>
+                <tr style="{% if verification.level == 'full' %}background: #d4edda;{% endif %}">
+                    <td>🟢 Полная</td>
+                    <td>100 000 ₽</td>
+                    <td>Без ограничений</td>
+                    <td>50 000 ₽</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Форма базовой верификации -->
+    {% if verification.level == 'unverified' %}
+    <h3 style="color: #d4737a; margin-bottom: 1rem;">Базовая верификация</h3>
+    <form method="post">
+        {% csrf_token %}
+        <div class="form-group">
+            <label><i class="fas fa-user"></i> Полное имя</label>
+            <input type="text" name="full_name" class="form-control" required value="{{ verification.full_name|default:'' }}">
+            <small>Как в паспорте</small>
+        </div>
+        
+        <div class="form-group">
+            <label><i class="fas fa-calendar"></i> Дата рождения</label>
+            <input type="date" name="birth_date" class="form-control" required value="{{ verification.birth_date|date:'Y-m-d'|default:'' }}">
+        </div>
+        
+        <div class="row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div class="form-group">
+                <label><i class="fas fa-id-card"></i> Серия паспорта</label>
+                <input type="text" name="passport_series" class="form-control" placeholder="0000" maxlength="4" required value="{{ verification.passport_series|default:'' }}">
+            </div>
+            <div class="form-group">
+                <label><i class="fas fa-id-card"></i> Номер паспорта</label>
+                <input type="text" name="passport_number" class="form-control" placeholder="000000" maxlength="6" required value="{{ verification.passport_number|default:'' }}">
+            </div>
+        </div>
+        
+        <button type="submit" class="btn btn-primary" style="width: 100%;">
+            <i class="fas fa-check"></i> Отправить на проверку
+        </button>
+    </form>
+    {% endif %}
+
+    <!-- Полная верификация (документы) -->
+    {% if verification.level == 'basic' %}
+    <h3 style="color: #d4737a; margin-bottom: 1rem;">Полная верификация</h3>
+    <p style="color: #6b5a5a; margin-bottom: 1rem;">Загрузите фото/скан паспорта для подтверждения личности</p>
+    
+    <form method="post" action="{% url 'main:upload_document' %}" enctype="multipart/form-data">
+        {% csrf_token %}
+        <div class="form-group">
+            <label><i class="fas fa-file-alt"></i> Тип документа</label>
+            <select name="document_type" class="form-control" required>
+                <option value="passport">Паспорт РФ</option>
+                <option value="driver_license">Водительское удостоверение</option>
+                <option value="snils">СНИЛС</option>
+                <option value="inn">ИНН</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label><i class="fas fa-hashtag"></i> Номер документа</label>
+            <input type="text" name="document_number" class="form-control" required>
+        </div>
+        
+        <div class="form-group">
+            <label><i class="fas fa-image"></i> Фото документа</label>
+            <input type="file" name="document_image" class="form-control" accept="image/*" required>
+            <small>Четкое фото всех страниц с данными</small>
+        </div>
+        
+        <button type="submit" class="btn btn-primary" style="width: 100%;">
+            <i class="fas fa-upload"></i> Загрузить на проверку
+        </button>
+    </form>
+    {% endif %}
+
+    <!-- Список загруженных документов -->
+    {% if documents %}
+    <h3 style="color: #d4737a; margin: 2rem 0 1rem;">Загруженные документы</h3>
+    <div style="overflow-x: auto;">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Тип</th>
+                    <th>Статус</th>
+                    <th>Дата загрузки</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for doc in documents %}
+                <tr>
+                    <td>{{ doc.get_document_type_display }}</td>
+                    <td>
+                        {% if doc.status == 'pending' %}
+                            <span style="color: #ffc107;">⏳ На проверке</span>
+                        {% elif doc.status == 'approved' %}
+                            <span style="color: #28a745;">✅ Подтвержден</span>
+                        {% else %}
+                            <span style="color: #dc3545;">❌ Отклонен</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ doc.uploaded_at|date:"d.m.Y H:i" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    <div style="margin-top: 2rem; padding: 1rem; background: #fdf4f0; border-radius: 16px;">
+        <p style="margin: 0; color: #6b5a5a; font-size: 0.85rem;">
+            <i class="fas fa-lock"></i> Все данные защищены и используются только для верификации.
+            Проверка занимает до 24 часов.
+        </p>
+    </div>
+</div>
+{% endblock %}

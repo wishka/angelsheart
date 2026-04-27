@@ -8,47 +8,124 @@
         <div style="text-align: center; margin-bottom: 2rem;">
             <i class="fas fa-coins" style="font-size: 3rem; color: #e8a4aa;"></i>
             <h1 style="color: #d4737a; margin-top: 1rem;">Пополнить баланс</h1>
-            <p style="color: #6b5a5a;">Пополните счет, чтобы помогать другим</p>
+            <p style="color: #6b5a5a;">Безопасный платеж через ЮKassa</p>
         </div>
-        
+
         <div style="background: #fdf4f0; padding: 1rem; border-radius: 20px; margin-bottom: 1.5rem;">
             <div style="display: flex; justify-content: space-between;">
                 <span>Текущий баланс:</span>
                 <strong style="color: #d4737a; font-size: 1.2rem;">{{ user.balance.amount|floatformat:2 }} ₽</strong>
             </div>
         </div>
-        
-        <form method="post">
+
+        <form method="post" id="paymentForm">
             {% csrf_token %}
-            
+
             <div class="form-group">
                 <label><i class="fas fa-money-bill-wave"></i> Сумма пополнения (₽)</label>
-                <input type="number" name="amount" class="form-control" step="0.01" min="1" max="100000" required placeholder="Например: 1000">
+                <input type="number"
+                       name="amount"
+                       id="amount"
+                       class="form-control"
+                       step="1"
+                       min="100"
+                       max="100000"
+                       required
+                       placeholder="От 100 до 100 000 ₽">
+                <small style="color: #b89a9a; display: block; margin-top: 5px;">
+                    Минимальная сумма: 100 ₽, максимальная: 100 000 ₽
+                </small>
             </div>
-            
+
+            <!-- Способы оплаты -->
             <div class="form-group">
                 <label><i class="fas fa-credit-card"></i> Способ оплаты</label>
-                <select name="payment_method" class="form-control">
-                    <option value="card">💳 Банковская карта</option>
-                    <option value="sbp">📱 СБП</option>
-                    <option value="apple_pay">🍎 Apple Pay</option>
-                    <option value="google_pay">🤖 Google Pay</option>
-                </select>
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem;">
+                    <label class="payment-method">
+                        <input type="radio" name="payment_method" value="card" checked>
+                        <i class="fab fa-cc-visa"></i> Банковская карта
+                    </label>
+                    <label class="payment-method">
+                        <input type="radio" name="payment_method" value="sbp">
+                        <i class="fas fa-mobile-alt"></i> СБП
+                    </label>
+                    <label class="payment-method">
+                        <input type="radio" name="payment_method" value="yoomoney">
+                        <i class="fab fa-yandex"></i> ЮMoney
+                    </label>
+                    <label class="payment-method">
+                        <input type="radio" name="payment_method" value="crypto">
+                        <i class="fab fa-bitcoin"></i> Криптовалюта
+                    </label>
+                </div>
             </div>
-            
+
             <div style="background: #fff8e1; padding: 1rem; border-radius: 16px; margin: 1rem 0; font-size: 0.9rem;">
                 <i class="fas fa-shield-alt" style="color: #f9a825;"></i>
-                Безопасный платеж через защищенный шлюз
+                <span>Платеж защищен. Комиссия не взимается.</span>
             </div>
-            
-            <button type="submit" class="btn btn-primary" style="width: 100%;">
-                <i class="fas fa-check-circle"></i> Пополнить
+
+            <button type="submit" class="btn btn-primary" style="width: 100%;" id="submitBtn">
+                <i class="fas fa-check-circle"></i> Оплатить
             </button>
         </form>
     </div>
-    
+
     <div style="text-align: center; margin-top: 1rem; font-size: 0.85rem; color: #b89a9a;">
-        <i class="fas fa-clock"></i> Средства зачисляются мгновенно
+        <i class="fas fa-lock"></i> Безопасная оплата через ЮKassa
     </div>
 </div>
+
+<style>
+    .payment-method {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px;
+        border: 1px solid #e0d0d0;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .payment-method:hover {
+        border-color: #d4737a;
+        background: #fdf4f0;
+    }
+
+    .payment-method input {
+        margin: 0;
+    }
+</style>
+
+<script>
+    const form = document.getElementById('paymentForm');
+    const amountInput = document.getElementById('amount');
+    const submitBtn = document.getElementById('submitBtn');
+
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            const amount = parseFloat(amountInput.value);
+
+            if (isNaN(amount) || amount < 100) {
+                e.preventDefault();
+                alert('Минимальная сумма пополнения - 100 ₽');
+                amountInput.focus();
+                return false;
+            }
+
+            if (amount > 100000) {
+                e.preventDefault();
+                alert('Максимальная сумма пополнения - 100 000 ₽');
+                amountInput.focus();
+                return false;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> Перенаправление на оплату...';
+
+            return true;
+        });
+    }
+</script>
 {% endblock %}
