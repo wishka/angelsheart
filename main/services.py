@@ -58,6 +58,26 @@ def ensure_can_receive(user):
         raise OperationRejected('Это служебный аккаунт сервиса, перевод на него невозможен')
 
 
+def ensure_email_confirmed(user, action):
+    """
+    Расходная операция требует подтверждённого адреса почты.
+
+    Смысл не в формальности: по этому адресу уходит уведомление о выплате
+    и по нему же восстанавливается доступ к учётной записи. Опечатка
+    в адресе означает, что вывести деньги можно, а узнать о судьбе выплаты
+    или вернуть себе доступ — нет.
+    """
+    from main.models import EmailConfirmation
+
+    if EmailConfirmation.is_email_confirmed(user):
+        return
+
+    raise OperationRejected(
+        f'{action} недоступен, пока не подтверждён адрес электронной почты. '
+        f'Письмо со ссылкой можно запросить заново в профиле.'
+    )
+
+
 def ensure_can_operate(user):
     """
     Расходные операции запрещены при действующем ограничении.
@@ -122,6 +142,10 @@ def transfer(sender, receiver, amount, comment=''):
     if sender.pk == receiver.pk:
         raise OperationRejected('Нельзя перевести деньги самому себе')
     ensure_can_operate(sender)
+    # Перевод — такое же распоряжение деньгами, как вывод: без этой
+    # проверки неподтверждённый пользователь переводил весь баланс
+    # на подтверждённую учётную запись и выводил оттуда.
+    ensure_email_confirmed(sender, 'Перевод средств')
     ensure_can_receive(receiver)
 
     balances = _lock_balances(sender, receiver)
@@ -196,6 +220,8 @@ def donate(donor, fundraise, amount, message='', is_anonymous=False):
     if not fundraise.accepts_donations:
         if fundraise.moderation_status != 'approved':
             raise OperationRejected('Сбор не прошёл проверку и пока не принимает пожертвования')
+        if fundraise.is_expired:
+            raise OperationRejected('Срок сбора истёк')
         raise OperationRejected('Сбор неактивен')
 
     author = fundraise.author
@@ -219,8 +245,17 @@ def donate(donor, fundraise, amount, message='', is_anonymous=False):
     if service_account:
         _credit(balances[service_account.pk], commission)
 
+    # Счётчик считает людей, а не пожертвования: раньше человек,
+    # пожертвовавший дважды, показывался на странице сбора как «2 человека
+    # уже помогли». Проверка идёт под той же блокировкой строки сбора,
+    # что и всё остальное, поэтому гонки здесь нет.
+    is_new_donor = not Donation.objects.filter(
+        fundraise=fundraise, donor=donor, refunded_at__isnull=True,
+    ).exists()
+
     fundraise.current_amount += amount
-    fundraise.donors_count += 1
+    if is_new_donor:
+        fundraise.donors_count += 1
     fundraise.save(update_fields=['current_amount', 'donors_count'])
 
     donation = Donation.objects.create(
@@ -326,9 +361,23 @@ def refund_donations(fundraise, reason='сбор отменён автором')
                 donor_balance.amount += returned_commission
                 donor_balance.save(update_fields=['amount'])
                 returned_now += returned_commission
+            if returned_commission < commission_due:
+                # Если на служебном счёте не хватило, это долг сервиса,
+                # а не автора: автор получил сумму за вычетом комиссии
+                # и больше отдавать не должен.
+                logger.error(
+                    'Комиссия %s ₽ по пожертвованию #%s не возвращена: '
+                    'на служебном счёте недостаточно средств',
+                    commission_due - returned_commission, donation.pk,
+                )
 
-        # Остальное возвращает автор — в пределах того, что у него есть
-        author_due = outstanding - commission_due
+        # Автор возвращает только то, что получил сам: сумму пожертвования
+        # за вычетом комиссии, минус уже возвращённое им ранее.
+        already_from_author = max(Decimal('0.00'), already_returned - commission_amount)
+        author_due = max(
+            Decimal('0.00'),
+            (donation.amount - commission_amount) - already_from_author,
+        )
         from_author = min(author_due, author_balance.amount)
         if from_author > 0:
             author_balance.amount -= from_author
@@ -391,11 +440,16 @@ def refund_donations(fundraise, reason='сбор отменён автором')
     # частичном возврате), а счётчик жертвователей — только на тех, кому
     # вернули всё: человек, которому вернули половину, из сбора не ушёл.
     if refunded_total > 0:
-        fully_returned = sum(1 for d in donations if d.refunded_at is not None)
         fundraise.current_amount = max(
             Decimal('0.00'), fundraise.current_amount - refunded_total,
         )
-        fundraise.donors_count = max(0, fundraise.donors_count - fully_returned)
+        # Пересчёт по людям: жертвователь уходит из счётчика, только когда
+        # возвращены все его пожертвования в этот сбор
+        fundraise.donors_count = (
+            Donation.objects
+            .filter(fundraise=fundraise, refunded_at__isnull=True)
+            .values('donor').distinct().count()
+        )
         fundraise.save(update_fields=['current_amount', 'donors_count'])
 
     return {
@@ -417,6 +471,7 @@ def hold_for_withdrawal(user, amount, payment_method, payment_details, masked):
 
     amount = quantize(amount)
     ensure_can_operate(user)
+    ensure_email_confirmed(user, 'Вывод средств')
     balances = _lock_balances(user)
     _debit(balances[user.pk], amount)
 
@@ -463,3 +518,81 @@ def credit_payment(payment_transaction):
         kind='topup',
     )
     return True
+
+
+def outstanding_debt(user):
+    """
+    Долг автора перед жертвователями по отменённым и отклонённым сборам.
+
+    Возникает, когда на момент отмены автор уже потратил собранное:
+    возврат идёт в пределах остатка, а недостача фиксируется. Пункт 7.4
+    оферты обещает, что такой долг погашается, — но до появления этой
+    функции его нельзя было ни увидеть, ни погасить.
+
+    Возвращает словарь: общая сумма долга и разбивка по сборам.
+    """
+    unpaid = (
+        Donation.objects
+        .filter(fundraise__author=user, fundraise__status='cancelled', refunded_at__isnull=True)
+        .select_related('fundraise')
+    )
+
+    by_fundraise = {}
+    total = Decimal('0.00')
+    for donation in unpaid:
+        remaining = donation.amount - (donation.refunded_amount or Decimal('0.00'))
+        if remaining <= 0:
+            continue
+        total += remaining
+        entry = by_fundraise.setdefault(donation.fundraise_id, {
+            'fundraise': donation.fundraise,
+            'amount': Decimal('0.00'),
+            'donors': set(),
+        })
+        entry['amount'] += remaining
+        # Людей, а не записей: один человек мог пожертвовать дважды,
+        # и «жертвователей: 2» было бы неправдой
+        entry['donors'].add(donation.donor_id)
+
+    items = []
+    for entry in by_fundraise.values():
+        items.append({
+            'fundraise': entry['fundraise'],
+            'amount': entry['amount'],
+            'donors': len(entry['donors']),
+        })
+    return {'total': total, 'items': items}
+
+
+@db_transaction.atomic
+def repay_debt(user, fundraise=None):
+    """
+    Погашение долга перед жертвователями за счёт баланса автора.
+
+    Повторно вызывает возврат по тем же пожертвованиям: механизм умеет
+    довозвращать остаток и не переплачивает, потому что учитывает уже
+    возвращённое.
+
+    ensure_can_operate здесь намеренно не вызывается — это единственная
+    расходная операция без такой проверки. Причина: деньги уходят не
+    произвольному получателю, а конкретным жертвователям, чьи пожертвования
+    зафиксированы записями Donation, и ровно в размере невозвращённого.
+    Пункт 9.4 оферты прямо говорит, что ограничение не влечёт утрату права
+    на средства, а раздел 7.4 обязывает вернуть долг; запрет на возврат
+    денег жертвователям превратил бы приостановление операций в способ
+    удерживать чужие деньги.
+
+    Возвращает сумму, которую удалось вернуть.
+    """
+    fundraises = Fundraise.objects.filter(
+        author=user, status='cancelled',
+        donations__refunded_at__isnull=True,
+    ).distinct()
+    if fundraise is not None:
+        fundraises = fundraises.filter(pk=fundraise.pk)
+
+    repaid = Decimal('0.00')
+    for item in fundraises:
+        result = refund_donations(item, reason='погашение задолженности автором')
+        repaid += result['refunded']
+    return repaid

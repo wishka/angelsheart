@@ -5,13 +5,13 @@ from django.urls import reverse
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
 from django.db import models
-from django.contrib.admin import AdminSite
 from django.utils.html import format_html, format_html_join
 from django.db.models import Sum, Count
 from .models import (
     Balance, Transaction, UserConsent, ConsentLog,
-    AccountRestriction, DataBreachIncident, Fundraise, FundraiseDocument, Donation,
-    WithdrawalRequest,
+    AccountRestriction, CommissionTransaction, DataBreachIncident, EmailConfirmation,
+    Fundraise,
+    FundraiseDocument, Donation, WithdrawalRequest,
     PaymentTransaction, TwoFactorAuth, SecurityLog, UserVerification, KYCDocument,
     PersonalDataAccessLog,
 )
@@ -23,45 +23,9 @@ admin.site.site_title = 'Ангел-Хранитель Admin'
 admin.site.index_title = 'Управление платформой взаимопомощи'
 
 
-class CustomAdminSite(AdminSite):
-    site_header = 'Ангел-Хранитель - Административная панель'
-    
-    def get_app_list(self, request):
-        app_list = super().get_app_list(request)
-        
-        custom_sections = [
-            {
-                'name': 'Финансовые операции',
-                'app_label': 'finance',
-                'models': [
-                    {'name': 'Заявки на вывод', 'object_name': 'WithdrawalRequest',
-                     'admin_url': '/admin/main/withdrawalrequest/', 'view_only': False},
-                    {'name': 'Транзакции', 'object_name': 'Transaction',
-                     'admin_url': '/admin/main/transaction/', 'view_only': False},
-                    {'name': 'Сборы', 'object_name': 'Fundraise',
-                     'admin_url': '/admin/main/fundraise/', 'view_only': False},
-                    {'name': 'Платежи', 'object_name': 'PaymentTransaction',
-                     'admin_url': '/admin/main/paymenttransaction/', 'view_only': False},
-                ]
-            },
-            {
-                'name': 'Безопасность',
-                'app_label': 'security',
-                'models': [
-                    {'name': 'Логи безопасности', 'object_name': 'SecurityLog',
-                     'admin_url': '/admin/main/securitylog/', 'view_only': False},
-                    {'name': '2FA', 'object_name': 'TwoFactorAuth',
-                     'admin_url': '/admin/main/twofactorauth/', 'view_only': False},
-                    {'name': 'Верификация', 'object_name': 'UserVerification',
-                     'admin_url': '/admin/main/userverification/', 'view_only': False},
-                    {'name': 'KYC документы', 'object_name': 'KYCDocument',
-                     'admin_url': '/admin/main/kycdocument/', 'view_only': False},
-                ]
-            }
-        ]
-        
-        app_list = custom_sections + app_list
-        return app_list
+# Класс CustomAdminSite удалён: он переопределял состав разделов админки,
+# но нигде не подключался — admin.site оставался стандартным, и его
+# настройки не действовали ни на что.
 
 
 # ==================== КАСТОМНЫЙ ПОЛЬЗОВАТЕЛЬ ====================
@@ -265,6 +229,10 @@ class FundraiseAdmin(admin.ModelAdmin):
     status_badge.short_description = 'Статус'
     
     def progress_percent(self, obj):
+        # На форме добавления obj — пустой экземпляр без target_amount,
+        # и сравнение None > 0 роняло страницу с 500
+        if not obj.pk or obj.target_amount is None:
+            return '—'
         return f"{obj.get_progress_percent()}%"
 
     progress_percent.short_description = 'Процент выполнения'
@@ -743,6 +711,9 @@ class KYCDocumentAdmin(admin.ModelAdmin):
     # document_number зашифрован — поиск по нему невозможен
     search_fields = ['user__username']
     readonly_fields = ['uploaded_at', 'document_image_preview']
+    # Комментарий редактируется: его видит пользователь на странице верификации
+    fields = ['user', 'document_type', 'document_number', 'document_image',
+              'document_image_preview', 'status', 'verification_comment', 'uploaded_at']
     
     def user_link(self, obj):
         return format_html('<a href="/admin/auth/user/{}/change/">{}</a>', obj.user.id, obj.user.username)
@@ -789,25 +760,38 @@ class KYCDocumentAdmin(admin.ModelAdmin):
     
     @admin.action(description='❌ Отклонить выбранные документы')
     def reject_documents(self, request, queryset):
-        updated = queryset.update(status='rejected')
-        self.message_user(request, f'{updated} документов отклонены.')
+        """
+        Отклонение документов.
+
+        Причина заполняется обязательно: поле verification_comment
+        существовало с самого начала, но не заполнялось ничем, и человек
+        получал отказ без единого слова о том, что не так со сканом.
+        Переснять документ вслепую невозможно.
+        """
+        from django.utils import timezone
+
+        updated = 0
+        for document in queryset:
+            document.status = 'rejected'
+            document.verified_at = timezone.now()
+            if not (document.verification_comment or '').strip():
+                document.verification_comment = (
+                    'Документ не принят. Проверьте, что на снимке читаются все '
+                    'данные, страница видна целиком и снимок не обрезан.'
+                )
+            document.save(update_fields=['status', 'verified_at', 'verification_comment'])
+            updated += 1
+        self.message_user(
+            request,
+            f'{updated} документов отклонены. Причину можно уточнить в карточке '
+            f'документа — её видит пользователь.',
+        )
 
 
 # ==================== СТАТИСТИКА ====================
 
-def get_admin_stats():
-    return {
-        'total_withdrawals_pending': WithdrawalRequest.objects.filter(status='pending').count(),
-        'total_withdrawals_processing': WithdrawalRequest.objects.filter(status='processing').count(),
-        'total_withdrawals_completed': WithdrawalRequest.objects.filter(status='completed').count(),
-        'total_withdrawals_rejected': WithdrawalRequest.objects.filter(status='rejected').count(),
-        'total_withdrawals_amount': WithdrawalRequest.objects.filter(
-            status__in=['pending', 'processing', 'completed']
-        ).aggregate(Sum('amount'))['amount__sum'] or 0,
-        'total_payments_pending': PaymentTransaction.objects.filter(status='pending').count(),
-        'total_unverified_users': UserVerification.objects.filter(level='unverified').count(),
-        'total_kyc_pending': KYCDocument.objects.filter(status='pending').count(),
-    }
+# Функция get_admin_stats удалена: она собирала сводку для панели,
+# которой в проекте нет, и не вызывалась ниоткуда.
 
 # ==================== ДОКУМЕНТЫ К СБОРАМ ====================
 
@@ -963,7 +947,13 @@ class AccountRestrictionAdmin(admin.ModelAdmin):
             self.message_user(request, str(exc), level='error')
             return
 
+        # Django после save_model пишет запись в журнал действий и берёт
+        # для неё str(obj). Раньше сюда подставлялся только pk, а сам obj
+        # оставался несохранённым — с created_at=None, и __str__ падал
+        # на форматировании даты, роняя всю форму с 500 и откатывая
+        # создание. Письмо пользователю при этом уже уходило.
         obj.pk = created.pk
+        obj.refresh_from_db()
         if created.notified_at:
             self.message_user(request, 'Пользователь уведомлён письмом с указанием причины.')
         else:
@@ -1060,3 +1050,97 @@ class DataBreachIncidentAdmin(admin.ModelAdmin):
             reverse('main:breach_procedure'), obj.pk or 'N')
 
     procedure_hint.short_description = 'Регламент'
+
+
+# ==================== КОМИССИИ ====================
+
+@admin.register(CommissionTransaction)
+class CommissionTransactionAdmin(admin.ModelAdmin):
+    """
+    Удержанные комиссии.
+
+    Раздел в админке отсутствовал: доход сервиса был виден только из shell,
+    а это те самые суммы, с которых оператор платит налоги.
+    """
+
+    list_display = ['id', 'donation_link', 'amount', 'percent', 'created_at']
+    list_filter = ['created_at', 'percent']
+    search_fields = ['donation__donor__username', 'donation__fundraise__title']
+    date_hierarchy = 'created_at'
+    readonly_fields = ['donation', 'amount', 'percent', 'created_at']
+
+    def donation_link(self, obj):
+        return format_html(
+            '<a href="/admin/main/donation/{}/change/">Пожертвование #{}</a>',
+            obj.donation_id, obj.donation_id)
+
+    donation_link.short_description = 'Пожертвование'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+# ==================== ПОДТВЕРЖДЕНИЕ АДРЕСА ПОЧТЫ ====================
+
+@admin.register(EmailConfirmation)
+class EmailConfirmationAdmin(admin.ModelAdmin):
+    """
+    Состояние подтверждения адресов.
+
+    Отдельная отметка is_legacy у учётных записей, созданных до введения
+    проверки: считать их подтверждёнными было бы неправдой, а отнимать
+    у них вывод средств задним числом — несправедливо. Сняв флаг, можно
+    потребовать подтверждение и от них — но людям стоит сказать заранее.
+    """
+
+    list_display = ['user_link', 'state', 'user_email', 'confirmed_at', 'last_sent_at']
+    list_filter = ['is_legacy', 'confirmed_at']
+    search_fields = ['user__username', 'user__email', 'confirmed_email']
+    readonly_fields = ['user', 'confirmed_at', 'confirmed_email', 'last_sent_at']
+    actions = ['require_confirmation']
+
+    def user_link(self, obj):
+        return format_html('<a href="/admin/auth/user/{}/change/">{}</a>',
+                           obj.user_id, obj.user.username)
+
+    user_link.short_description = 'Пользователь'
+
+    def user_email(self, obj):
+        return obj.user.email or '—'
+
+    user_email.short_description = 'Текущий адрес'
+
+    def state(self, obj):
+        if obj.is_legacy:
+            return format_html('<span style="color: #856404;">без проверки (до введения)</span>')
+        if obj.is_confirmed:
+            return format_html('<span style="color: #28a745;">подтверждён</span>')
+        return format_html('<span style="color: #dc3545;">не подтверждён</span>')
+
+    state.short_description = 'Состояние'
+
+    @admin.action(description='Потребовать подтверждение адреса')
+    def require_confirmation(self, request, queryset):
+        from main import email_confirmation
+
+        updated = queryset.filter(is_legacy=True).update(is_legacy=False)
+        # Письмо уходит всем, чей адрес фактически не подтверждён, — в том
+        # числе тем, кто подтверждал прежний адрес и потом сменил его.
+        # Прежнее условие confirmed_at__isnull=True таких пропускало.
+        sent = sum(
+            1 for confirmation in queryset
+            if not confirmation.is_actually_confirmed
+            and email_confirmation.send_confirmation(confirmation.user)
+        )
+        self.message_user(
+            request,
+            f'Отметка снята у {updated} записей, писем отправлено: {sent}. '
+            f'До подтверждения этим пользователям недоступны вывод средств '
+            f'и публикация сбора.',
+        )
+
+    def has_add_permission(self, request):
+        return False

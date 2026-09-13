@@ -50,10 +50,14 @@ class MassWithdrawalService:
             provider = self._get_provider(withdrawal.payment_method)
             
             # Выполнение выплаты
+            # Способ выплаты передаётся явно: раньше провайдер всегда
+            # собирал выплату на банковскую карту, и заявки по СБП
+            # и кошельку уходили в отказ
             result = provider.process_withdrawal(
                 user_id=withdrawal.user.id,
                 amount=withdrawal.amount,
-                details=withdrawal.payment_details
+                details=withdrawal.payment_details,
+                payment_method=withdrawal.payment_method,
             )
             
             if result['success']:

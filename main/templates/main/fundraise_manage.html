@@ -63,6 +63,17 @@
             </a>
             <span style="color: #b89a9a; font-size: 0.85rem;"> — {{ document.uploaded_at|date:"d.m.Y H:i" }}</span>
             {% if document.comment %}<div style="color: #6b5a5a; font-size: 0.9rem;">{{ document.comment }}</div>{% endif %}
+            {% if fundraise.is_editable %}
+            <form method="post" action="{% url 'main:delete_fundraise_document' document.pk %}"
+                  style="margin: 0.5rem 0 0;"
+                  data-confirm="Удалить документ? Файл будет уничтожен безвозвратно."
+                  data-confirm-title="Удалить документ?">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-secondary" style="padding: 4px 12px; font-size: 0.85rem;">
+                    <i class="fas fa-trash"></i> Удалить
+                </button>
+            </form>
+            {% endif %}
         </li>
         {% endfor %}
     </ul>

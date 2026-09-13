@@ -21,7 +21,8 @@
     <div style="background: #fff3cd; padding: 1rem; border-radius: 16px; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
         <i class="fas fa-clock" style="color: #856404; font-size: 1.5rem;"></i>
         <div>
-            <strong style="color: #856404;">У вас {{ pending_count }} активных заяв{{ pending_count|pluralize:"ка,ки,ок" }}</strong>
+            {# Без склонения: фильтр pluralize понимает только две формы, а по-русски их три — при трёх он молча возвращает пустую строку, и получалось «У вас 1 активных заяв» #}
+            <strong style="color: #856404;">Заявок на рассмотрении: {{ pending_count }}</strong>
             <p style="color: #856404; margin: 0; font-size: 0.85rem;">Заявки обрабатываются в течение 1-3 рабочих дней</p>
         </div>
     </div>
@@ -90,11 +91,21 @@
                     </td>
                     <td>
                         {% if withdrawal.status == 'pending' %}
-                            <button onclick="cancelWithdrawal({{ withdrawal.id }})" 
-                                    class="btn btn-secondary" 
-                                    style="padding: 5px 12px; font-size: 0.85rem;">
-                                <i class="fas fa-times"></i> Отменить
-                            </button>
+                            {% comment %}
+                                Обычная форма вместо fetch(): прежний JS брал CSRF-токен
+                                из формы, которой на этой странице нет, и отмена всегда
+                                заканчивалась 403 и сообщением «Ошибка при отмене заявки».
+                            {% endcomment %}
+                            <form method="post" action="{% url 'main:cancel_withdrawal' withdrawal.id %}"
+                                  style="margin: 0;"
+                                  data-confirm="Отменить заявку? Средства вернутся на ваш баланс."
+                                  data-confirm-title="Отменить заявку на вывод?">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-secondary"
+                                        style="padding: 5px 12px; font-size: 0.85rem;">
+                                    <i class="fas fa-times"></i> Отменить
+                                </button>
+                            </form>
                         {% else %}
                             <span style="color: #b89a9a;">—</span>
                         {% endif %}
@@ -116,69 +127,12 @@
     {% endif %}
 </div>
 
-<!-- Модальное окно с деталями заявки -->
-<div id="withdrawalModal" class="modal" style="display: none;">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2>Детали заявки #<span id="modalWithdrawalId"></span></h2>
-            <span class="modal-close" onclick="closeModal()">&times;</span>
-        </div>
-        <div class="modal-body" id="modalBody">
-            <!-- Данные загрузятся через JS -->
-        </div>
-    </div>
-</div>
+{% comment %}
+    Модальное окно с деталями заявки удалено вместе с JS,
+    который его наполнял: он запрашивал /api/withdrawal/<id>/details/,
+    а такого маршрута в проекте нет — окно всегда оставалось пустым.
+{% endcomment %}
 
-<script>
-    function cancelWithdrawal(withdrawalId) {
-        if (confirm('Вы уверены, что хотите отменить эту заявку? Средства будут возвращены на ваш баланс.')) {
-            fetch(`/withdrawal/${withdrawalId}/cancel/`, {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || '',
-                },
-            }).then(response => {
-                if (response.ok) {
-                    location.reload();
-                } else {
-                    alert('Ошибка при отмене заявки');
-                }
-            }).catch(error => {
-                alert('Ошибка: ' + error);
-            });
-        }
-    }
-    
-    function showDetails(withdrawalId) {
-        fetch(`/api/withdrawal/${withdrawalId}/details/`)
-            .then(response => response.json())
-            .then(data => {
-                document.getElementById('modalWithdrawalId').textContent = withdrawalId;
-                document.getElementById('modalBody').innerHTML = `
-                    <div style="display: grid; gap: 1rem;">
-                        <div><strong>Сумма:</strong> ${data.amount} ₽</div>
-                        <div><strong>Способ вывода:</strong> ${data.payment_method_display}</div>
-                        <div><strong>Реквизиты:</strong><br><pre style="background: #f5f5f5; padding: 10px; border-radius: 8px;">${JSON.stringify(data.payment_details, null, 2)}</pre></div>
-                        <div><strong>Статус:</strong> ${data.status_display}</div>
-                        <div><strong>Дата создания:</strong> ${data.created_at}</div>
-                        ${data.comment ? `<div><strong>Комментарий:</strong> ${data.comment}</div>` : ''}
-                    </div>
-                `;
-                document.getElementById('withdrawalModal').style.display = 'flex';
-            });
-    }
-    
-    function closeModal() {
-        document.getElementById('withdrawalModal').style.display = 'none';
-    }
-    
-    window.onclick = function(event) {
-        const modal = document.getElementById('withdrawalModal');
-        if (event.target === modal) {
-            modal.style.display = 'none';
-        }
-    }
-</script>
 
 <style>
     .modal {

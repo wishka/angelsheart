@@ -23,6 +23,21 @@
         {% endif %}
     </div>
     
+    {% if debt_total %}
+    <div style="background: #f8d7da; padding: 1rem 1.25rem; border-radius: 16px; margin-bottom: 1.5rem;">
+        <strong style="color: #721c24;">
+            Долг перед жертвователями: {{ debt_total|floatformat:2 }} ₽
+        </strong>
+        <p style="color: #721c24; margin: 0.5rem 0 0;">
+            По отменённому сбору часть пожертвований осталась невозвращённой.
+            Пока долг не погашен, новый сбор открыть нельзя.
+        </p>
+        <a href="{% url 'main:my_debt' %}" class="btn btn-primary" style="margin-top: 0.75rem; padding: 8px 20px;">
+            Погасить
+        </a>
+    </div>
+    {% endif %}
+
     {% if has_active_fundraise %}
     <div style="background: #fff3cd; padding: 1rem; border-radius: 16px; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
         <i class="fas fa-info-circle" style="color: #856404; font-size: 1.5rem;"></i>
@@ -119,14 +134,16 @@
                 принимают только POST.
                 {% endcomment %}
                 <form method="post" action="{% url 'main:complete_fundraise' fundraise.pk %}"
-                      onsubmit="return confirm('Завершить этот сбор? Возобновить его будет нельзя.');">
+                      data-confirm="Завершить этот сбор? Возобновить его будет нельзя."
+                          data-confirm-title="Завершить сбор?">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-secondary" style="padding: 8px 20px; background: #28a745; color: white; border: none;">
                         <i class="fas fa-check-circle"></i> Завершить
                     </button>
                 </form>
                 <form method="post" action="{% url 'main:cancel_fundraise' fundraise.pk %}"
-                      onsubmit="return confirm('Отменить сбор? Собранные средства будут возвращены жертвователям.');">
+                      data-confirm="Отменить сбор? Собранные средства вернутся жертвователям."
+                          data-confirm-title="Отменить сбор?">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-secondary" style="padding: 8px 20px; background: #dc3545; color: white; border: none;">
                         <i class="fas fa-times-circle"></i> Отменить

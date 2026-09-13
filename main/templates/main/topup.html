@@ -11,11 +11,17 @@
             </div>
             <h1 style="color: #d4737a; margin-top: 0; margin-bottom: 0.5rem;">Пополнить баланс</h1>
             <p style="color: #6b5a5a; margin: 0;">
-                {% if USE_REAL_PAYMENTS %}
-                    Безопасный платеж через ЮKassa
-                {% else %}
+                {% comment %}
+                    Условие — allow_simulated_topup, а не отрицание
+                    USE_REAL_PAYMENTS: «не боевой режим» и «баланс рисуется
+                    без оплаты» — разные вещи, и обещать «деньги не списываются»
+                    можно только во втором случае.
+                {% endcomment %}
+                {% if allow_simulated_topup %}
                     <span class="test-mode-badge">🧪 ТЕСТОВЫЙ РЕЖИМ</span>
                     <br>Платежи не списывают реальные деньги
+                {% else %}
+                    Безопасный платеж через ЮKassa
                 {% endif %}
             </p>
         </div>
@@ -48,8 +54,8 @@
                            id="amount"
                            class="form-control"
                            step="1"
-                           min="100"
-                           max="100000"
+                           min="{{ min_topup }}"
+                           max="{{ max_topup|floatformat:0 }}"
                            required
                            placeholder="Введите сумму">
                     <span class="input-suffix">₽</span>
@@ -102,7 +108,7 @@
                 </div>
             </div>
 
-            {% if not USE_REAL_PAYMENTS %}
+            {% if allow_simulated_topup %}
             <!-- Для тестового режима - объяснение -->
             <div class="test-info">
                 <i class="fas fa-info-circle"></i>
@@ -111,8 +117,8 @@
             {% endif %}
 
             <button type="submit" class="btn btn-primary" id="submitBtn">
-                <i class="fas {% if USE_REAL_PAYMENTS %}fa-credit-card{% else %}fa-flask{% endif %}"></i>
-                {% if USE_REAL_PAYMENTS %}Перейти к оплате{% else %}Пополнить (тест){% endif %}
+                <i class="fas {% if allow_simulated_topup %}fa-flask{% else %}fa-credit-card{% endif %}"></i>
+                {% if allow_simulated_topup %}Пополнить (тест){% else %}Перейти к оплате{% endif %}
             </button>
         </form>
     </div>
@@ -304,7 +310,11 @@
         gap: 0.75rem;
     }
 
-    .payment-method {
+    /* Селектор через родителя намеренно: правило .form-group label
+       в base.html делает метку блочной и перебивало простое
+       .payment-method — кружок переключателя оказывался на отдельной
+       строке, на 28 пикселей выше своей подписи. */
+    .payment-methods-grid .payment-method {
         display: flex;
         align-items: center;
         gap: 10px;
@@ -467,20 +477,20 @@
 
                 if (isNaN(amount) || amount < 100) {
                     e.preventDefault();
-                    alert('Минимальная сумма пополнения - 100 ₽');
+                    showAlertModal('Минимальная сумма пополнения — 100 ₽.');
                     amountInput.focus();
                     return false;
                 }
 
                 if (amount > 100000) {
                     e.preventDefault();
-                    alert('Максимальная сумма пополнения - 100 000 ₽');
+                    showAlertModal('Максимальная сумма пополнения — 100 000 ₽.');
                     amountInput.focus();
                     return false;
                 }
 
                 submitBtn.disabled = true;
-                submitBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> {% if USE_REAL_PAYMENTS %}Перенаправление на оплату...{% else %}Пополнение...{% endif %}';
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> {% if allow_simulated_topup %}Пополнение...{% else %}Перенаправление на оплату...{% endif %}';
 
                 return true;
             });

@@ -29,6 +29,27 @@
             </div>
         </div>
         
+        {% comment %}
+            Выключения 2FA раньше не было вовсе: человек, сменивший телефон,
+            оставался с включённой защитой навсегда. Код требуется, иначе
+            снять защиту смог бы любой, кто добрался до открытой сессии.
+        {% endcomment %}
+        <form method="post" action="{% url 'main:disable_2fa' %}"
+              style="background: #fff4f4; padding: 1rem; border-radius: 16px; margin-bottom: 1.5rem;"
+              data-confirm="Выключить двухфакторную аутентификацию? Вход останется защищён только паролем."
+                  data-confirm-title="Выключить защиту?">
+            {% csrf_token %}
+            <h3 style="color: #d4737a; margin-top: 0;">Выключить 2FA</h3>
+            <p style="color: #6b5a5a;">
+                Введите код из приложения или любой из резервных кодов.
+            </p>
+            <input type="text" name="code" class="form-control" inputmode="numeric"
+                   placeholder="Код подтверждения" required style="margin-bottom: 0.75rem;">
+            <button type="submit" class="btn btn-secondary" style="background: #dc3545; color: white; border: none;">
+                <i class="fas fa-shield-halved"></i> Выключить
+            </button>
+        </form>
+
         <a href="{% url 'main:profile' %}" class="btn btn-primary" style="width: 100%; text-align: center;">
             <i class="fas fa-arrow-left"></i> Вернуться в профиль
         </a>

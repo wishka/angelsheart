@@ -6,10 +6,15 @@ from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.models import User
 
 from .models import Donation, Fundraise, Transaction, WithdrawalRequest
+from .utils.email_domains import check_email_domain
 
 
 class RegisterForm(UserCreationForm):
     email = forms.EmailField(required=True)
+    # Ставится формой при повторной отправке: человек увидел вопрос про
+    # опечатку и подтвердил, что домен именно такой. Проверка на опечатки
+    # не должна становиться запретом на регистрацию.
+    email_typo_confirmed = forms.BooleanField(required=False, widget=forms.HiddenInput)
 
     class Meta:
         model = User
@@ -21,6 +26,15 @@ class RegisterForm(UserCreationForm):
         email = self.cleaned_data['email']
         if User.objects.filter(email__iexact=email).exists():
             raise forms.ValidationError('Пользователь с таким email уже зарегистрирован')
+
+        # Одноразовые ящики и опечатки в популярных доменах: и то, и другое
+        # даёт адрес, до которого потом не достучаться — а по нему уходят
+        # решение о блокировке счёта и ссылка восстановления доступа.
+        domain_error = check_email_domain(
+            email, allow_typo=self.data.get('email_typo_confirmed') == 'on',
+        )
+        if domain_error:
+            raise forms.ValidationError(domain_error)
         return email
 
 
@@ -84,9 +98,25 @@ class DonationForm(forms.ModelForm):
         return amount
 
 
+def available_withdrawal_methods():
+    """
+    Способы вывода, которые сервис действительно умеет исполнять.
+
+    СБП требует идентификатора банка получателя; пока банки не настроены
+    (settings.SBP_BANKS), предлагать этот способ нельзя — заявка по нему
+    гарантированно закончится отказом.
+    """
+    methods = []
+    for value, label in WithdrawalRequest.PAYMENT_METHOD_CHOICES:
+        if value == 'sbp' and not settings.SBP_BANKS:
+            continue
+        methods.append((value, label))
+    return methods
+
+
 class WithdrawalForm(forms.Form):
     payment_method = forms.ChoiceField(
-        choices=WithdrawalRequest.PAYMENT_METHOD_CHOICES,
+        choices=available_withdrawal_methods,
         widget=forms.Select(attrs={'class': 'form-control'})
     )
     amount = forms.DecimalField(
@@ -115,6 +145,14 @@ class WithdrawalForm(forms.Form):
         required=False,
         widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': '+7 XXX XXX-XX-XX'})
     )
+    # Банк получателя: без него выплата через СБП не проходит
+    bank_id = forms.ChoiceField(
+        required=False,
+        choices=lambda: [('', 'Выберите банк')] + sorted(
+            settings.SBP_BANKS.items(), key=lambda item: item[1],
+        ),
+        widget=forms.Select(attrs={'class': 'form-control'}),
+    )
     
     # Для ЮMoney
     wallet_number = forms.CharField(
@@ -135,8 +173,15 @@ class WithdrawalForm(forms.Form):
             if not cleaned_data.get('card_holder'):
                 self.add_error('card_holder', 'Введите имя держателя карты')
         elif payment_method == 'sbp':
+            if not settings.SBP_BANKS:
+                self.add_error(
+                    'payment_method',
+                    'Выплаты через СБП сейчас недоступны — выберите другой способ',
+                )
             if not cleaned_data.get('phone_number'):
                 self.add_error('phone_number', 'Введите номер телефона')
+            if not cleaned_data.get('bank_id'):
+                self.add_error('bank_id', 'Выберите банк получателя')
         elif payment_method == 'yoomoney':
             if not cleaned_data.get('wallet_number'):
                 self.add_error('wallet_number', 'Введите номер кошелька')

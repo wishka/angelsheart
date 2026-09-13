@@ -1,6 +1,7 @@
 from functools import wraps
 
 from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth import login, authenticate, logout
 from django.contrib import messages
@@ -12,9 +13,10 @@ from django.contrib.auth.models import User
 from django.core.paginator import Paginator
 from django.http import FileResponse, Http404, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.urls import reverse_lazy
 from django.views.decorators.http import require_http_methods, require_POST
-from .models import (AccountRestriction, Balance, Transaction, Fundraise, FundraiseDocument,
-                     Donation, UserConsent, ConsentLog, WithdrawalRequest,
+from .models import (AccountRestriction, Balance, Transaction, EmailConfirmation, Fundraise,
+                     FundraiseDocument, Donation, UserConsent, ConsentLog, WithdrawalRequest,
                      PersonalDataAccessLog)
 from .forms import RegisterForm, TransferForm, FundraiseForm, DonationForm, WithdrawalForm
 from django.core.cache import cache
@@ -25,7 +27,7 @@ from main.payments.verification import KYCService
 from main.payments.webhooks import WebhookRejected, verify_yookassa_notification
 from main.models import (PaymentTransaction, TwoFactorAuth, SecurityLog,
                          UserVerification, KYCDocument)
-from main import moderation, services
+from main import email_confirmation, moderation, services
 from main import restrictions as restrictions_service
 from main.services import InsufficientFunds, OperationRejected
 from main.utils.encryption import mask_card_number, mask_phone
@@ -54,6 +56,36 @@ def validate_uploaded_document(upload):
     if upload.content_type not in ALLOWED_DOCUMENT_TYPES:
         return 'Допустимы только изображения JPEG, PNG, HEIC или файлы PDF'
     return None
+
+
+def parse_birth_date(raw):
+    """
+    Разбор даты рождения из формы. Возвращает date или None.
+
+    Раньше значение присваивалось полю модели как есть, и пустая строка
+    роняла страницу верификации с 500.
+    """
+    from datetime import date, datetime
+
+    if isinstance(raw, date):
+        return raw
+    text = (raw or '').strip()
+    if not text:
+        return None
+    for fmt in ('%Y-%m-%d', '%d.%m.%Y'):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def years_since(birth_date):
+    """Полных лет на сегодня."""
+    today = timezone.localdate()
+    return today.year - birth_date.year - (
+        (today.month, today.day) < (birth_date.month, birth_date.day)
+    )
 
 
 def parse_amount(raw, field_name='Сумма'):
@@ -150,6 +182,24 @@ def register_page(request):
             request.session['consent_signed_at'] = timezone.now().isoformat()
 
             login(request, user)
+
+            # Письмо с подтверждением адреса. Раньше адрес не проверялся
+            # вовсе: опечатка означала, что восстановить доступ к деньгам
+            # невозможно, а чужой адрес — что письма о чужом счёте получает
+            # посторонний.
+            if email_confirmation.send_confirmation(user, request):
+                messages.info(
+                    request,
+                    f'Мы отправили письмо на {user.email}. Подтвердите адрес — '
+                    f'без этого недоступны вывод средств и публикация сбора.',
+                )
+            else:
+                messages.warning(
+                    request,
+                    'Не удалось отправить письмо для подтверждения адреса. '
+                    'Повторить отправку можно в профиле.',
+                )
+
             messages.success(request, f'Добро пожаловать, {user.username}!')
             return redirect('main:dashboard')
         else:
@@ -499,6 +549,9 @@ def user_profile(request, username=None):
         context['recent_transactions'] = Transaction.objects.filter(
             Q(sender=profile_user) | Q(receiver=profile_user)
         ).select_related('sender', 'receiver').order_by('-created_at')[:5]
+        confirmation = EmailConfirmation.for_user(profile_user)
+        context['email_confirmed'] = confirmation.is_confirmed
+        context['email_confirmation'] = confirmation
     else:
         context['recent_transactions'] = []
 
@@ -576,28 +629,13 @@ def check_username(request):
     return JsonResponse({'exists': exists, 'username': username})
 
 
-@login_required
-def get_balance_json(request):
-    """Получение текущего баланса"""
-    return JsonResponse({
-        'balance': float(request.user.balance.amount),
-        'username': request.user.username,
-    })
-
-
-@login_required
-def cancel_transaction(request, transaction_id):
-    """Отмена транзакции"""
-    transaction = get_object_or_404(Transaction, id=transaction_id, sender=request.user)
-    
-    if transaction.status == 'pending':
-        transaction.status = 'failed'
-        transaction.save()
-        messages.success(request, 'Транзакция отменена')
-    else:
-        messages.error(request, 'Невозможно отменить эту транзакцию')
-    
-    return redirect('main:history')
+# Удалены get_balance_json и cancel_transaction.
+#
+# Первую не вызывал ни один шаблон и ни один скрипт: баланс и так есть
+# на каждой странице. Вторая отменяла транзакцию со статусом 'pending',
+# а таких транзакций в системе не создаётся нигде — все операции
+# завершаются в момент выполнения. То есть вью существовала, была
+# доступна по адресу, но сработать не могла ни при каких данных.
 
 
 # ==================== СБОРЫ СРЕДСТВ ====================
@@ -624,10 +662,19 @@ def fundraise_list(request):
     # Статистика
     total_fundraises = fundraises.count()
     total_raised = fundraises.aggregate(Sum('current_amount'))['current_amount__sum'] or 0
-    total_donors = Donation.objects.values('donor').distinct().count()
-    
+    # Считаются жертвователи показанных сборов, а не все доноры платформы:
+    # раньше цифра под фильтром «Медицина» включала вообще всех.
+    total_donors = (
+        Donation.objects.filter(fundraise__in=fundraises, refunded_at__isnull=True)
+        .values('donor').distinct().count()
+    )
+
+    paginator = Paginator(fundraises.select_related('author'), 12)
+    page = paginator.get_page(request.GET.get('page'))
+
     context = {
-        'fundraises': fundraises,
+        'fundraises': page.object_list,
+        'page_obj': page,
         'total_fundraises': total_fundraises,
         'total_raised': total_raised,
         'total_donors': total_donors,
@@ -713,6 +760,16 @@ def fundraise_detail(request, pk):
         'is_author': is_author,
         'can_moderate': can_moderate,
         'accepts_donations': fundraise.accepts_donations,
+        # Сколько из собранного фактически зачислено автору: раньше в шаблоне
+        # стояло «Вы получите: {{ current_amount }}» без учёта комиссии
+        'author_received': (
+            fundraise.current_amount
+            - sum(
+                (donation.commission.amount for donation in fundraise.donations.select_related('commission')
+                 if getattr(donation, 'commission', None)),
+                Decimal('0.00'),
+            )
+        ),
         # Ставка берётся из настроек — единственного места, где она задана
         'commission_percent': settings.DONATION_COMMISSION_PERCENT,
     }
@@ -903,6 +960,33 @@ def upload_fundraise_document(request, pk):
 
 
 @login_required
+@require_POST
+def delete_fundraise_document(request, pk):
+    """
+    Удаление приложенного документа автором.
+
+    Загрузка была, удаления — нет: ошибочно приложенную чужую справку
+    нельзя было убрать. Для документа, который может содержать сведения
+    о здоровье, это прямое нарушение права на уничтожение данных
+    (ст. 14 152-ФЗ).
+    """
+    document = get_object_or_404(
+        FundraiseDocument.objects.select_related('fundraise'),
+        pk=pk, fundraise__author=request.user,
+    )
+    fundraise_id = document.fundraise_id
+
+    if not document.fundraise.is_editable:
+        messages.error(request, 'Сбор на проверке — состав документов менять уже нельзя.')
+        return redirect('main:fundraise_manage', pk=fundraise_id)
+
+    document.file.delete(save=False)
+    document.delete()
+    messages.success(request, 'Документ удалён.')
+    return redirect('main:fundraise_manage', pk=fundraise_id)
+
+
+@login_required
 def fundraise_document(request, pk):
     """
     Выдача приложенного документа.
@@ -949,6 +1033,9 @@ def my_fundraises(request):
 
     context = {
         'draft_fundraises': draft_fundraises,
+        # Долг показывается там, где автор и так бывает: страницу, о которой
+        # не знаешь, не открывают
+        'debt_total': services.outstanding_debt(request.user)['total'],
         'active_fundraises': active_fundraises,
         'completed_fundraises': completed_fundraises,
         'cancelled_fundraises': cancelled_fundraises,
@@ -959,12 +1046,66 @@ def my_fundraises(request):
 
 
 @login_required
+def my_debt(request):
+    """
+    Долг перед жертвователями и его погашение.
+
+    Пункт 7.4 оферты обещает, что невозвращённая часть фиксируется как
+    задолженность и погашается. Фиксировалась она исправно, а вот увидеть
+    её и вернуть деньги автор не мог никак: ни страницы, ни кнопки.
+    """
+    debt = services.outstanding_debt(request.user)
+
+    if request.method == 'POST':
+        if debt['total'] <= 0:
+            messages.info(request, 'Задолженности нет.')
+            return redirect('main:my_debt')
+
+        balance = Balance.objects.get(user=request.user).amount
+        if balance <= 0:
+            messages.error(
+                request,
+                'На балансе нет средств. Пополните баланс — деньги уйдут '
+                'жертвователям сразу после пополнения.',
+            )
+            return redirect('main:my_debt')
+
+        try:
+            repaid = services.repay_debt(request.user)
+        except (InsufficientFunds, OperationRejected) as exc:
+            messages.error(request, str(exc))
+            return redirect('main:my_debt')
+
+        remaining = services.outstanding_debt(request.user)['total']
+        if repaid > 0:
+            text = f'Жертвователям возвращено {repaid} ₽.'
+            if remaining > 0:
+                text += f' Осталось вернуть {remaining} ₽.'
+            messages.success(request, text)
+        else:
+            messages.error(request, 'Вернуть не удалось: проверьте остаток на балансе.')
+        return redirect('main:my_debt')
+
+    return render(request, 'main/my_debt.html', {
+        'debt': debt,
+        'balance': Balance.objects.get(user=request.user).amount,
+    })
+
+
+@login_required
 def my_donations(request):
     """Мои пожертвования"""
     donations = Donation.objects.filter(donor=request.user).select_related('fundraise').order_by('-created_at')
-    
+
+    # Шаблон рисует постраничную навигацию по page_obj, которого вью
+    # не передавала: блок не отображался, а все пожертвования шли одним
+    # списком без конца.
+    paginator = Paginator(donations, 20)
+    page = paginator.get_page(request.GET.get('page'))
+
     context = {
-        'donations': donations,
+        'donations': page.object_list,
+        'page_obj': page,
         'total_donated': donations.aggregate(Sum('amount'))['amount__sum'] or 0,
     }
     return render(request, 'main/my_donations.html', context)
@@ -1061,8 +1202,56 @@ def my_consents(request):
     context = {
         'consents': consents,
         'consent_logs': consent_logs,
+        'available_consents': _available_consents(request.user),
+        'current_version': UserConsent.current_version(),
     }
     return render(request, 'main/my_consents.html', context)
+
+
+# Документ, который пользователь подписывает, принимая согласие. Без ссылки
+# на текст «принятие» ничего не значит: согласие должно быть информированным
+# (ч. 1 ст. 9 152-ФЗ).
+CONSENT_DOCUMENTS = {
+    'terms': ('main:user_agreement', 'Пользовательское соглашение'),
+    'data_processing': ('main:consent_processing', 'Согласие на обработку персональных данных'),
+    'distribution': ('main:consent_distribution', 'Согласие на распространение персональных данных'),
+    'cookies': ('main:cookie_policy', 'Политика cookies'),
+}
+
+
+def _available_consents(user):
+    """
+    Согласия, которые пользователь может дать прямо сейчас.
+
+    Раньше этого списка не было, и принять согласие было негде: вью умела
+    обрабатывать action=reaccept, но ни одной кнопки в интерфейсе не
+    существовало. Пользователь без согласия на распространение не мог
+    создать сбор — и не мог его выдать. То же после обновления редакции
+    документов: старое согласие перестаёт действовать, а переподписать
+    его было нечем.
+    """
+    version = UserConsent.current_version()
+    active = set(
+        UserConsent.objects.filter(
+            user=user, is_accepted=True, revoked_at__isnull=True, version=version,
+        ).values_list('consent_type', flat=True)
+    )
+
+    available = []
+    for consent_type, (url_name, title) in CONSENT_DOCUMENTS.items():
+        if consent_type in active:
+            continue
+        available.append({
+            'type': consent_type,
+            'title': title,
+            'url_name': url_name,
+            'required': consent_type in UserConsent.REQUIRED_TYPES,
+            'outdated': UserConsent.objects.filter(
+                user=user, consent_type=consent_type, is_accepted=True,
+                revoked_at__isnull=True,
+            ).exclude(version=version).exists(),
+        })
+    return available
 
 
 @login_required
@@ -1133,7 +1322,12 @@ def create_withdrawal_request(request):
                 }
                 masked = mask_card_number(payment_details['card_number'])
             elif payment_method == 'sbp':
-                payment_details = {'phone_number': form.cleaned_data.get('phone_number')}
+                # bank_id обязателен: без него ЮKassa не знает, в какой банк
+                # переводить, и выплата не проходит
+                payment_details = {
+                    'phone_number': form.cleaned_data.get('phone_number'),
+                    'bank_id': form.cleaned_data.get('bank_id'),
+                }
                 masked = mask_phone(payment_details['phone_number'])
             else:
                 payment_details = {'wallet_number': form.cleaned_data.get('wallet_number')}
@@ -1221,8 +1415,14 @@ def my_withdrawals(request):
 
 
 @login_required
+@require_POST
 def cancel_withdrawal(request, pk):
-    """Отмена заявки пользователем"""
+    """
+    Отмена заявки пользователем.
+
+    Только POST: отмена возвращает деньги на баланс, а действие с деньгами,
+    доступное переходом по ссылке, срабатывает от картинки на чужом сайте.
+    """
     withdrawal = get_object_or_404(WithdrawalRequest, pk=pk, user=request.user)
     
     if withdrawal.cancel():
@@ -1433,8 +1633,44 @@ def payment_webhook(request):
 
 @login_required
 def payment_success(request):
-    """Страница успешной оплаты"""
-    messages.success(request, '✅ Ваш платеж успешно прошел! Средства зачислены на баланс.')
+    """
+    Возврат пользователя из платёжной формы.
+
+    Раньше страница безусловно сообщала «платёж прошёл, средства зачислены».
+    Это было неправдой дважды: ЮKassa возвращает сюда и после отмены оплаты,
+    а зачисление в любом случае происходит не здесь, а при получении
+    уведомления от платёжной системы — то есть обычно чуть позже.
+
+    Поэтому статус берётся из нашей же записи о платеже, а не из факта
+    перехода по ссылке.
+    """
+    payment_id = (request.GET.get('payment_id') or '').strip()
+    payment = None
+    if payment_id:
+        payment = PaymentTransaction.objects.filter(
+            payment_id=payment_id, user=request.user,
+        ).first()
+
+    if payment is None:
+        messages.info(
+            request,
+            'Платёж обрабатывается. Как только платёжная система подтвердит '
+            'оплату, средства появятся на балансе.',
+        )
+    elif payment.status == 'paid':
+        messages.success(request, f'✅ Платёж на {payment.amount} ₽ подтверждён, средства зачислены.')
+    elif payment.status in ('cancelled', 'failed'):
+        messages.warning(
+            request,
+            'Платёж не состоялся. Деньги не списаны — если средства всё же '
+            'ушли, напишите в поддержку.',
+        )
+    else:
+        messages.info(
+            request,
+            'Платёж обрабатывается. Средства появятся на балансе после '
+            'подтверждения платёжной системой — обычно в течение нескольких минут.',
+        )
     return redirect('main:dashboard')
 
 @login_required
@@ -1491,6 +1727,45 @@ def setup_2fa(request):
 # ==================== ВЕРИФИКАЦИЯ (KYC) ====================
 
 @login_required
+@require_POST
+def disable_2fa(request):
+    """
+    Выключение двухфакторной аутентификации.
+
+    Включить её было можно, выключить — нет: ни вью, ни кнопки, при том что
+    событие '2fa_disabled' в журнале безопасности предусмотрено с самого
+    начала. Человек, сменивший телефон, оставался с включённой 2FA навсегда.
+
+    Требуется действующий код или резервный: иначе выключить защиту сможет
+    любой, кто добрался до открытой сессии.
+    """
+    two_factor = TwoFactorAuth.objects.filter(user=request.user, is_enabled=True).first()
+    if two_factor is None:
+        messages.error(request, 'Двухфакторная аутентификация не включена.')
+        return redirect('main:setup_2fa')
+
+    code = (request.POST.get('code') or '').strip()
+    verified = (
+        TwoFactorAuthService.verify_code(two_factor.secret_key, code)
+        or TwoFactorAuthService.consume_backup_code(two_factor, code)
+    )
+    if not verified:
+        messages.error(request, 'Неверный код. Введите код из приложения или резервный код.')
+        return redirect('main:setup_2fa')
+
+    two_factor.is_enabled = False
+    two_factor.backup_codes = []
+    two_factor.save(update_fields=['is_enabled', 'backup_codes'])
+
+    AntiFraudService(request.user).log_security_event('2fa_disabled', request)
+    messages.success(
+        request,
+        'Двухфакторная аутентификация выключена. Включить её снова можно здесь же.',
+    )
+    return redirect('main:profile')
+
+
+@login_required
 def verification_page(request):
     """Страница верификации пользователя"""
     verification, created = UserVerification.objects.get_or_create(user=request.user)
@@ -1519,9 +1794,30 @@ def verification_page(request):
             for error in passport_errors.values():
                 messages.error(request, error)
             return redirect('main:verification')
-        
+
+        # Дата рождения раньше присваивалась как есть: пустая строка роняла
+        # страницу с 500 (ValidationError на уровне поля модели). Заодно
+        # проверяется возраст: оферта (п. 3.1) и Политика ограничивают
+        # сервис совершеннолетними, но нигде это не проверялось.
+        parsed_birth_date = parse_birth_date(birth_date)
+        if parsed_birth_date is None:
+            messages.error(request, 'Укажите дату рождения в формате ДД.ММ.ГГГГ')
+            return redirect('main:verification')
+
+        age = years_since(parsed_birth_date)
+        if age < 18:
+            messages.error(
+                request,
+                'Сервис доступен только совершеннолетним: по указанной дате '
+                'рождения вам меньше 18 лет.',
+            )
+            return redirect('main:verification')
+        if age > 120:
+            messages.error(request, 'Проверьте дату рождения — она указана неверно.')
+            return redirect('main:verification')
+
         verification.full_name = full_name
-        verification.birth_date = birth_date
+        verification.birth_date = parsed_birth_date
         verification.passport_series = passport_series
         verification.passport_number = passport_number
         # Уровень верификации больше НЕ повышается самим фактом ввода данных.
@@ -1889,7 +2185,8 @@ def delete_account(request):
         messages.error(
             request,
             'По отменённому сбору остался невозвращённый долг перед жертвователями. '
-            f'Пополните баланс и обратитесь в поддержку: {settings.OPERATOR["support_email"]}',
+            'Погасите его в разделе «Задолженность» — после этого учётную запись '
+            'можно будет удалить.',
         )
         return redirect('main:my_consents')
 
@@ -2224,3 +2521,157 @@ def breach_procedure(request):
     return render(request, 'main/breach_procedure.html', {
         'legal_updated': settings.LEGAL_DOCS_UPDATED,
     })
+
+
+# ==================== ПАРОЛЬ: ВОССТАНОВЛЕНИЕ И СМЕНА ====================
+
+class PasswordResetRequestView(auth_views.PasswordResetView):
+    """
+    Запрос ссылки на восстановление пароля.
+
+    Восстановления не было вовсе: форма регистрации требует email
+    и объясняет это тем, что он нужен «для восстановления доступа»,
+    но забывший пароль терял учётную запись навсегда — вместе с остатком
+    на балансе. При включённой 2FA положение было ещё безнадёжнее.
+
+    Письмо уходит и на несуществующий адрес тоже: ответ страницы не
+    зависит от того, есть ли такой пользователь. Иначе форма превращается
+    в проверку «зарегистрирован ли этот email», то есть в утечку.
+    """
+
+    template_name = 'main/password_reset.html'
+    email_template_name = 'emails/password_reset.txt'
+    html_email_template_name = 'emails/password_reset.html'
+    subject_template_name = 'emails/password_reset_subject.txt'
+    success_url = reverse_lazy('main:password_reset_done')
+
+    def form_valid(self, form):
+        # Попытки восстановления фиксируются: подбор адресов через эту
+        # форму выглядит так же, как подбор пароля, и разбирать инцидент
+        # без журнала нечем
+        ip_address, user_agent = get_request_meta(self.request)
+        SecurityLog.objects.create(
+            action='password_change',
+            username_attempted=form.cleaned_data.get('email', '')[:150],
+            ip_address=ip_address,
+            user_agent=user_agent,
+            details={'event': 'password_reset_requested'},
+        )
+        return super().form_valid(form)
+
+
+class PasswordResetSentView(auth_views.PasswordResetDoneView):
+    template_name = 'main/password_reset_sent.html'
+
+
+class PasswordResetConfirmView(auth_views.PasswordResetConfirmView):
+    """Ввод нового пароля по ссылке из письма."""
+
+    template_name = 'main/password_reset_confirm.html'
+    success_url = reverse_lazy('main:password_reset_complete')
+
+    def form_valid(self, response):
+        user = self.user
+        ip_address, user_agent = get_request_meta(self.request)
+        SecurityLog.objects.create(
+            user=user, action='password_change',
+            ip_address=ip_address, user_agent=user_agent,
+            details={'event': 'password_reset_completed'},
+        )
+        return super().form_valid(response)
+
+
+class PasswordResetFinishedView(auth_views.PasswordResetCompleteView):
+    template_name = 'main/password_reset_complete.html'
+
+
+class PasswordChangeView(auth_views.PasswordChangeView):
+    """
+    Смена известного пароля.
+
+    Журнал безопасности с самого начала знал событие 'password_change',
+    но сменить пароль было негде: ни вью, ни адреса, ни страницы.
+    """
+
+    template_name = 'main/password_change.html'
+    success_url = reverse_lazy('main:password_change_done')
+
+    def form_valid(self, form):
+        ip_address, user_agent = get_request_meta(self.request)
+        SecurityLog.objects.create(
+            user=self.request.user, action='password_change',
+            ip_address=ip_address, user_agent=user_agent,
+            details={'event': 'password_changed'},
+        )
+        return super().form_valid(form)
+
+
+class PasswordChangeDoneView(auth_views.PasswordChangeDoneView):
+    template_name = 'main/password_change_done.html'
+
+
+# ==================== ПОДТВЕРЖДЕНИЕ АДРЕСА ПОЧТЫ ====================
+
+def confirm_email(request, uidb64, token):
+    """
+    Переход по ссылке из письма.
+
+    Вход не требуется: человек мог открыть письмо на другом устройстве,
+    и требовать там пароль — верный способ сделать так, чтобы адрес
+    никто не подтвердил.
+    """
+    from django.utils.encoding import force_str
+    from django.utils.http import urlsafe_base64_decode
+
+    try:
+        user = User.objects.get(pk=force_str(urlsafe_base64_decode(uidb64)))
+    except (User.DoesNotExist, ValueError, TypeError, OverflowError):
+        user = None
+
+    if user is None or not email_confirmation.token_generator.check_token(user, token):
+        return render(request, 'main/email_confirm_result.html', {'success': False})
+
+    confirmation = EmailConfirmation.for_user(user)
+    already = confirmation.is_confirmed
+    if not already:
+        confirmation.confirm()
+        AntiFraudService(user).log_security_event(
+            'verification', request, details={'stage': 'email_confirmed'},
+        )
+
+    return render(request, 'main/email_confirm_result.html', {
+        'success': True, 'already': already, 'confirmed_user': user,
+    })
+
+
+@login_required
+@require_POST
+def resend_email_confirmation(request):
+    """Повторная отправка письма — с ограничением частоты."""
+    confirmation = EmailConfirmation.for_user(request.user)
+
+    # Проверяется фактическое подтверждение, а не отметка is_legacy:
+    # пользователь, зарегистрированный до введения проверки, вправе
+    # подтвердить адрес добровольно.
+    if confirmation.is_actually_confirmed:
+        messages.info(request, 'Адрес уже подтверждён.')
+        return redirect('main:profile')
+
+    if not request.user.email:
+        messages.error(request, 'В учётной записи не указан адрес электронной почты.')
+        return redirect('main:profile')
+
+    if not confirmation.can_resend:
+        # Иначе форма превращается в средство рассылки по чужим адресам
+        messages.error(
+            request,
+            'Письмо уже отправлено. Повторить отправку можно через несколько минут — '
+            'проверьте папку «Спам».',
+        )
+        return redirect('main:profile')
+
+    if email_confirmation.send_confirmation(request.user, request):
+        messages.success(request, f'Письмо отправлено на {request.user.email}.')
+    else:
+        messages.error(request, 'Не удалось отправить письмо. Попробуйте позже.')
+    return redirect('main:profile')

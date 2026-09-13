@@ -26,7 +26,13 @@
             <div class="form-group">
                 <label><i class="fas fa-envelope"></i> Email</label>
                 {{ form.email }}
+                {% comment %}
+                    Если предупредили об опечатке в домене, при следующей
+                    отправке адрес принимается: проверка не должна запирать
+                    людей, у которых домен действительно такой.
+                {% endcomment %}
                 {% if form.email.errors %}
+                    <input type="hidden" name="email_typo_confirmed" value="on">
                     <small style="color: #dc3545;">{{ form.email.errors.0 }}</small>
                 {% endif %}
             </div>
@@ -400,13 +406,13 @@
     document.getElementById('registerForm').addEventListener('submit', function(e) {
         if (!document.getElementById('accept_terms').checked) {
             e.preventDefault();
-            alert('Примите Пользовательское соглашение');
+            showAlertModal('Без принятия Пользовательского соглашения регистрация невозможна.');
             return false;
         }
 
         if (!document.getElementById('consent_data_processing').checked) {
             e.preventDefault();
-            alert('Без согласия на обработку персональных данных регистрация невозможна');
+            showAlertModal('Без согласия на обработку персональных данных регистрация невозможна.');
             return false;
         }
 

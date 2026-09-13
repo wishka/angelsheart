@@ -44,7 +44,7 @@
                            name="receiver_username"
                            id="receiverSearch"
                            class="form-control"
-                           placeholder="Введите имя пользователя..."
+                           placeholder="Имя пользователя"
                            autocomplete="off"
                            required>
                     <div id="usernameCheckResult" class="input-check"></div>
@@ -356,6 +356,10 @@
         border-radius: 0 0 20px 20px;
         max-height: 250px;
         overflow-y: auto;
+        /* Явный запрет прокрутки вбок: overflow-y: auto делает
+           overflow-x тоже auto, и длинный логин уезжал в невидимую
+           прокрутку — человек не видел, кому переводит деньги */
+        overflow-x: hidden;
         z-index: 1000;
         box-shadow: 0 4px 12px rgba(0,0,0,0.1);
         margin-top: -2px;
@@ -396,16 +400,21 @@
 
     .search-result-info {
         flex: 1;
+        /* Без этого элемент flex не сжимается меньше своего текста,
+           и длинный логин выталкивает строку за край списка */
+        min-width: 0;
     }
 
     .search-result-username {
         font-weight: 600;
         color: #d4737a;
+        overflow-wrap: anywhere;
     }
 
     .search-result-email {
         font-size: 0.7rem;
         color: #b89a9a;
+        overflow-wrap: anywhere;
     }
 
     .search-result-item.selected {
@@ -424,6 +433,13 @@
     }
 
     .receiver-quick-btn {
+        /* Длинный логин делал кнопку шире экрана: подпись кнопки мы
+           не переносим (иначе слова рвутся посередине), поэтому здесь
+           обрезаем многоточием */
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
         background: #fdf4f0;
         border: 1px solid #e0d0d0;
         padding: 8px 18px;
@@ -812,19 +828,19 @@
                 const amount = parseFloat(amountInput?.value || 0);
 
                 if (!username) {
-                    alert('Пожалуйста, укажите получателя');
+                    showAlertModal('Укажите, кому переводите деньги.');
                     searchInput.focus();
                     return false;
                 }
 
                 if (isNaN(amount) || amount <= 0) {
-                    alert('Пожалуйста, укажите корректную сумму (больше 0)');
+                    showAlertModal('Укажите сумму больше нуля.');
                     amountInput.focus();
                     return false;
                 }
 
                 if (amount > currentBalance) {
-                    alert(`Недостаточно средств. Ваш баланс: ${currentBalance} ₽`);
+                    showAlertModal(`Недостаточно средств. Ваш баланс: ${currentBalance} ₽`);
                     return false;
                 }
 

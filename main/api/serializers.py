@@ -39,6 +39,16 @@ class RegisterSerializer(serializers.ModelSerializer):
         # Email — идентификатор для восстановления доступа, дубликаты недопустимы
         if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError('Пользователь с таким email уже зарегистрирован')
+
+        # Та же проверка, что и на веб-форме: без неё регистрация через API
+        # оставалась лазейкой для одноразовых ящиков.
+        from main.utils.email_domains import check_email_domain
+
+        domain_error = check_email_domain(value, allow_typo=self.initial_data.get(
+            'email_typo_confirmed', False,
+        ))
+        if domain_error:
+            raise serializers.ValidationError(domain_error)
         return value
 
     def validate(self, data):
@@ -273,8 +283,5 @@ class ConsentSerializer(serializers.ModelSerializer):
 
 # ==================== СТАТИСТИКА ====================
 
-class DashboardStatsSerializer(serializers.Serializer):
-    balance = serializers.DecimalField(max_digits=10, decimal_places=2)
-    total_sent = serializers.DecimalField(max_digits=12, decimal_places=2)
-    total_received = serializers.DecimalField(max_digits=12, decimal_places=2)
-    recent_transactions = TransactionSerializer(many=True)
+# Сериализатор DashboardStatsSerializer удалён: эндпоинт статистики
+# собирает ответ вручную, а этот класс не использовался нигде.

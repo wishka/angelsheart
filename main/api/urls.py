@@ -3,9 +3,13 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
+from rest_framework import permissions
 from . import views
 
 # Swagger схема
+# permission_classes нужен явно: public=True описывает только состав схемы,
+# а доступ к самой странице оставался за настройками DRF — анонимный
+# получал 401, то есть документация была недоступна тем, кому нужна.
 schema_view = get_schema_view(
     openapi.Info(
         title="Ангел-Хранитель API",
@@ -15,6 +19,7 @@ schema_view = get_schema_view(
         license=openapi.License(name="MIT License"),
     ),
     public=True,
+    permission_classes=[permissions.AllowAny],
 )
 
 # Регистрация роутеров
@@ -35,6 +40,10 @@ urlpatterns = [
     path('auth/login/', views.LoginView.as_view(), name='api_login'),
     path('auth/logout/', views.LogoutView.as_view(), name='api_logout'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    # Повторная отправка письма для подтверждения адреса: без него
+    # недоступны вывод средств и публикация сбора
+    path('auth/email/resend/', views.ResendEmailConfirmationView.as_view(),
+         name='api_resend_email_confirmation'),
     
     # Статистика
     path('dashboard/', views.dashboard_stats, name='api_dashboard'),

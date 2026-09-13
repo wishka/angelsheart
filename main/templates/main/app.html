@@ -1,0 +1,130 @@
+{% extends 'base.html' %}
+
+{% block title %}Приложение для Android | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div style="max-width: 720px; margin: 0 auto;">
+
+    <h1><i class="fas fa-mobile-screen"></i> Приложение для Android</h1>
+
+    <!-- install-hint: в уже установленном приложении эта карточка скрыта -->
+    <div class="card install-hint" style="margin-bottom: 1.5rem;">
+        <h2 style="margin-top: 0;">Способ первый: установить прямо из браузера</h2>
+        <p>
+            Скачивать ничего не нужно: сайт сам умеет превращаться
+            в приложение. Откройте меню браузера
+            <strong>&#8942;</strong> и выберите
+            <strong>«Установить приложение»</strong> (в некоторых браузерах —
+            «Добавить на главный экран»).
+        </p>
+        <p style="color: #7a6a6a; font-size: 0.92rem;">
+            Значок появится рядом с остальными приложениями, откроется
+            без адресной строки и будет обновляться сам. Это самый простой
+            и самый безопасный способ: вы не скачиваете файл и не меняете
+            настройки телефона.
+        </p>
+        <p id="install-block" style="display: none;">
+            <button type="button" id="install-button" class="btn btn-primary">
+                <i class="fas fa-download"></i> Установить приложение
+            </button>
+        </p>
+    </div>
+
+    <div class="card">
+        <h2 style="margin-top: 0;">Способ второй: файл APK</h2>
+
+        {% if apk_ready %}
+            <p>
+                Версия {{ app_version }}, {{ apk_size_mb }}&nbsp;МБ.
+                Приложение подписано и скачивается с этого сайта, а не из
+                магазина.
+            </p>
+            <p>
+                <a href="{% url 'main:download_apk' %}" class="btn btn-primary">
+                    <i class="fas fa-download"></i> Скачать APK
+                </a>
+            </p>
+            <h3>Проверить, что файл не подменили</h3>
+            <p>
+                Контрольная сумма опубликованной сборки (SHA-256):
+            </p>
+            <p style="font-family: monospace; font-size: 0.8rem; overflow-wrap: anywhere;
+                      background: #fdf4f0; padding: 0.6rem 0.75rem; border-radius: 10px;">{{ apk_sha256 }}</p>
+            <p style="color: #7a6a6a; font-size: 0.92rem;">
+                Сравнить её со скачанным файлом можно любым приложением,
+                считающим хеш. Если суммы не совпали — файл повреждён или
+                подменён, устанавливать его нельзя.
+            </p>
+
+            <h3>Как установить</h3>
+            <ol style="line-height: 1.7;">
+                <li>Скачайте файл и откройте его.</li>
+                <li>
+                    Android спросит разрешение устанавливать приложения из
+                    этого источника — это обычное предупреждение для всего,
+                    что установлено не из магазина. Разрешите его для
+                    браузера, из которого скачали файл.
+                </li>
+                <li>Нажмите «Установить».</li>
+            </ol>
+            <p style="color: #7a6a6a; font-size: 0.92rem;">
+                Обновления такому приложению приходить не будут: новую
+                версию нужно скачать с этой страницы и установить поверх
+                старой. Поэтому первый способ удобнее.
+            </p>
+        {% else %}
+            <p style="color: #7a6a6a;">
+                Сборка ещё не опубликована. Пока пользуйтесь установкой
+                из браузера — она даёт то же самое приложение.
+            </p>
+        {% endif %}
+    </div>
+
+    <div class="card" style="margin-top: 1.5rem;">
+        <h2 style="margin-top: 0;">Что приложение делает с вашими данными</h2>
+        <p>
+            Приложение — это тот же сайт. Оно не читает контакты, не
+            определяет местоположение, не показывает всплывающих
+            уведомлений и ничего не отправляет за пределы этого сервера:
+            письма о событиях на счёте приходят на вашу почту, как и
+            раньше. Данные обрабатываются так же, как описано
+            в <a href="{% url 'main:privacy_policy' %}">Политике
+            конфиденциальности</a>.
+        </p>
+        <p style="color: #7a6a6a; font-size: 0.92rem;">
+            Без сети приложение открывается, но операции с деньгами
+            недоступны — они всегда выполняются на сервере.
+        </p>
+    </div>
+</div>
+
+<script>
+// Браузер сам решает, когда предложить установку. Перехватываем это
+// событие, чтобы кнопка на странице появлялась только тогда, когда
+// установка действительно возможна: кнопка, которая ничего не делает,
+// хуже её отсутствия.
+(function () {
+    var deferred = null;
+    var block = document.getElementById('install-block');
+    var button = document.getElementById('install-button');
+    if (!block || !button) { return; }
+
+    window.addEventListener('beforeinstallprompt', function (event) {
+        event.preventDefault();
+        deferred = event;
+        block.style.display = 'block';
+    });
+
+    button.addEventListener('click', function () {
+        if (!deferred) { return; }
+        deferred.prompt();
+        deferred = null;
+        block.style.display = 'none';
+    });
+
+    window.addEventListener('appinstalled', function () {
+        block.style.display = 'none';
+    });
+})();
+</script>
+{% endblock %}

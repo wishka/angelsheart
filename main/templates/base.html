@@ -7,21 +7,44 @@
 
     {% load static %}
     {% comment %}
-        Шрифты и иконки: локально или с внешних CDN.
+        Шрифты и значки раздаются с этого же сервера, из main/static/vendor/.
 
-        Загрузка с fonts.googleapis.com и cdnjs.cloudflare.com означает, что
-        на каждом показе любой страницы IP-адрес и User-Agent посетителя
-        уходят в США — это трансграничная передача персональных данных
-        (ст. 12 152-ФЗ), требующая отдельного уведомления Роскомнадзора.
-        Перед выводом в прод: python manage.py vendor_static
+        Раньше здесь были ссылки на fonts.googleapis.com и cdnjs.cloudflare.com:
+        при открытии любой страницы — включая саму Политику конфиденциальности —
+        IP-адрес и User-Agent посетителя уходили в США. Это трансграничная
+        передача персональных данных (ст. 12 152-ФЗ), которая требует отдельного
+        уведомления Роскомнадзора до её начала.
+
+        Внешних адресов в шаблонах быть не должно. Обновить сами файлы:
+        python manage.py vendor_static
     {% endcomment %}
-    {% if use_external_cdn %}
-    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    {% else %}
     <link rel="stylesheet" href="{% static 'vendor/fonts/fonts.css' %}">
     <link rel="stylesheet" href="{% static 'vendor/fontawesome/css/all.min.css' %}">
-    {% endif %}
+
+    {% comment %}
+        Приложение: манифест делает сайт устанавливаемым на телефон,
+        theme-color красит системную панель, иконки нужны для главного
+        экрана. Всё раздаётся со своего сервера — внешних адресов здесь
+        нет и быть не должно.
+    {% endcomment %}
+    <link rel="manifest" href="{% url 'main:web_manifest' %}">
+    <meta name="theme-color" content="#d4737a">
+    <meta name="color-scheme" content="light">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Ангел-Хранитель">
+    <link rel="apple-touch-icon" href="{% static 'icons/icon-180.png' %}">
+    <link rel="icon" type="image/png" sizes="192x192" href="{% static 'icons/icon-192.png' %}">
+
+    {% comment %}
+        Мобильный слой идёт последним: он перекрывает инлайн-стили
+        шаблонов, а те написаны прямо в разметке и иначе не перекрываются.
+    {% endcomment %}
+    {% comment %}
+        mobile.css подключается НЕ здесь, а после встроенного <style>
+        ниже по документу: правила с равной специфичностью решаются
+        порядком, и отсюда мобильный слой проигрывал бы собственным
+        стилям страницы.
+    {% endcomment %}
 
     {% block extra_css %}{% endblock %}
 </head>
@@ -42,7 +65,7 @@
                 <i class="fas fa-dove"></i>
                 <span>Ангел-Хранитель</span>
             </a>
-            <div class="nav-links">
+            <div class="nav-links nav-links-auth">
                 <a href="{% url 'main:dashboard' %}"><i class="fas fa-home"></i> Главная</a>
                 <a href="{% url 'main:fundraises' %}"><i class="fas fa-hand-holding-heart"></i> Сборы</a>
                 <a href="{% url 'main:leaders' %}"><i class="fas fa-crown"></i> Лидеры</a>
@@ -67,15 +90,21 @@
                     </button>
                     <div class="dropdown-content">
                         <a href="{% url 'main:profile' %}"><i class="fas fa-user"></i> Мой профиль</a>
+                        <!-- Дубль верхней ссылки: на телефоне верхнее меню
+                             скрыто, а в нижней навигации «Лидеров» нет —
+                             без этой строки раздел недостижим вовсе -->
+                        <a href="{% url 'main:leaders' %}"><i class="fas fa-crown"></i> Лидеры</a>
                         <a href="{% url 'main:transfer' %}"><i class="fas fa-paper-plane"></i> Перевести</a>
                         <a href="{% url 'main:history' %}"><i class="fas fa-history"></i> История транзакций</a>
                         <div class="dropdown-divider"></div>
                         <a href="{% url 'main:my_fundraises' %}"><i class="fas fa-hand-holding-heart"></i> Мои сборы</a>
                         <a href="{% url 'main:my_donations' %}"><i class="fas fa-heart"></i> Мои пожертвования</a>
+                        <a href="{% url 'main:my_debt' %}"><i class="fas fa-hand-holding-dollar"></i> Задолженность</a>
                         <div class="dropdown-divider"></div>
                         <a href="{% url 'main:withdrawal' %}"><i class="fas fa-money-bill-wave"></i> Вывод средств</a>
                         <a href="{% url 'main:my_withdrawals' %}"><i class="fas fa-clock"></i> История выводов</a>
                         <div class="dropdown-divider"></div>
+                        <a href="{% url 'main:password_change' %}"><i class="fas fa-key"></i> Сменить пароль</a>
                         <a href="{% url 'main:setup_2fa' %}"><i class="fas fa-shield-alt"></i> Двухфакторная 2FA</a>
                         <a href="{% url 'main:verification' %}"><i class="fas fa-id-card"></i> Верификация (KYC)</a>
                         <a href="{% url 'main:my_consents' %}"><i class="fas fa-file-signature"></i> Мои согласия</a>
@@ -138,6 +167,7 @@
             <a href="{% url 'main:privacy_policy' %}" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Обработка персональных данных</a>
             <a href="{% url 'main:cookie_policy' %}" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Cookies</a>
             <a href="{% url 'main:legal_details' %}" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Реквизиты</a>
+            <a href="{% url 'main:app_page' %}" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Приложение</a>
         </div>
         {# ч. 2 ст. 10 149-ФЗ: сведения о владельце сайта должны быть доступны #}
         <div style="margin-bottom: 1rem; color: #b89a9a; font-size: 0.85rem;">
@@ -147,6 +177,46 @@
         </div>
         <i class="fas fa-heart" style="color: #d4737a;"></i> С любовью и добротой | Помогая другим, мы помогаем себе <i class="fas fa-heart" style="color: #d4737a;"></i>
     </footer>
+
+    {% comment %}
+        Низ экрана: полоса «нет соединения» и нижняя навигация. Оба
+        элемента в одном фиксированном контейнере намеренно — порознь
+        каждый стоял бы bottom: 0, и полоса закрывала бы навигацию
+        ровно тогда, когда человеку нужно уйти со страницы, которая
+        не загрузилась.
+    {% endcomment %}
+    <div class="app-bottom">
+    <div class="offline-banner" role="status">
+        <i class="fas fa-wifi"></i>
+        Нет соединения. Операции с деньгами отправить нельзя — данные на экране
+        могли устареть.
+    </div>
+
+    {% if user.is_authenticated %}
+    {% comment %}
+        Нижняя навигация: основные разделы под большим пальцем. Видна
+        только на телефоне — на большом экране работает верхнее меню.
+        Активный раздел подсвечивается по текущему адресу.
+    {% endcomment %}
+    <nav class="bottom-nav">
+        <a href="{% url 'main:dashboard' %}" data-path="/">
+            <i class="fas fa-home"></i><span>Главная</span>
+        </a>
+        <a href="{% url 'main:fundraises' %}" data-path="/fundraises/">
+            <i class="fas fa-hand-holding-heart"></i><span>Сборы</span>
+        </a>
+        <a href="{% url 'main:transfer' %}" data-path="/transfer/">
+            <i class="fas fa-paper-plane"></i><span>Перевод</span>
+        </a>
+        <a href="{% url 'main:history' %}" data-path="/history/">
+            <i class="fas fa-clock-rotate-left"></i><span>История</span>
+        </a>
+        <a href="{% url 'main:profile' %}" data-path="/profile/">
+            <i class="fas fa-user"></i><span>Профиль</span>
+        </a>
+    </nav>
+    {% endif %}
+    </div>
 
     <!-- Cookie Consent Modal -->
     <div id="cookieModal" class="cookie-modal" style="display: none;">
@@ -664,6 +734,18 @@
             animation: slideUp 0.3s ease;
         }
 
+        /* На большом экране плашка прижимается к углу: растянутая во всю
+           ширину, она накрывала поле пароля и кнопку «Войти» — первый
+           экран нового пользователя выглядел сломанным. */
+        @media (min-width: 761px) {
+            .cookie-modal {
+                left: auto;
+                right: 24px;
+                bottom: 24px;
+                max-width: 460px;
+            }
+        }
+
         @keyframes slideUp {
             from {
                 transform: translateY(100%);
@@ -864,6 +946,13 @@
             }
         }
     </style>
+
+    {% comment %}
+        Мобильный слой — последним, после всех стилей выше: вёрстка
+        написана инлайн-стилями и правилами этого же файла, и перекрыть
+        их можно только порядком (и местами !important).
+    {% endcomment %}
+    <link rel="stylesheet" href="{% static 'css/mobile.css' %}">
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
@@ -1080,7 +1169,140 @@
         function closeConfirmModal() {
             document.getElementById('confirmModal').style.display = 'none';
             confirmCallback = null;
+            // Возвращаем окну вид подтверждения: предыдущий вызов мог
+            // показать его как предупреждение и спрятать «Отмену»
+            document.getElementById('confirmCancelBtn').style.display = '';
+            document.getElementById('confirmOkBtn').textContent = 'Подтвердить';
+            document.getElementById('confirmModal').classList.remove('is-alert');
         }
+
+        /*
+         * Предупреждение в стиле сайта вместо alert().
+         *
+         * Браузерный alert выглядит как системная ошибка, показывает
+         * адрес сайта в заголовке и в установленном приложении смотрится
+         * чужеродно. Здесь то же окно, что и у подтверждений, только с
+         * одной кнопкой.
+         */
+        function showAlertModal(options) {
+            if (typeof options === 'string') {
+                options = { message: options };
+            }
+            showConfirmModal({
+                title: options.title || 'Проверьте данные',
+                message: options.message,
+                details: options.details,
+                icon: options.icon || 'fas fa-circle-exclamation',
+                type: options.type || 'danger',
+                onConfirm: options.onClose || null,
+            });
+            document.getElementById('confirmCancelBtn').style.display = 'none';
+            document.getElementById('confirmOkBtn').textContent = 'Понятно';
+            // Метка для стилей: без сети кнопка подтверждения гасится,
+            // а «Понятно» гасить нельзя — иначе окно, сообщающее
+            // о проблеме, невозможно закрыть, и на телефоне нет даже
+            // клавиши Escape
+            document.getElementById('confirmModal').classList.add('is-alert');
+        }
+
+        /*
+         * Подстраховка: если где-то остался alert(), он всё равно
+         * покажется окном сайта, а не системной плашкой. Заодно это
+         * снимает известную беду — системное окно замораживает страницу
+         * целиком, и в установленном приложении из него бывает некуда
+         * нажать.
+         *
+         * confirm() и prompt() так подменить нельзя: они возвращают
+         * ответ сразу, а окно на странице — только через обработчик.
+         * Поэтому все подтверждения переведены на data-confirm (ниже).
+         */
+        window.alert = function (message) {
+            showAlertModal({ message: String(message) });
+        };
+
+        /*
+         * Подтверждение действия прямо в разметке:
+         *
+         *     <form data-confirm="Отменить заявку?">
+         *     <a data-confirm="Удалить?" data-confirm-type="danger">
+         *
+         * Раньше это писалось как onsubmit="return confirm(...)" —
+         * системное окно, не похожее на сайт. Атрибут удобнее вызова
+         * в коде: его видно там же, где действие, и нельзя забыть
+         * подключить обработчик.
+         */
+        (function () {
+            function ask(element, proceed) {
+                showConfirmModal({
+                    title: element.dataset.confirmTitle || 'Подтверждение действия',
+                    message: element.dataset.confirm,
+                    icon: element.dataset.confirmIcon || 'fas fa-question-circle',
+                    type: element.dataset.confirmType || 'danger',
+                    onConfirm: proceed,
+                });
+            }
+
+            document.addEventListener('submit', function (event) {
+                var form = event.target;
+                if (!form.dataset || !form.dataset.confirm) { return; }
+                if (form.dataset.confirmed === 'yes') { return; }
+
+                event.preventDefault();
+                ask(form, function () {
+                    // Метка нужна, чтобы повторная отправка прошла мимо
+                    // обработчика: form.submit() не вызывает submit-событие,
+                    // но кнопку могли нажать ещё раз
+                    form.dataset.confirmed = 'yes';
+                    if (typeof form.requestSubmit === 'function') {
+                        form.requestSubmit();
+                    } else {
+                        form.submit();
+                    }
+                });
+            }, true);
+
+            document.addEventListener('click', function (event) {
+                var element = event.target.closest('a[data-confirm], button[data-confirm]');
+                if (!element) { return; }
+                if (element.dataset.confirmed === 'yes') { return; }
+
+                event.preventDefault();
+                event.stopPropagation();
+
+                var form = element.form;
+                if (form) {
+                    // Кнопка формы: отправляем ИМЕННО ею, иначе потеряется
+                    // её name/value — а у нас на этом держится выбор
+                    // действия модератора («одобрить» против «отклонить»).
+                    ask(element, function () {
+                        // requestSubmit принимает только кнопку отправки:
+                        // для type="button" он бросает NotSupportedError
+                        if (typeof form.requestSubmit === 'function'
+                                && element.type === 'submit') {
+                            form.dataset.confirmed = 'yes';
+                            form.requestSubmit(element);
+                            return;
+                        }
+                        // Старый браузер: подставляем значение кнопки руками
+                        if (element.name) {
+                            var hidden = document.createElement('input');
+                            hidden.type = 'hidden';
+                            hidden.name = element.name;
+                            hidden.value = element.value;
+                            form.appendChild(hidden);
+                        }
+                        form.dataset.confirmed = 'yes';
+                        form.submit();
+                    });
+                    return;
+                }
+
+                ask(element, function () {
+                    element.dataset.confirmed = 'yes';
+                    element.click();
+                });
+            }, true);
+        })();
 
         // Обработчик подтверждения
         document.getElementById('confirmOkBtn').addEventListener('click', function() {
@@ -1097,15 +1319,96 @@
             }
         });
 
-        // Закрытие по клику вне окна
-        window.onclick = function(event) {
+        // Закрытие по клику вне окна.
+        //
+        // addEventListener, а не window.onclick: присвоение затирало
+        // обработчик страницы регистрации (там по клику вне окна
+        // закрываются Соглашение и Политика), и те окна переставали
+        // закрываться подложкой.
+        window.addEventListener('click', function (event) {
             const modal = document.getElementById('confirmModal');
             if (event.target === modal) {
                 closeConfirmModal();
             }
-        }
+        });
     </script>
 
     {% block extra_js %}{% endblock %}
+    <script>
+        // Подписи колонок для таблиц на телефоне.
+        //
+        // На узком экране таблица из семи колонок показывает две:
+        // «История операций» не показывала ни суммы, ни даты, а
+        // прокрутки вбок на телефоне не видно — человек видит обрезанный
+        // текст. Стили превращают строку в карточку «подпись — значение»,
+        // а подписи берутся отсюда: из строки заголовков.
+        //
+        // Делается скриптом, а не руками в шаблонах, чтобы работала любая
+        // таблица, включая ту, которую добавят завтра, и чтобы подпись
+        // не разошлась с заголовком при правке колонок.
+        (function () {
+            document.querySelectorAll('table').forEach(function (table) {
+                var headers = table.querySelectorAll('thead th');
+                if (!headers.length) { return; }
+
+                var titles = Array.prototype.map.call(headers, function (th) {
+                    return (th.textContent || '').trim();
+                });
+
+                table.querySelectorAll('tbody tr').forEach(function (row) {
+                    // Считаем колонки, а не ячейки: ячейка с colspan
+                    // занимает несколько колонок, и по номеру ячейки
+                    // все подписи после неё съезжали бы на чужие места
+                    var column = 0;
+                    Array.prototype.forEach.call(row.children, function (cell) {
+                        var span = parseInt(cell.getAttribute('colspan') || '1', 10) || 1;
+                        if (span === 1 && titles[column]) {
+                            cell.setAttribute('data-label', titles[column]);
+                        }
+                        column += span;
+                    });
+                });
+
+                table.classList.add('has-labels');
+            });
+        })();
+
+        // Подсветка текущего раздела в нижней навигации
+        (function () {
+            var path = window.location.pathname;
+            document.querySelectorAll('.bottom-nav a').forEach(function (link) {
+                var target = link.dataset.path;
+                var active = target === '/' ? path === '/' : path.indexOf(target) === 0;
+                if (active) {
+                    link.classList.add('active');
+                }
+            });
+        })();
+
+        // Состояние сети. Пока соединения нет, кнопки отправки форм
+        // выключаются: нажатие всё равно ничего не отправит, а человек
+        // решит, что перевод ушёл.
+        (function () {
+            function update() {
+                document.body.classList.toggle('is-offline', !navigator.onLine);
+            }
+            window.addEventListener('online', update);
+            window.addEventListener('offline', update);
+            update();
+        })();
+
+        // Регистрация service worker: он кэширует только оформление
+        // и страницу «нет сети». Денежные страницы не кэшируются никогда.
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function () {
+                navigator.serviceWorker
+                    .register('{% url "main:service_worker" %}')
+                    // На небезопасном адресе (дев-сервер по http с телефона)
+                    // регистрация отклоняется — это нормально, и не повод
+                    // сыпать необработанным исключением в консоль
+                    .catch(function () {});
+            });
+        }
+    </script>
 </body>
 </html>

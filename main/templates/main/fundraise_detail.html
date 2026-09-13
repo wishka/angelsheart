@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load l10n %}
 
 {% block title %}{{ fundraise.title }} | Ангел-Хранитель{% endblock %}
 
@@ -70,11 +71,12 @@
                     <i class="fas fa-users"></i> {{ fundraise.donors_count }}
                     {% if fundraise.donors_count == 1 %}человек{% elif fundraise.donors_count <= 4 %}человека{% else %}человек{% endif %} уже помогли
                 </div>
-                {% if fundraise.total_commission > 0 %}
-                <div style="margin-top: 10px; color: #856404; font-size: 0.85rem;">
-                    <i class="fas fa-percent"></i> Всего комиссии: {{ fundraise.total_commission|floatformat:2 }} ₽
-                </div>
-                {% endif %}
+                {% comment %}
+                    Блок «Всего комиссии» удалён: поле total_commission
+                    убрано из модели миграцией 0008, и условие никогда
+                    не выполнялось. Удержанная комиссия видна в истории
+                    операций и в CommissionTransaction.
+                {% endcomment %}
             </div>
 
             <!-- Описание -->
@@ -168,8 +170,8 @@
                         <strong>{{ fundraise.current_amount|floatformat:0 }} ₽</strong>
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                        <span>Вы получите:</span>
-                        <strong style="color: #28a745;">{{ fundraise.current_amount|floatformat:0 }} ₽</strong>
+                        <span>Зачислено вам:</span>
+                        <strong style="color: #28a745;">{{ author_received|floatformat:2 }} ₽</strong>
                     </div>
                     <div style="display: flex; justify-content: space-between;">
                         <span>Количество сердец:</span>
@@ -192,14 +194,16 @@
                     с деньгами, вью принимают только POST.
                     {% endcomment %}
                     <form method="post" action="{% url 'main:complete_fundraise' fundraise.pk %}"
-                          onsubmit="return confirm('Завершить этот сбор? Возобновить его будет нельзя.');">
+                          data-confirm="Завершить этот сбор? Возобновить его будет нельзя."
+                          data-confirm-title="Завершить сбор?">
                         {% csrf_token %}
                         <button type="submit" class="btn btn-secondary" style="width: 100%; background: #28a745; color: white; border: none;">
                             <i class="fas fa-check-circle"></i> Завершить сбор
                         </button>
                     </form>
                     <form method="post" action="{% url 'main:cancel_fundraise' fundraise.pk %}"
-                          onsubmit="return confirm('Отменить сбор? Собранные средства будут возвращены жертвователям.');">
+                          data-confirm="Отменить сбор? Собранные средства вернутся жертвователям."
+                          data-confirm-title="Отменить сбор?">
                         {% csrf_token %}
                         <button type="submit" class="btn btn-secondary" style="width: 100%; background: #dc3545; color: white; border: none;">
                             <i class="fas fa-times-circle"></i> Отменить сбор
@@ -248,10 +252,20 @@
                         <small style="color: #b89a9a; display: block; margin-top: 5px;">Минимальная сумма - 1 ₽</small>
                     </div>
 
-                    <!-- Калькулятор комиссии -->
+                    {% comment %}
+                        Доля автора считается из настроек, а не зашита в текст:
+                        раньше здесь стояло «100% получит автор» независимо
+                        от фактической ставки комиссии.
+                    {% endcomment %}
                     <div style="background: #fdf4f0; padding: 0.75rem; border-radius: 12px; margin-bottom: 1rem; font-size: 0.85rem; text-align: center;">
                         <i class="fas fa-heart" style="color: #d4737a;"></i>
+                        {% if commission_percent %}
+                        <span>
+                            Комиссия сервиса — {{ commission_percent }}%, остальное получит автор сбора
+                        </span>
+                        {% else %}
                         <span>100% вашего пожертвования получит автор сбора</span>
+                        {% endif %}
                     </div>
 
                     <div class="form-group">
@@ -396,7 +410,10 @@
 </style>
 
 <script>
-    const commissionPercent = {{ commission_percent }};
+    // localize off: без него дробное число Django пишет с запятой
+        // («3,5»), и весь блок скрипта перестаёт быть валидным JS —
+        // браузер выбрасывает его молча, страница выглядит рабочей.
+        const commissionPercent = {% localize off %}{{ commission_percent }}{% endlocalize %};
 
     function updateCommissionCalculator(amount) {
         const donationAmount = parseFloat(amount) || 0;
@@ -467,7 +484,7 @@
 
                 const amountInput = document.getElementById('amount');
                 const amount = parseFloat(amountInput?.value || 0);
-                const balance = parseFloat({{ user.balance.amount|floatformat:2 }});
+                const balance = parseFloat({{ user.balance.amount|floatformat:"2u" }});
 
                 if (isNaN(amount) || amount < 1) {
                     showConfirmModal({

@@ -170,6 +170,19 @@
     </div>
     {% endif %}
 
+    {% if verification.submitted_at %}
+    <div style="margin-top: 1.5rem; padding: 1rem 1.25rem; background: #fff3cd; border-radius: 16px;">
+        <strong style="color: #856404;">Данные отправлены {{ verification.submitted_at|date:"d.m.Y H:i" }}</strong>
+        <p style="color: #856404; margin: 0.35rem 0 0;">
+            {% if verification.level == 'unverified' %}
+            Уровень пока не присвоен: сотрудник проверяет сведения и приложенные документы.
+            {% else %}
+            Текущий уровень: {{ verification.get_level_display }}.
+            {% endif %}
+        </p>
+    </div>
+    {% endif %}
+
     <div style="margin-top: 2rem; padding: 1rem; background: #fdf4f0; border-radius: 16px;">
         <p style="margin: 0; color: #6b5a5a; font-size: 0.85rem;">
             <i class="fas fa-lock"></i> Все данные защищены и используются только для верификации.

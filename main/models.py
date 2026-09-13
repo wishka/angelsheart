@@ -271,7 +271,13 @@ class Fundraise(models.Model):
     description = models.TextField(verbose_name='Описание цели')
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='other', verbose_name='Категория')
     target_amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Целевая сумма')
-    current_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00, verbose_name='Собрано')
+    # default=Decimal, а не 0.00: с float-значением по умолчанию свежий
+    # объект в памяти хранил float, и первое же деление на Decimal
+    # (расчёт процента выполнения) падало с TypeError — например,
+    # сразу после создания сбора через API.
+    current_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0.00'), verbose_name='Собрано',
+    )
     author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='fundraises', verbose_name='Автор')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата создания')
     end_date = models.DateTimeField(null=True, blank=True, verbose_name='Дата окончания')
@@ -360,7 +366,24 @@ class Fundraise(models.Model):
 
     @property
     def accepts_donations(self):
-        return self.moderation_status == 'approved' and self.status == 'active'
+        """
+        Принимает ли сбор деньги прямо сейчас.
+
+        Срок окончания проверяется здесь, а не только командой
+        close_expired_fundraises: команда ходит раз в час, и в промежутке
+        сбор с истёкшим сроком продолжал бы принимать пожертвования.
+        Жертвователь видит на странице дату окончания и считает её
+        условием сбора.
+        """
+        if self.moderation_status != 'approved' or self.status != 'active':
+            return False
+        if self.end_date and self.end_date < timezone.now():
+            return False
+        return True
+
+    @property
+    def is_expired(self):
+        return bool(self.end_date and self.end_date < timezone.now() and self.status == 'active')
 
     @property
     def is_editable(self):
@@ -383,10 +406,16 @@ class Fundraise(models.Model):
         }.get(self.moderation_status, '')
 
     def get_progress_percent(self):
-        """Возвращает процент выполнения"""
-        if self.target_amount > 0:
-            return int((self.current_amount / self.target_amount) * 100)
-        return 0
+        """Процент выполнения сбора."""
+        if not self.target_amount:
+            return 0
+        # Приведение к Decimal защищает от смешения типов: значения могут
+        # прийти из формы, из сериализатора или из значения по умолчанию
+        current = Decimal(str(self.current_amount or 0))
+        target = Decimal(str(self.target_amount))
+        if target <= 0:
+            return 0
+        return int((current / target) * 100)
 
     def is_completed(self):
         """Проверяет, достигнута ли цель"""
@@ -1337,3 +1366,108 @@ class DataBreachIncident(models.Model):
         if self.severity == 'false_alarm':
             return False
         return self.initial_notice_sent_at is None or self.final_notice_sent_at is None
+
+
+class EmailConfirmation(models.Model):
+    """
+    Подтверждение адреса электронной почты.
+
+    Адрес не проверялся вовсе: человек вводил что угодно, а потом на этот
+    адрес уходили письма о блокировке счёта, о выплатах и ссылка для
+    восстановления пароля. Опечатка в адресе означала, что восстановить
+    доступ к деньгам нельзя, а чужой адрес — что письма о чужом счёте
+    получает посторонний.
+
+    Подтверждение мягкое: пользоваться сервисом можно сразу, но расходные
+    операции с деньгами и публикация сбора требуют подтверждённого адреса.
+    Смысл в том, чтобы деньги нельзя было завести на адрес, до которого
+    невозможно достучаться.
+    """
+
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name='email_confirmation',
+        verbose_name='Пользователь',
+    )
+    confirmed_at = models.DateTimeField(null=True, blank=True, verbose_name='Подтверждён')
+    confirmed_email = models.EmailField(
+        blank=True, default='', verbose_name='Подтверждённый адрес',
+        help_text='Фиксируется отдельно: при смене адреса подтверждение перестаёт действовать',
+    )
+    last_sent_at = models.DateTimeField(null=True, blank=True, verbose_name='Письмо отправлено')
+    # Учётные записи, существовавшие до введения проверки. Считать их
+    # подтверждёнными было бы неправдой, а отнимать у них вывод средств
+    # без предупреждения — несправедливо: отмечаем отдельно и честно.
+    is_legacy = models.BooleanField(
+        default=False, verbose_name='Зарегистрирован до введения проверки',
+    )
+
+    class Meta:
+        verbose_name = 'Подтверждение email'
+        verbose_name_plural = 'Подтверждения email'
+
+    def __str__(self):
+        state = 'подтверждён' if self.is_confirmed else 'не подтверждён'
+        return f'{self.user.username}: {state}'
+
+    @property
+    def is_confirmed(self):
+        """
+        Подтверждён ли текущий адрес пользователя.
+
+        Сравнение с confirmed_email обязательно: иначе смена адреса в профиле
+        оставляла бы отметку о подтверждении от прежнего адреса.
+        """
+        current = (self.user.email or '').strip().lower()
+        if not current:
+            # Пустой адрес не бывает подтверждённым, даже у старой записи:
+            # уведомление о выплате отправить некуда
+            return False
+        if self.is_legacy:
+            return True
+        if not self.confirmed_at:
+            return False
+        return (self.confirmed_email or '').lower() == current
+
+    @property
+    def is_actually_confirmed(self):
+        """
+        Подтверждён ли адрес на самом деле, без скидки на возраст записи.
+
+        Нужно там, где решается, отправлять ли письмо: пользователь
+        с отметкой is_legacy вправе подтвердить адрес добровольно, и
+        отвечать ему «адрес уже подтверждён» было бы неправдой.
+        """
+        if not self.confirmed_at:
+            return False
+        return (self.confirmed_email or '').lower() == (self.user.email or '').strip().lower()
+
+    @property
+    def can_resend(self):
+        """Не чаще одного письма в несколько минут — иначе форма годится для рассылки."""
+        from django.conf import settings
+
+        if not self.last_sent_at:
+            return True
+        delay = getattr(settings, 'EMAIL_CONFIRMATION_RESEND_SECONDS', 300)
+        return timezone.now() - self.last_sent_at > timezone.timedelta(seconds=delay)
+
+    def mark_sent(self):
+        self.last_sent_at = timezone.now()
+        self.save(update_fields=['last_sent_at'])
+
+    def confirm(self):
+        self.confirmed_at = timezone.now()
+        self.confirmed_email = self.user.email
+        self.is_legacy = False
+        self.save(update_fields=['confirmed_at', 'confirmed_email', 'is_legacy'])
+
+    @classmethod
+    def for_user(cls, user):
+        confirmation, _ = cls.objects.get_or_create(user=user)
+        return confirmation
+
+    @classmethod
+    def is_email_confirmed(cls, user):
+        """Удобная проверка: отсутствие записи означает «не подтверждён»."""
+        confirmation = cls.objects.filter(user=user).first()
+        return bool(confirmation and confirmation.is_confirmed)

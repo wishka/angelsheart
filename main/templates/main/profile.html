@@ -25,6 +25,31 @@
         {% endif %}
     </div>
 
+    {% if is_own_profile and not email_confirmed %}
+    <div style="background: #fff3cd; padding: 1.25rem; border-radius: 16px; margin-bottom: 1.5rem;">
+        <strong style="color: #856404;">
+            <i class="fas fa-envelope"></i> Адрес {{ profile_user.email }} не подтверждён
+        </strong>
+        <p style="color: #856404; margin: 0.5rem 0 0;">
+            До подтверждения недоступны вывод средств и публикация сбора.
+            На этот адрес приходят уведомления об операциях, и по нему же
+            восстанавливается доступ к учётной записи, если забыт пароль.
+        </p>
+        <form method="post" action="{% url 'main:resend_email_confirmation' %}" style="margin-top: 0.75rem;">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primary" style="padding: 8px 20px;">
+                <i class="fas fa-paper-plane"></i> Отправить письмо ещё раз
+            </button>
+        </form>
+        {% if email_confirmation.last_sent_at %}
+        <p style="color: #b89a9a; font-size: 0.85rem; margin: 0.5rem 0 0;">
+            Последнее письмо отправлено {{ email_confirmation.last_sent_at|date:"d.m.Y H:i" }}.
+            Проверьте папку «Спам».
+        </p>
+        {% endif %}
+    </div>
+    {% endif %}
+
     <!-- Статистика -->
     <div class="stats-grid">
         {% if is_own_profile %}
@@ -72,13 +97,16 @@
         </div>
     </div>
 
+    {# Кнопка относится к разделу выше, а стояла между заголовком
+       «Последние операции» и самой таблицей #}
+    <a href="{% url 'main:my_consents' %}" class="btn btn-secondary">
+        <i class="fas fa-file-signature"></i> Управление согласиями
+    </a>
+
     <!-- Последние операции -->
     <h3 class="recent-title">
         <i class="fas fa-history"></i> Последние операции
     </h3>
-    <a href="{% url 'main:my_consents' %}" class="btn btn-secondary">
-        <i class="fas fa-file-signature"></i> Управление согласиями
-    </a>
 
     {% if recent_transactions %}
         <div class="table-responsive">
@@ -221,6 +249,9 @@
 
     /* Заголовок последних операций */
     .recent-title {
+        /* Без отступа заголовок вплотную прилегал к нижнему краю
+           карточки выше — выглядело как склейка двух блоков */
+        margin-top: 1.5rem;
         color: #d4737a;
         margin-bottom: 1rem;
         font-size: 1.3rem;

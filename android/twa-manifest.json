@@ -1,0 +1,52 @@
+{
+  "packageId": "ru.angelhelper.app",
+  "host": "angelhelper.ru",
+  "name": "Ангел-Хранитель",
+  "launcherName": "Ангел",
+  "display": "standalone",
+  "themeColor": "#d4737a",
+  "themeColorDark": "#d4737a",
+  "navigationColor": "#d4737a",
+  "navigationColorDark": "#4a3f3f",
+  "navigationDividerColor": "#f0e0e0",
+  "navigationDividerColorDark": "#4a3f3f",
+  "backgroundColor": "#fdf4f0",
+  "enableNotifications": false,
+  "startUrl": "/",
+  "iconUrl": "https://angelhelper.ru/static/icons/icon-512.png",
+  "maskableIconUrl": "https://angelhelper.ru/static/icons/icon-maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "angelsheart"
+  },
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [
+    {
+      "name": "Перевести",
+      "short_name": "Перевод",
+      "url": "/transfer/",
+      "chosenIconUrl": "https://angelhelper.ru/static/icons/icon-192.png"
+    },
+    {
+      "name": "Сборы средств",
+      "short_name": "Сборы",
+      "url": "/fundraises/",
+      "chosenIconUrl": "https://angelhelper.ru/static/icons/icon-192.png"
+    }
+  ],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://angelhelper.ru/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://angelhelper.ru/",
+  "minSdkVersion": 21,
+  "orientation": "default"
+}

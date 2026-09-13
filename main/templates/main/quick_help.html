@@ -17,7 +17,8 @@
             <p style="color: #6b5a5a;">ждет вашей поддержки</p>
             
             <div style="margin-top: 1rem;">
-                <span style="background: white; padding: 5px 15px; border-radius: 20px;">
+                {# inline-block: у строчного элемента перенос разрывает фон на два смещённых прямоугольника с несовпадающими скруглениями #}
+                <span style="display: inline-block; background: white; padding: 6px 15px; border-radius: 20px; max-width: 100%;">
                     <i class="fas fa-coins"></i> Предлагаемая сумма: {{ suggested_amount }} ₽
                 </span>
             </div>

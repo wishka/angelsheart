@@ -9,7 +9,11 @@
             <i class="fas fa-history"></i> История добрых дел
         </h2>
         
-        <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+        {% comment %}
+            filter-strip: на телефоне ряд превращается в горизонтальную
+            ленту вместо переноса по одной кнопке на строку.
+        {% endcomment %}
+        <div class="filter-strip" style="display: flex; gap: 1rem; flex-wrap: wrap;">
             <a href="?filter=all" class="btn {% if filter_type == 'all' %}btn-primary{% else %}btn-secondary{% endif %}" style="padding: 8px 16px;">
                 Все
             </a>
@@ -24,7 +28,7 @@
     
     <form method="get" style="margin-bottom: 2rem;">
         <div style="display: flex; gap: 1rem;">
-            <input type="text" name="search" class="form-control" placeholder="Поиск по имени пользователя..." value="{{ search_query }}" style="flex: 1;">
+            <input type="text" name="search" class="form-control" placeholder="Имя пользователя" value="{{ search_query }}" style="flex: 1;">
             <button type="submit" class="btn btn-primary">
                 <i class="fas fa-search"></i> Найти
             </button>

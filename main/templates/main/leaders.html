@@ -11,7 +11,7 @@
         </h2>
         <div style="display: flex; flex-direction: column; gap: 1rem;">
             {% for user in top_senders %}
-            <div style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem; background: #fdf4f0; border-radius: 16px;">
+            <div class="row-line" style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem; background: #fdf4f0; border-radius: 16px;">
                 <div style="width: 40px; height: 40px; background: #ffe0e3; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
                     {% if forloop.counter == 1 %}
                         <i class="fas fa-trophy" style="color: #ffd700; font-size: 1.5rem;"></i>
@@ -46,7 +46,7 @@
         </h2>
         <div style="display: flex; flex-direction: column; gap: 1rem;">
             {% for user in top_receivers %}
-            <div style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem; background: #fdf4f0; border-radius: 16px;">
+            <div class="row-line" style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem; background: #fdf4f0; border-radius: 16px;">
                 <div style="width: 40px; height: 40px; background: #ffe0e3; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
                     <i class="fas fa-heart" style="color: #d4737a;"></i>
                 </div>

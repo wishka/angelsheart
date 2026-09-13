@@ -1,0 +1,24 @@
+{% comment %}
+    Шаблон 500 намеренно не наследует base.html: если ошибка в контекстном
+    процессоре или в самом base, наследование упадёт повторно и пользователь
+    получит пустую страницу от сервера.
+{% endcomment %}<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ошибка сервера | Ангел-Хранитель</title>
+</head>
+<body style="font-family: Georgia, 'Times New Roman', serif; background: #fdf4f0; color: #4a3f3f;
+             display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0;">
+    <div style="max-width: 520px; padding: 2rem; text-align: center;">
+        <h1 style="color: #d4737a;">Что-то пошло не так</h1>
+        <p>
+            Произошла ошибка на стороне сервиса. Она записана, и мы её увидим.
+            Деньги при сбое не теряются: операции выполняются целиком или
+            не выполняются вовсе.
+        </p>
+        <p><a href="/" style="color: #d4737a;">Вернуться на главную</a></p>
+    </div>
+</body>
+</html>

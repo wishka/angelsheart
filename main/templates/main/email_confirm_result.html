@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+
+{% block title %}Подтверждение адреса | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 520px; margin: 0 auto; text-align: center;">
+    {% if success %}
+    <i class="fas fa-circle-check" style="font-size: 3rem; color: #28a745;"></i>
+    <h1 style="color: #d4737a; margin: 1rem 0 0.5rem;">
+        {% if already %}Адрес уже подтверждён{% else %}Адрес подтверждён{% endif %}
+    </h1>
+    <p style="color: #6b5a5a;">
+        Вывод средств и публикация сбора доступны. Уведомления об операциях
+        будут приходить на {{ confirmed_user.email }}.
+    </p>
+    {% else %}
+    <i class="fas fa-triangle-exclamation" style="font-size: 3rem; color: #d4737a;"></i>
+    <h1 style="color: #d4737a; margin: 1rem 0 0.5rem;">Ссылка недействительна</h1>
+    <p style="color: #6b5a5a;">
+        Ссылка устарела, уже использована или адрес с тех пор изменился.
+        Запросите новое письмо в профиле.
+    </p>
+    {% endif %}
+    <a href="{% url 'main:dashboard' %}" class="btn btn-primary" style="margin-top: 1rem;">
+        На главную
+    </a>
+</div>
+{% endblock %}

@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load l10n %}
 
 {% block title %}Вывод средств | Ангел-Хранитель{% endblock %}
 
@@ -31,8 +32,14 @@
         <div style="background: #fff3cd; padding: 0.75rem 1rem; border-radius: 12px; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 10px;">
             <i class="fas fa-info-circle" style="color: #856404;"></i>
             <div style="font-size: 0.85rem; color: #856404;">
-                <strong>Условия вывода:</strong> Минимальная сумма — {{ min_amount }} ₽, 
-                максимальная — {{ max_amount }} ₽. Комиссия — 3%.
+                {% comment %}
+                    Здесь было «Комиссия — 3%», строкой ниже на этой же
+                    странице — «Комиссия сервиса: 0%», а в коде комиссии
+                    за вывод нет вовсе. Оферта (п. 4) тоже говорит, что
+                    вывод бесплатный: комиссия берётся с пожертвования.
+                {% endcomment %}
+                <strong>Условия вывода:</strong> Минимальная сумма — {{ min_amount }} ₽,
+                максимальная — {{ max_amount }} ₽. Комиссия за вывод не взимается.
                 Срок обработки — до 3 рабочих дней.
             </div>
         </div>
@@ -50,7 +57,7 @@
                        max="{{ max_amount }}" 
                        step="1"
                        required 
-                       placeholder="Введите сумму от {{ min_amount }} до {{ max_amount }} ₽">
+                       placeholder="от {{ min_amount }} до {{ max_amount }} ₽">
                 <small style="color: #b89a9a; display: block; margin-top: 5px;">
                     Минимальная сумма - {{ min_amount }} ₽, максимальная - {{ max_amount }} ₽
                 </small>
@@ -112,6 +119,11 @@
                            class="form-control" 
                            placeholder="+7 999 999-99-99">
                     <small>Номер, привязанный к счету в банке</small>
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-university"></i> Банк получателя</label>
+                    {{ form.bank_id }}
+                    <small>Без банка выплата через СБП не проходит</small>
                 </div>
             </div>
 
@@ -237,23 +249,31 @@
     const form = document.getElementById('withdrawalForm');
     form.addEventListener('submit', function(e) {
         const amount = parseFloat(amountInput.value);
-        const balance = {{ current_balance|floatformat:2 }};
+        // Суффикс «u» у floatformat — обязательно: без него Django пишет
+        // число по русским правилам, с запятой: `const balance = 17500,50;`
+        // Это синтаксическая ошибка, и браузер выбрасывает ВЕСЬ блок
+        // скрипта. Страница выглядела рабочей, но ни проверка суммы, ни
+        // переключение полей способа выплаты не работали вовсе.
+        //
+        // {% templatetag openblock %} localize off {% templatetag closeblock %} здесь НЕ помогает:
+        // он влияет на вывод переменной, а floatformat форматирует число сам.
+        const balance = {{ current_balance|floatformat:"2u" }};
         
-        if (isNaN(amount) || amount < {{ min_amount }}) {
+        if (isNaN(amount) || amount < {% localize off %}{{ min_amount }}{% endlocalize %}) {
             e.preventDefault();
-            alert(`Минимальная сумма вывода - {{ min_amount }} ₽`);
+            showAlertModal(`Минимальная сумма вывода — {{ min_amount }} ₽`);
             return false;
         }
         
-        if (amount > {{ max_amount }}) {
+        if (amount > {% localize off %}{{ max_amount }}{% endlocalize %}) {
             e.preventDefault();
-            alert(`Максимальная сумма вывода - {{ max_amount }} ₽`);
+            showAlertModal(`Максимальная сумма вывода — {{ max_amount }} ₽`);
             return false;
         }
         
         if (amount > balance) {
             e.preventDefault();
-            alert(`Недостаточно средств. Доступно: ${balance} ₽`);
+            showAlertModal(`Недостаточно средств. Доступно: ${balance} ₽`);
             return false;
         }
         
@@ -262,38 +282,51 @@
             const card = document.getElementById('card_number').value.replace(/\s/g, '');
             if (card.length !== 16) {
                 e.preventDefault();
-                alert('Введите корректный номер карты (16 цифр)');
+                showAlertModal('Введите корректный номер карты — 16 цифр.');
                 return false;
             }
         } else if (method === 'sbp') {
             const phone = document.getElementById('phone_number').value;
             if (!phone || phone.length < 10) {
                 e.preventDefault();
-                alert('Введите корректный номер телефона');
+                showAlertModal('Введите корректный номер телефона.');
                 return false;
             }
         } else if (method === 'yoomoney') {
             const wallet = document.getElementById('wallet_number').value;
             if (!wallet || wallet.length < 10) {
                 e.preventDefault();
-                alert('Введите корректный номер кошелька');
+                showAlertModal('Введите корректный номер кошелька.');
                 return false;
             }
         }
         
-        const confirmMsg = `Подтвердите вывод средств:\n\n` +
-            `Сумма: ${amount} ₽\n` +
-            `Комиссия: 0 ₽\n` +
-            `К получению: ${amount} ₽\n` +
-            `Способ: ${paymentMethod.options[paymentMethod.selectedIndex].text}\n\n` +
-            `Продолжить?`;
-        
-        if (!confirm(confirmMsg)) {
-            e.preventDefault();
-            return false;
+        // Подтверждение вывода — окном сайта, а не системным confirm().
+        //
+        // confirm() отвечает сразу, а окно на странице — только через
+        // обработчик, поэтому отправку останавливаем всегда и повторяем
+        // её сами, если человек подтвердил.
+        if (form.dataset.confirmed === 'yes') {
+            return true;
         }
-        
-        return true;
+
+        e.preventDefault();
+        showConfirmModal({
+            title: 'Подтвердите вывод средств',
+            message: 'Проверьте данные перед отправкой заявки.',
+            details: `
+                <div><span>Сумма</span><strong>${amount} ₽</strong></div>
+                <div><span>Комиссия</span><strong>0 ₽</strong></div>
+                <div><span>К получению</span><strong>${amount} ₽</strong></div>
+                <div><span>Способ</span><strong>${paymentMethod.options[paymentMethod.selectedIndex].text}</strong></div>
+            `,
+            icon: 'fas fa-money-bill-wave',
+            onConfirm: function () {
+                form.dataset.confirmed = 'yes';
+                form.submit();
+            },
+        });
+        return false;
     });
 </script>
 

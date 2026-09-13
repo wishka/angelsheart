@@ -1,0 +1,80 @@
+{% extends 'base.html' %}
+
+{% block title %}Задолженность перед жертвователями | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 720px; margin: 0 auto;">
+    <h1 style="color: #d4737a; margin-bottom: 0.5rem;">
+        <i class="fas fa-hand-holding-dollar"></i> Задолженность перед жертвователями
+    </h1>
+
+    {% if debt.total %}
+    <p style="color: #6b5a5a; margin-bottom: 1.5rem;">
+        По отменённым сборам часть пожертвований осталась невозвращённой:
+        на момент отмены средства уже были потрачены. Пункт 7.4
+        Пользовательского соглашения обязывает вернуть эту сумму
+        жертвователям.
+    </p>
+
+    <div style="background: #fff3cd; padding: 1.25rem; border-radius: 16px; margin-bottom: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+            <span style="color: #856404;">Нужно вернуть</span>
+            <strong style="color: #856404; font-size: 1.4rem;">{{ debt.total|floatformat:2 }} ₽</strong>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-top: 0.5rem; color: #856404;">
+            <span>На вашем балансе</span>
+            <strong>{{ balance|floatformat:2 }} ₽</strong>
+        </div>
+    </div>
+
+    <h3 style="color: #d4737a; margin-bottom: 0.75rem;">По каким сборам</h3>
+    <ul style="list-style: none; padding: 0; margin-bottom: 1.5rem;">
+        {% for item in debt.items %}
+        <li style="background: #fdf4f0; border-radius: 12px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; color: #6b5a5a;">
+            <strong style="color: #d4737a;">{{ item.fundraise.title }}</strong>
+            — {{ item.amount|floatformat:2 }} ₽,
+            жертвователей: {{ item.donors }}
+        </li>
+        {% endfor %}
+    </ul>
+
+    {% if balance > 0 %}
+    <form method="post" data-confirm="Вернуть средства жертвователям? Деньги спишутся с вашего баланса."
+          data-confirm-title="Погасить задолженность?"
+          data-confirm-type="default">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-primary">
+            <i class="fas fa-rotate-left"></i> Вернуть жертвователям
+        </button>
+    </form>
+    <p style="color: #b89a9a; font-size: 0.9rem; margin-top: 0.75rem;">
+        Возвращается столько, сколько есть на балансе. Если этого не хватит,
+        остаток долга сохранится, и погасить его можно будет позже.
+    </p>
+    {% else %}
+    <div style="background: #f8d7da; padding: 1rem 1.25rem; border-radius: 16px;">
+        <strong style="color: #721c24;">На балансе нет средств</strong>
+        <p style="color: #721c24; margin: 0.5rem 0 0;">
+            Пополните баланс, чтобы вернуть деньги жертвователям. Пока долг
+            не погашен, вы не можете открыть новый сбор.
+        </p>
+        <a href="{% url 'main:topup' %}" class="btn btn-primary" style="margin-top: 0.75rem;">
+            Пополнить баланс
+        </a>
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div style="background: #d4edda; padding: 1.25rem; border-radius: 16px;">
+        <strong style="color: #155724;">Задолженности нет.</strong>
+        <span style="color: #155724;">
+            Все пожертвования по вашим отменённым сборам возвращены.
+        </span>
+    </div>
+    {% endif %}
+
+    <div style="margin-top: 2rem;">
+        <a href="{% url 'main:my_fundraises' %}" style="color: #b89a9a;">← К моим сборам</a>
+    </div>
+</div>
+{% endblock %}

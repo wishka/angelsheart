@@ -1,15 +1,45 @@
 from django.urls import path, include
 
-from . import views
+from . import pwa, views
 
 app_name = 'main'
 
 urlpatterns = [
+    # Приложение: манифест и service worker.
+    # Service worker обязан отдаваться из корня — его область действия
+    # ограничена каталогом, из которого он получен, и файл из /static/
+    # управлял бы только статикой.
+    path('manifest.webmanifest', pwa.web_manifest, name='web_manifest'),
+    path('service-worker.js', pwa.service_worker, name='service_worker'),
+    path('offline/', pwa.offline, name='offline'),
+    # Связь сайта и приложения: без этого файла Android показывает
+    # адресную строку поверх приложения
+    path('.well-known/assetlinks.json', pwa.asset_links, name='asset_links'),
+    path('app/', pwa.app_page, name='app_page'),
+    path('app/download/', pwa.download_apk, name='download_apk'),
+
     # Аутентификация
     path('register/', views.register_page, name='register'),
     path('login/', views.login_page, name='login'),
     path('login/2fa/', views.login_2fa, name='login_2fa'),
     path('logout/', views.logout_page, name='logout'),
+
+    # Пароль: восстановление и смена. Ни того, ни другого раньше не было —
+    # забывший пароль терял учётную запись вместе с остатком на балансе.
+    path('password-reset/', views.PasswordResetRequestView.as_view(), name='password_reset'),
+    path('password-reset/sent/', views.PasswordResetSentView.as_view(), name='password_reset_done'),
+    path('password-reset/<uidb64>/<token>/', views.PasswordResetConfirmView.as_view(),
+         name='password_reset_confirm'),
+    path('password-reset/done/', views.PasswordResetFinishedView.as_view(),
+         name='password_reset_complete'),
+    path('password-change/', views.PasswordChangeView.as_view(), name='password_change'),
+    path('password-change/done/', views.PasswordChangeDoneView.as_view(),
+         name='password_change_done'),
+
+    # Подтверждение адреса почты: без него недоступны вывод средств
+    # и публикация сбора
+    path('email/confirm/<uidb64>/<token>/', views.confirm_email, name='confirm_email'),
+    path('email/resend/', views.resend_email_confirmation, name='resend_email_confirmation'),
     # API для мобильного приложения
     path('api/', include('main.api.urls')),
     
@@ -25,8 +55,6 @@ urlpatterns = [
     
     # AJAX endpoints
     path('api/check-username/', views.check_username, name='check_username'),
-    path('api/get-balance/', views.get_balance_json, name='get_balance_json'),
-    path('api/cancel/<int:transaction_id>/', views.cancel_transaction, name='cancel_transaction'),
     path('api/search-users/', views.search_users, name='search_users'),
     
     # Документы и согласия
@@ -48,6 +76,8 @@ urlpatterns = [
     path('fundraise/create/', views.create_fundraise, name='create_fundraise'),
     path('my-fundraises/', views.my_fundraises, name='my_fundraises'),
     path('my-donations/', views.my_donations, name='my_donations'),
+    # Задолженность перед жертвователями (п. 7.4 оферты)
+    path('my-debt/', views.my_debt, name='my_debt'),
     path('fundraise/<int:pk>/complete/', views.complete_fundraise, name='complete_fundraise'),
     path('fundraise/<int:pk>/cancel/', views.cancel_fundraise, name='cancel_fundraise'),
 
@@ -57,6 +87,8 @@ urlpatterns = [
     path('fundraise/<int:pk>/documents/upload/', views.upload_fundraise_document,
          name='upload_fundraise_document'),
     path('fundraise-document/<int:pk>/', views.fundraise_document, name='fundraise_document'),
+    path('fundraise-document/<int:pk>/delete/', views.delete_fundraise_document,
+         name='delete_fundraise_document'),
     path('moderation/', views.moderation_queue, name='moderation_queue'),
     path('moderation/<int:pk>/', views.moderate_fundraise, name='moderate_fundraise'),
 
@@ -81,6 +113,7 @@ urlpatterns = [
 
     # Безопасность
     path('2fa/setup/', views.setup_2fa, name='setup_2fa'),
+    path('2fa/disable/', views.disable_2fa, name='disable_2fa'),
 
     # Верификация
     path('verification/', views.verification_page, name='verification'),

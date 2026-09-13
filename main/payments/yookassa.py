@@ -52,9 +52,14 @@ class YooKassaProvider(BasePaymentProvider):
                 "payment_method_data": {
                     "type": metadata.get('payment_method', 'bank_card') if metadata else 'bank_card'
                 },
+                # ЮKassa возвращает пользователя на один и тот же адрес
+                # независимо от исхода, поэтому к нему добавляется номер
+                # платежа: страница возврата спрашивает у API, что на самом
+                # деле произошло. Раньше сюда всегда подставлялся
+                # success_url, и отменивший оплату видел «платёж прошёл».
                 "confirmation": {
                     "type": "redirect",
-                    "return_url": self.success_url
+                    "return_url": f"{self.success_url}?payment_id={payment_id}"
                 },
                 "metadata": {
                     "user_id": user_id,
@@ -99,23 +104,58 @@ class YooKassaProvider(BasePaymentProvider):
                 'error': str(e)
             }
     
-    def process_withdrawal(self, user_id: int, amount: Decimal, details: dict) -> dict:
+    @staticmethod
+    def _payout_destination(payment_method: str, details: dict) -> dict:
+        """
+        Получатель выплаты по выбранному способу.
+
+        Раньше здесь всегда стоял bank_card с details['card_number'].
+        Для СБП и кошелька в реквизитах лежат phone_number и wallet_number,
+        поэтому в запрос уходил number=None: выплата по этим способам
+        не могла пройти в принципе, а пользователь видел «не выполнено»
+        без объяснения причины.
+        """
+        if payment_method == 'card':
+            number = details.get('card_number')
+            if not number:
+                raise ValueError('В реквизитах нет номера карты')
+            return {'type': 'bank_card', 'card': {'number': str(number)}}
+
+        if payment_method == 'sbp':
+            phone = details.get('phone_number')
+            if not phone:
+                raise ValueError('В реквизитах нет номера телефона для СБП')
+            # bank_id обязателен для выплаты через СБП: без него ЮKassa
+            # не знает, в какой банк переводить
+            bank_id = details.get('bank_id')
+            if not bank_id:
+                raise ValueError(
+                    'Для выплаты через СБП нужен идентификатор банка получателя'
+                )
+            return {'type': 'sbp', 'phone': str(phone), 'bank_id': str(bank_id)}
+
+        if payment_method == 'yoomoney':
+            wallet = details.get('wallet_number')
+            if not wallet:
+                raise ValueError('В реквизитах нет номера кошелька')
+            return {'type': 'yoo_money', 'account_number': str(wallet)}
+
+        raise ValueError(f'Неподдерживаемый способ выплаты: {payment_method}')
+
+    def process_withdrawal(self, user_id: int, amount: Decimal, details: dict,
+                           payment_method: str = 'card') -> dict:
         """Вывод средств (массовые выплаты)"""
         try:
             from yookassa import Payout
-            
-            # Создание выплаты на карту
+
+            destination = self._payout_destination(payment_method, details)
+
             payout = Payout.create({
                 "amount": {
                     "value": str(float(amount)),
                     "currency": "RUB"
                 },
-                "payout_destination_data": {
-                    "type": "bank_card",
-                    "card": {
-                        "number": details.get('card_number')
-                    }
-                },
+                "payout_destination_data": destination,
                 "metadata": {
                     "user_id": user_id,
                     "type": "withdrawal"

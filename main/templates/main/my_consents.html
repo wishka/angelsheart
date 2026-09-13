@@ -52,6 +52,55 @@
         </table>
     </div>
     
+    {% comment %}
+        Раздел, которого раньше не было: вью умела принимать согласие
+        (action=reaccept), но ни одной кнопки для этого в интерфейсе не
+        существовало. Пользователь без согласия на распространение не мог
+        ни создать сбор, ни дать это согласие.
+    {% endcomment %}
+    {% if available_consents %}
+    <h3 style="color: #d4737a; margin: 2rem 0 1rem;">
+        <i class="fas fa-plus-circle"></i> Доступные согласия
+    </h3>
+    <p style="color: #6b5a5a; margin-bottom: 1rem;">
+        Действующая редакция документов — {{ current_version }}. Прочитайте текст
+        и примите согласие, если согласны с ним.
+    </p>
+    <div style="display: grid; gap: 1rem; margin-bottom: 1rem;">
+        {% for item in available_consents %}
+        <div style="background: #fdf4f0; border-radius: 16px; padding: 1.25rem; display: flex;
+                    justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
+            <div>
+                <strong style="color: #d4737a;">{{ item.title }}</strong>
+                {% if item.required %}
+                <span style="background: #f8d7da; color: #721c24; padding: 2px 10px; border-radius: 12px; font-size: 0.8rem;">
+                    обязательное
+                </span>
+                {% endif %}
+                {% if item.outdated %}
+                <div style="color: #856404; font-size: 0.9rem; margin-top: 0.25rem;">
+                    Вы принимали прежнюю редакцию — документ обновился, нужно принять заново.
+                </div>
+                {% endif %}
+                <div style="margin-top: 0.35rem;">
+                    <a href="{% url item.url_name %}" target="_blank" style="color: #b89a9a; font-size: 0.9rem;">
+                        Прочитать текст документа
+                    </a>
+                </div>
+            </div>
+            <form method="post" style="margin: 0;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="reaccept">
+                <input type="hidden" name="consent_type" value="{{ item.type }}">
+                <button type="submit" class="btn btn-primary" style="padding: 8px 20px;">
+                    <i class="fas fa-check"></i> Принять
+                </button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
     <!-- История изменений -->
     <h3 style="color: #d4737a; margin: 2rem 0 1rem;">
         <i class="fas fa-history"></i> История изменений

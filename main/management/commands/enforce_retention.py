@@ -46,6 +46,7 @@ class Command(BaseCommand):
         self._purge_pd_access_logs(now, retention['pd_access_log_days'], dry_run)
         self._purge_fundraise_documents(now, retention['fundraise_documents_days'], dry_run)
         self._purge_abandoned_draft_documents(now, retention['abandoned_draft_days'], dry_run)
+        self._report_anonymised_accounts(now, retention['account_deletion_days'], dry_run)
 
     def _purge_kyc_documents(self, now, days, dry_run):
         """
@@ -173,3 +174,25 @@ class Command(BaseCommand):
         for document in documents:
             document.file.delete(save=False)
             document.delete()
+
+    def _report_anonymised_accounts(self, now, days, dry_run):
+        """
+        Учётные записи, обезличенные по требованию пользователя.
+
+        Срок из настроек объявлялся, но не использовался ничем. Сами записи
+        не удаляются и здесь: на них ссылаются транзакции, которые закон
+        требует хранить пять лет (п. 4 ст. 7 115-ФЗ), а каскадное удаление
+        унесло бы и их. Персональных данных в такой записи уже нет —
+        остаётся обезличенный идентификатор, и команда лишь показывает,
+        сколько их и с какого времени.
+        """
+        from django.contrib.auth.models import User
+
+        cutoff = now - timedelta(days=days)
+        accounts = User.objects.filter(
+            is_active=False, username__startswith='deleted_', date_joined__lt=cutoff,
+        )
+        self.stdout.write(
+            f'Обезличенных учётных записей старше {days} дней: {accounts.count()} '
+            f'(сохраняются: на них ссылаются сведения об операциях)'
+        )

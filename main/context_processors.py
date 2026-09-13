@@ -31,7 +31,12 @@ def legal(request):
         'consent_version': settings.LEGAL_DOCS_VERSION,
         'consent_updated': settings.LEGAL_DOCS_UPDATED,
         'retention': settings.DATA_RETENTION,
-        # От этого зависит, идёт ли трансграничная передача — и что
-        # об этом написано в Политике
-        'use_external_cdn': settings.USE_EXTERNAL_CDN,
+        # Шаблоны (topup.html, base.html) ссылались на USE_REAL_PAYMENTS,
+        # которого в контексте не было: отсутствующая переменная в {% if %}
+        # всегда ложна, поэтому в боевом режиме страница пополнения уверяла,
+        # что «платежи не списывают реальные деньги», а индикатор в шапке
+        # всегда показывал TEST.
+        'USE_REAL_PAYMENTS': settings.USE_REAL_PAYMENTS,
+        'allow_simulated_topup': settings.ALLOW_SIMULATED_TOPUP,
+        'min_topup': settings.MIN_TOPUP_AMOUNT,
     }

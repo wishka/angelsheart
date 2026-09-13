@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.db.models import Q, Sum
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import filters, generics, status, viewsets
+from rest_framework import filters, generics, serializers as drf_serializers, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -16,7 +16,7 @@ from main.models import Balance, Donation, Fundraise, Transaction, UserConsent
 from main.services import InsufficientFunds, OperationRejected
 from main.views import record_consents
 
-from .permissions import IsAuthorOrReadOnly, IsNotAuthor
+from .permissions import IsAuthorOrReadOnly
 from .serializers import (
     ConsentSerializer, CurrentUserSerializer, DonationCreateSerializer,
     DonationSerializer, FundraiseCreateSerializer, FundraiseDetailSerializer,
@@ -60,12 +60,54 @@ class RegisterView(generics.CreateAPIView):
             user = serializer.save()
             record_consents(request, user, consent_types)
 
+        # Письмо подтверждения отправляется и здесь: раньше оно уходило
+        # только при регистрации через сайт, и пользователь мобильного
+        # приложения упирался в запрет вывода средств без объяснения,
+        # не имея способа подтвердить адрес.
+        from main import email_confirmation
+
+        confirmation_sent = email_confirmation.send_confirmation(user)
+
         refresh = RefreshToken.for_user(user)
         return Response({
             'user': CurrentUserSerializer(user).data,
             'refresh': str(refresh),
             'access': str(refresh.access_token),
+            'email_confirmation_sent': confirmation_sent,
+            'email_confirmed': False,
         }, status=status.HTTP_201_CREATED)
+
+
+class ResendEmailConfirmationView(generics.GenericAPIView):
+    """Повторная отправка письма с подтверждением адреса."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = drf_serializers.Serializer
+
+    @swagger_auto_schema(
+        operation_description='Отправить письмо для подтверждения адреса ещё раз',
+        responses={200: 'Письмо отправлено', 429: 'Слишком часто'},
+    )
+    def post(self, request):
+        from main import email_confirmation
+        from main.models import EmailConfirmation
+
+        confirmation = EmailConfirmation.for_user(request.user)
+        if confirmation.is_actually_confirmed:
+            return Response({'message': 'Адрес уже подтверждён', 'email_confirmed': True})
+        if not request.user.email:
+            return Response({'error': 'В учётной записи не указан адрес'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not confirmation.can_resend:
+            return Response(
+                {'error': 'Письмо уже отправлено, повторите через несколько минут'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        if email_confirmation.send_confirmation(request.user):
+            return Response({'message': f'Письмо отправлено на {request.user.email}'})
+        return Response({'error': 'Не удалось отправить письмо'},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class LoginView(generics.GenericAPIView):
@@ -302,6 +344,74 @@ class FundraiseViewSet(viewsets.ModelViewSet):
             'donation': DonationSerializer(donation, context={'request': request}).data,
             'commission': str(commission.amount) if commission else '0.00',
         }, status=status.HTTP_201_CREATED)
+
+    def create(self, request, *args, **kwargs):
+        """
+        Создание сбора.
+
+        Ответ отдаётся подробным сериализатором: сериализатор создания
+        не содержит даже id, и клиент не знал, какой сбор он только что
+        создал и что с ним делать дальше.
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        detail = FundraiseDetailSerializer(serializer.instance, context={'request': request})
+        return Response(detail.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def submit(self, request, pk=None):
+        """
+        Отправить сбор на проверку.
+
+        Без этого действия сбор, созданный через API, оставался черновиком
+        навсегда: опубликовать его было нечем, а создать второй мешало
+        правило «один незавершённый сбор».
+        """
+        from main import moderation
+
+        fundraise = self.get_object()
+
+        if fundraise.author != request.user:
+            return Response({'error': 'Только автор может отправить сбор на проверку'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        if not fundraise.is_editable:
+            return Response({'error': 'Сбор уже на проверке'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        problems = moderation.check_can_submit(fundraise)
+        if problems:
+            return Response({'error': 'Сбор не готов к проверке', 'problems': problems},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        fundraise.submit_for_moderation()
+        return Response({
+            'message': 'Сбор отправлен на проверку',
+            'moderation_status': fundraise.moderation_status,
+        })
+
+    @action(detail=True, methods=['get'])
+    def moderation_requirements(self, request, pk=None):
+        """
+        Что мешает отправить сбор на проверку.
+
+        Клиенту нужен способ показать автору список проблем до отправки,
+        а не только в ответе с ошибкой.
+        """
+        from main import moderation
+
+        fundraise = self.get_object()
+        if fundraise.author != request.user:
+            return Response({'error': 'Доступно только автору'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        return Response({
+            'moderation_status': fundraise.moderation_status,
+            'moderation_comment': fundraise.moderation_comment,
+            'can_submit': fundraise.is_editable and not moderation.check_can_submit(fundraise),
+            'problems': moderation.check_can_submit(fundraise),
+        })
 
     @action(detail=True, methods=['post'])
     def complete(self, request, pk=None):

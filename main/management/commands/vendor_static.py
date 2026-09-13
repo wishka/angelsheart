@@ -1,92 +1,170 @@
 """
-Скачивание шрифтов и иконок для раздачи со своего сервера.
+Обновление шрифтов и значков, раздаваемых со своего сервера.
 
-Пока страницы грузят Google Fonts и Font Awesome с внешних CDN, каждый
-показ любой страницы отправляет IP-адрес и User-Agent посетителя в США.
-Это трансграничная передача персональных данных (ст. 12 152-ФЗ): она
-требует отдельного уведомления Роскомнадзора до начала передачи, и она
-прямо противоречит тексту Политики обработки персональных данных.
+Файлы уже лежат в main/static/vendor/ и в репозитории — команда нужна не
+для первого запуска, а чтобы обновить версии, не возвращая внешние ссылки
+в шаблоны.
 
-Команда скачивает файлы в main/static/vendor/, после чего в .env можно
-оставить USE_EXTERNAL_CDN=False и внешних запросов не останется.
+Почему это важно: пока страницы грузили Google Fonts и Font Awesome
+с внешних CDN, каждый показ любой страницы — включая саму Политику
+конфиденциальности — отправлял IP-адрес и User-Agent посетителя в США.
+Юридически это трансграничная передача персональных данных (ст. 12 152-ФЗ),
+которая требует отдельного уведомления Роскомнадзора до её начала.
+
+Источник — реестр npm, а не сами CDN: пакеты @fontsource/* и
+@fortawesome/fontawesome-free содержат ровно те же файлы, распространяются
+по тем же лицензиям (SIL OFL 1.1 для шрифтов, CC BY 4.0 и MIT для Font
+Awesome) и доступны там, где cdnjs.cloudflare.com закрыт исходящим фильтром.
+
+    python manage.py vendor_static
+    python manage.py collectstatic
 """
 
+import io
+import json
 import re
+import shutil
+import tarfile
 import urllib.request
 from pathlib import Path
 
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
-FONTAWESOME_VERSION = '6.5.1'
-FONTAWESOME_CSS = (
-    f'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/{FONTAWESOME_VERSION}/css/all.min.css'
-)
-FONTAWESOME_FONTS = ['fa-solid-900', 'fa-regular-400', 'fa-brands-400']
+REGISTRY = 'https://registry.npmjs.org'
 
-GOOGLE_FONTS_CSS = (
-    'https://fonts.googleapis.com/css2'
-    '?family=Playfair+Display:wght@400;500;600;700'
-    '&family=Quicksand:wght@300;400;500;600;700&display=swap'
-)
-# Без User-Agent Google отдаёт вариант со шрифтами в устаревших форматах
-MODERN_UA = (
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-    '(KHTML, like Gecko) Chrome/120.0 Safari/537.36'
-)
+FONTAWESOME_PACKAGE = '@fortawesome/fontawesome-free'
+# Версия зафиксирована: в шаблонах 300+ значков с именами классов шестой
+# версии, а седьмая часть имён переименовала. Переход на новую мажорную
+# версию — это правка шаблонов, а не смена числа здесь.
+FONTAWESOME_VERSION = '6.7.2'
+FONTAWESOME_FONTS = ['fa-solid-900', 'fa-regular-400', 'fa-brands-400', 'fa-v4compatibility']
+
+# Наборы символов и начертания — только те, что нужны сайту.
+# У Quicksand кириллицы нет вовсе: русский текст показывается запасным
+# шрифтом, и скачивать ради него лишние файлы незачем.
+FONT_PLAN = [
+    ('@fontsource/quicksand', ['latin', 'latin-ext'], ['300', '400', '500', '600', '700']),
+    ('@fontsource/playfair-display', ['latin', 'latin-ext', 'cyrillic'],
+     ['400', '500', '600', '700']),
+]
+
+CSS_HEADER = """/*
+ * Шрифты Quicksand и Playfair Display, раздаются с этого же сервера.
+ *
+ * Раньше они подключались с внешнего CDN, и каждый показ любой страницы —
+ * включая саму Политику конфиденциальности — отправлял IP-адрес и
+ * User-Agent посетителя за рубеж. Это трансграничная передача
+ * персональных данных (ст. 12 152-ФЗ).
+ *
+ * Файл собран командой `python manage.py vendor_static` из пакетов
+ * @fontsource/* (лицензия SIL OFL 1.1, текст лежит рядом).
+ *
+ * Подключены только нужные сайту наборы символов. У Quicksand кириллицы
+ * нет: русский текст показывается запасным шрифтом.
+ */
+"""
 
 
-def fetch(url, user_agent=None):
-    request = urllib.request.Request(url)
-    if user_agent:
-        request.add_header('User-Agent', user_agent)
-    with urllib.request.urlopen(request, timeout=60) as response:
+def fetch(url):
+    with urllib.request.urlopen(url, timeout=120) as response:
         return response.read()
 
 
+def fetch_package(name, version=None):
+    """Скачивает пакет из реестра npm и возвращает открытый tar-архив."""
+    meta = json.loads(fetch(f'{REGISTRY}/{name}').decode('utf-8'))
+    version = version or meta['dist-tags']['latest']
+    if version not in meta['versions']:
+        raise CommandError(f'{name}: версия {version} в реестре не найдена')
+    tarball = meta['versions'][version]['dist']['tarball']
+    return version, tarfile.open(fileobj=io.BytesIO(fetch(tarball)), mode='r:gz')
+
+
+def extract(archive, member_suffix, destination):
+    """Достаёт из архива файл, путь которого кончается на member_suffix."""
+    for member in archive.getmembers():
+        if member.name.endswith(member_suffix):
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with archive.extractfile(member) as source, open(destination, 'wb') as target:
+                shutil.copyfileobj(source, target)
+            return True
+    return False
+
+
 class Command(BaseCommand):
-    help = 'Скачивает шрифты и иконки в main/static/vendor/ для раздачи со своего сервера'
+    help = 'Обновляет шрифты и значки в main/static/vendor/ (источник — реестр npm)'
 
     def handle(self, *args, **options):
         vendor = Path(settings.BASE_DIR) / 'main' / 'static' / 'vendor'
-
         self._vendor_fontawesome(vendor / 'fontawesome')
-        self._vendor_google_fonts(vendor / 'fonts')
-
+        self._vendor_fonts(vendor / 'fonts')
         self.stdout.write(self.style.SUCCESS(
-            '\nГотово. Теперь укажите в .env: USE_EXTERNAL_CDN=False\n'
-            'и выполните python manage.py collectstatic'
+            '\nГотово. Выполните python manage.py collectstatic.\n'
+            'Внешних ссылок в шаблонах быть не должно — это проверяет '
+            'тест ExternalResourcesTests.'
         ))
 
     def _vendor_fontawesome(self, target):
-        (target / 'css').mkdir(parents=True, exist_ok=True)
-        (target / 'webfonts').mkdir(parents=True, exist_ok=True)
+        self.stdout.write(f'Font Awesome {FONTAWESOME_VERSION}...')
+        _version, archive = fetch_package(FONTAWESOME_PACKAGE, FONTAWESOME_VERSION)
+        with archive:
+            css_path = target / 'css' / 'all.min.css'
+            if not extract(archive, 'css/all.min.css', css_path):
+                raise CommandError('В пакете Font Awesome не найден css/all.min.css')
 
-        self.stdout.write('Скачиваю Font Awesome...')
-        css = fetch(FONTAWESOME_CSS).decode('utf-8')
-        # В CDN-версии пути относительные (../webfonts/) — структура каталогов
-        # у нас такая же, поэтому править ссылки не нужно
-        (target / 'css' / 'all.min.css').write_text(css, encoding='utf-8')
+            # Ссылки на .ttf убираются: этих файлов мы не раздаём, а
+            # ManifestStaticFilesStorage требует, чтобы каждый упомянутый
+            # в CSS файл существовал, и роняет collectstatic.
+            css = css_path.read_text(encoding='utf-8')
+            css = re.sub(r',\s*url\([^)]*?\.ttf\)\s*format\("truetype"\)', '', css)
+            css = re.sub(r",\s*url\([^)]*?\.ttf\)\s*format\('truetype'\)", '', css)
+            css_path.write_text(css, encoding='utf-8')
+            extract(archive, 'LICENSE.txt', target / 'LICENSE.txt')
+            for name in FONTAWESOME_FONTS:
+                # Только woff2: его понимают все браузеры, которые вообще
+                # откроют этот сайт, а ttf удваивает объём
+                if extract(archive, f'webfonts/{name}.woff2',
+                           target / 'webfonts' / f'{name}.woff2'):
+                    self.stdout.write(f'  {name}.woff2')
 
-        for name in FONTAWESOME_FONTS:
-            url = (
-                f'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/'
-                f'{FONTAWESOME_VERSION}/webfonts/{name}.woff2'
-            )
-            (target / 'webfonts' / f'{name}.woff2').write_bytes(fetch(url))
-            self.stdout.write(f'  {name}.woff2')
-
-    def _vendor_google_fonts(self, target):
+    def _vendor_fonts(self, target):
         target.mkdir(parents=True, exist_ok=True)
+        chunks = []
 
-        self.stdout.write('Скачиваю Google Fonts...')
-        css = fetch(GOOGLE_FONTS_CSS, user_agent=MODERN_UA).decode('utf-8')
+        for package, subsets, weights in FONT_PLAN:
+            self.stdout.write(f'{package}...')
+            _version, archive = fetch_package(package)
+            with archive:
+                license_name = f'LICENSE-{package.split("/")[-1]}.txt'
+                extract(archive, '/LICENSE', target / license_name)
 
-        # Заменяем ссылки на fonts.gstatic.com локальными файлами
-        for index, url in enumerate(set(re.findall(r'url\((https://[^)]+)\)', css))):
-            filename = f'font-{index}.woff2'
-            (target / filename).write_bytes(fetch(url))
-            css = css.replace(url, filename)
-            self.stdout.write(f'  {filename}')
+                for subset in subsets:
+                    for weight in weights:
+                        css = self._read(archive, f'/{subset}-{weight}.css')
+                        if css is None:
+                            continue
+                        # woff оставлять незачем — он вдвое больше woff2
+                        css = re.sub(
+                            r",\s*url\(\./files/[^)]+\.woff\)\s*format\('woff'\)", '', css,
+                        )
+                        for filename in re.findall(r'\./files/([\w.-]+\.woff2)', css):
+                            if not (target / filename).exists():
+                                extract(archive, f'/files/{filename}', target / filename)
+                                self.stdout.write(f'  {filename}')
+                        chunks.append(css.replace('./files/', '').strip())
 
-        (target / 'fonts.css').write_text(css, encoding='utf-8')
+        if not chunks:
+            raise CommandError('Ни одного файла шрифтов не получено — CSS не перезаписан')
+
+        (target / 'fonts.css').write_text(
+            CSS_HEADER + '\n' + '\n\n'.join(chunks) + '\n', encoding='utf-8',
+        )
+
+    @staticmethod
+    def _read(archive, suffix):
+        for member in archive.getmembers():
+            if member.name.endswith(suffix):
+                with archive.extractfile(member) as handle:
+                    return handle.read().decode('utf-8')
+        return None

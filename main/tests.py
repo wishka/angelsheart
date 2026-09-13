@@ -6,9 +6,12 @@
 строки — именно поэтому все 14 дефектов дожили до рабочей ветки.
 """
 
+import hashlib
 import json
+import re
 from decimal import Decimal
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
@@ -21,10 +24,10 @@ from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 
-from main import moderation, services
+from main import email_confirmation, moderation, services
 from main import restrictions as restrictions_service
 from main.models import (
-    AccountRestriction, add_business_days, DataBreachIncident,
+    AccountRestriction, add_business_days, DataBreachIncident, EmailConfirmation,
     Balance, CommissionTransaction, Donation, Fundraise, FundraiseDocument,
     KYCDocument, PaymentTransaction, PersonalDataAccessLog, SecurityLog,
     Transaction, TwoFactorAuth, UserConsent, UserVerification, WithdrawalRequest,
@@ -35,11 +38,21 @@ PASSWORD = 'Sunrise-Harbor-42'
 TRUSTED_IP = '185.71.76.1'  # из диапазона ЮKassa
 
 
-def make_user(username, balance='0'):
+def make_user(username, balance='0', email_confirmed=True):
+    """
+    Обычный пользователь сервиса.
+
+    Адрес по умолчанию подтверждён: это состояние человека, который прошёл
+    регистрацию до конца. Для проверок самого подтверждения есть
+    email_confirmed=False.
+    """
     user = User.objects.create_user(
         username=username, email=f'{username}@example.com', password=PASSWORD,
     )
     Balance.objects.filter(user=user).update(amount=Decimal(balance))
+    confirmation = EmailConfirmation.for_user(user)
+    if email_confirmed:
+        confirmation.confirm()
     return user
 
 
@@ -1162,20 +1175,76 @@ class RetentionCommandTests(BaseCase):
         self.assertTrue(SecurityLog.objects.filter(pk=log.pk).exists())
 
 
-class ExternalResourcesDisclosureTests(BaseCase):
-    """Документ обязан говорить правду о трансграничной передаче."""
+class ExternalResourcesTests(BaseCase):
+    """
+    Внешних ресурсов на страницах быть не должно.
 
-    @override_settings(USE_EXTERNAL_CDN=True)
-    def test_policy_discloses_transfer_when_cdn_enabled(self):
-        body = self.client.get(reverse('main:privacy_policy')).content.decode()
-        self.assertIn('Трансграничная передача осуществляется', body)
-        self.assertIn('Google', body)
+    Раньше каждая страница — включая саму Политику конфиденциальности —
+    грузила шрифты с fonts.googleapis.com и значки с cdnjs.cloudflare.com,
+    отправляя IP-адрес и User-Agent посетителя в США. Это трансграничная
+    передача персональных данных (ст. 12 152-ФЗ) без уведомления РКН.
+    """
 
-    @override_settings(USE_EXTERNAL_CDN=False)
-    def test_policy_denies_transfer_when_cdn_disabled(self):
+    EXTERNAL_HOSTS = ('fonts.googleapis.com', 'fonts.gstatic.com',
+                      'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'unpkg.com')
+
+    def test_no_external_hosts_in_any_template(self):
+        """
+        Проверяются сами шаблоны, а не отрендеренные страницы: так тест
+        поймает внешнюю ссылку на любой странице, включая те, которые
+        он не открывает.
+        """
+        import os
+
+        from django.conf import settings
+
+        offenders = []
+        for root, _dirs, files in os.walk(settings.BASE_DIR / 'main' / 'templates'):
+            for name in files:
+                if not name.endswith('.html'):
+                    continue
+                path = os.path.join(root, name)
+                with open(path, encoding='utf-8') as handle:
+                    text = handle.read()
+                for host in self.EXTERNAL_HOSTS:
+                    # Упоминание в тексте документа — не загрузка ресурса
+                    if f'//{host}' in text:
+                        offenders.append(f'{path}: {host}')
+        self.assertEqual(offenders, [], 'Внешние ресурсы в шаблонах: ' + '; '.join(offenders))
+
+    def test_rendered_pages_request_nothing_outside(self):
+        make_user('external_probe')
+        self.client.login(username='external_probe', password=PASSWORD)
+        for name in ('main:privacy_policy', 'main:cookie_policy', 'main:dashboard',
+                     'main:fundraises', 'main:consent_processing'):
+            body = self.client.get(reverse(name)).content.decode()
+            for host in self.EXTERNAL_HOSTS:
+                self.assertNotIn(f'//{host}', body, f'{name} обращается к {host}')
+
+    def test_policy_states_transfer_does_not_happen(self):
         body = self.client.get(reverse('main:privacy_policy')).content.decode()
         self.assertIn('не осуществляется', body)
-        self.assertNotIn('fonts.googleapis.com', body)
+
+    def test_vendored_files_exist(self):
+        """Без них страницы остались бы без шрифтов и значков вовсе."""
+        from django.conf import settings
+
+        vendor = settings.BASE_DIR / 'main' / 'static' / 'vendor'
+        self.assertTrue((vendor / 'fonts' / 'fonts.css').exists())
+        self.assertTrue((vendor / 'fontawesome' / 'css' / 'all.min.css').exists())
+        self.assertTrue((vendor / 'fontawesome' / 'webfonts' / 'fa-solid-900.woff2').exists())
+
+    def test_vendored_css_has_no_external_urls(self):
+        from django.conf import settings
+
+        vendor = settings.BASE_DIR / 'main' / 'static' / 'vendor'
+        for css in (vendor / 'fonts' / 'fonts.css',
+                    vendor / 'fontawesome' / 'css' / 'all.min.css'):
+            text = css.read_text(encoding='utf-8')
+            for host in self.EXTERNAL_HOSTS:
+                # Ищется ссылка, а не упоминание: в шапке файла объяснено,
+                # откуда эти шрифты взялись, и это не загрузка
+                self.assertNotIn(f'//{host}', text, f'{css.name} ссылается на {host}')
 
 
 # ==================== МОДЕРАЦИЯ СБОРОВ ====================
@@ -2096,3 +2165,1352 @@ class ModerationStateTrapTests(BaseCase):
 
         user.refresh_from_db()
         self.assertTrue(user.username.startswith('deleted_'))
+
+
+# ==================== РАБОТОСПОСОБНОСТЬ ИНТЕРФЕЙСА ====================
+
+class ConsentGrantingTests(BaseCase):
+    """
+    Согласие на распространение нельзя было выдать: вью умела его принимать,
+    но кнопки в интерфейсе не существовало. Пользователь без этого согласия
+    не мог ни создать сбор, ни получить согласие — тупик.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.user = make_user('consent_user')
+        self.client.login(username='consent_user', password=PASSWORD)
+
+    def test_page_offers_missing_consent(self):
+        body = self.client.get(reverse('main:my_consents')).content.decode()
+        self.assertIn('Доступные согласия', body)
+        self.assertIn('distribution', body)
+
+    def test_user_can_grant_distribution_consent(self):
+        self.client.post(reverse('main:my_consents'), {
+            'action': 'reaccept', 'consent_type': 'distribution',
+        })
+        self.assertTrue(UserConsent.has_active_consent(self.user, 'distribution'))
+
+    def test_after_granting_fundraise_creation_opens(self):
+        self.client.post(reverse('main:my_consents'), {
+            'action': 'reaccept', 'consent_type': 'distribution',
+        })
+        response = self.client.get(reverse('main:create_fundraise'))
+        self.assertEqual(response.status_code, 200)
+
+    def test_outdated_consent_is_offered_again(self):
+        """После обновления редакции согласие надо переподписать."""
+        UserConsent.objects.create(
+            user=self.user, consent_type='distribution', version='0.9', is_accepted=True,
+        )
+        body = self.client.get(reverse('main:my_consents')).content.decode()
+        self.assertIn('документ обновился', body)
+
+
+class PasswordRecoveryTests(BaseCase):
+    """
+    Восстановления пароля не было вовсе: форма регистрации требует email
+    «для восстановления доступа», а забывший пароль терял учётную запись
+    вместе с остатком на балансе.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.user = make_user('forgetful')
+
+    def test_reset_email_is_sent(self):
+        self.client.post(reverse('main:password_reset'), {'email': self.user.email})
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn('password-reset', mail.outbox[0].body)
+
+    def test_unknown_email_gets_the_same_answer(self):
+        """Иначе форма превращается в проверку «зарегистрирован ли адрес»."""
+        known = self.client.post(reverse('main:password_reset'), {'email': self.user.email})
+        unknown = self.client.post(reverse('main:password_reset'), {'email': 'nobody@example.com'})
+        self.assertEqual(known.status_code, unknown.status_code)
+        self.assertEqual(known['Location'], unknown['Location'])
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_link_from_email_sets_new_password(self):
+        self.client.post(reverse('main:password_reset'), {'email': self.user.email})
+        body = mail.outbox[0].body
+        link = [word for word in body.split() if '/password-reset/' in word and word.count('/') > 3][0]
+        path = link[link.index('/password-reset/'):]
+
+        # Django подменяет токен в URL на служебный и редиректит на форму
+        response = self.client.get(path, follow=True)
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post(response.redirect_chain[-1][0] if response.redirect_chain
+                                    else path,
+                                    {'new_password1': 'Meadow-Lantern-77',
+                                     'new_password2': 'Meadow-Lantern-77'})
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('Meadow-Lantern-77'))
+
+    def test_password_change_requires_login_and_is_logged(self):
+        self.assertEqual(
+            self.client.get(reverse('main:password_change')).status_code, 302,
+        )
+        self.client.login(username='forgetful', password=PASSWORD)
+        self.client.post(reverse('main:password_change'), {
+            'old_password': PASSWORD,
+            'new_password1': 'Harbor-Meadow-88',
+            'new_password2': 'Harbor-Meadow-88',
+        })
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('Harbor-Meadow-88'))
+        self.assertTrue(
+            SecurityLog.objects.filter(user=self.user, action='password_change').exists()
+        )
+
+
+class AdminPagesTests(BaseCase):
+    """
+    Две страницы админки падали с 500, и ни одна не была покрыта тестом:
+    добавление ограничения и добавление сбора.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.admin = User.objects.create_superuser('pages_admin', 'pa@example.com', PASSWORD)
+        self.client.login(username='pages_admin', password=PASSWORD)
+
+    def test_admin_pages_render(self):
+        for path in [
+            '/admin/', '/admin/main/fundraise/', '/admin/main/fundraise/add/',
+            '/admin/main/accountrestriction/', '/admin/main/accountrestriction/add/',
+            '/admin/main/databreachincident/add/', '/admin/main/personaldataaccesslog/',
+            '/admin/main/fundraisedocument/', '/admin/main/commissiontransaction/',
+            '/admin/main/withdrawalrequest/', '/admin/main/userverification/',
+        ]:
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 200)
+
+    def test_restriction_is_created_through_admin_form(self):
+        """
+        Форма создавала ограничение в обход save() модели: объект оставался
+        без created_at, Django падал на записи в журнал действий, всё
+        откатывалось — а письмо пользователю уже уходило.
+        """
+        subject = make_user('restricted_by_admin')
+        response = self.client.post('/admin/main/accountrestriction/add/', {
+            'user': subject.pk,
+            'kind': 'suspended',
+            'ground': 'fraud_suspicion',
+            'reason': 'Признаки использования чужой карты.',
+            'internal_note': '',
+        })
+        self.assertIn(response.status_code, (200, 302))
+        restriction = AccountRestriction.objects.filter(user=subject).first()
+        self.assertIsNotNone(restriction)
+        self.assertIsNotNone(restriction.created_at)
+        self.assertEqual(restriction.created_by, self.admin)
+
+
+class WithdrawalCancelTests(BaseCase):
+    """Кнопка отмены заявки всегда возвращала 403: CSRF-токена на странице не было."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = make_user('cancel_user', balance='5000')
+        self.client.login(username='cancel_user', password=PASSWORD)
+        self.withdrawal = services.hold_for_withdrawal(
+            self.user, Decimal('1000'), 'card', {'card_number': '4111111111111111'}, '**** 1111',
+        )
+
+    def test_page_contains_working_form(self):
+        body = self.client.get(reverse('main:my_withdrawals')).content.decode()
+        self.assertIn('csrfmiddlewaretoken', body)
+        self.assertIn(reverse('main:cancel_withdrawal', args=[self.withdrawal.pk]), body)
+
+    def test_post_cancels_and_returns_money(self):
+        before = Balance.objects.get(user=self.user).amount
+        self.client.post(reverse('main:cancel_withdrawal', args=[self.withdrawal.pk]))
+        self.withdrawal.refresh_from_db()
+        self.assertEqual(self.withdrawal.status, 'cancelled')
+        self.assertEqual(Balance.objects.get(user=self.user).amount, before + Decimal('1000'))
+
+    def test_get_is_refused(self):
+        self.assertEqual(
+            self.client.get(reverse('main:cancel_withdrawal', args=[self.withdrawal.pk])).status_code,
+            405,
+        )
+
+
+class VerificationInputTests(BaseCase):
+    """Пустая дата рождения роняла страницу верификации с 500."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = make_user('verify_user')
+        self.client.login(username='verify_user', password=PASSWORD)
+
+    def post(self, birth_date):
+        return self.client.post(reverse('main:verification'), {
+            'full_name': 'Иванов Иван Иванович',
+            'birth_date': birth_date,
+            'passport_series': '1234',
+            'passport_number': '567890',
+        }, follow=True)
+
+    def test_empty_birth_date_does_not_crash(self):
+        response = self.post('')
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            UserVerification.objects.filter(user=self.user, submitted_at__isnull=False).exists()
+        )
+
+    def test_minor_is_refused(self):
+        """Оферта ограничивает сервис совершеннолетними, но проверки не было."""
+        recent = timezone.localdate() - timezone.timedelta(days=365 * 15)
+        response = self.post(recent.strftime('%Y-%m-%d'))
+        self.assertIn('18 лет', response.content.decode())
+
+    def test_adult_is_accepted(self):
+        adult = timezone.localdate() - timezone.timedelta(days=365 * 30)
+        self.post(adult.strftime('%Y-%m-%d'))
+        verification = UserVerification.objects.get(user=self.user)
+        self.assertIsNotNone(verification.submitted_at)
+        self.assertEqual(verification.birth_date, adult)
+
+
+class FundraiseExpiryTests(BaseCase):
+    """
+    Дата окончания показывалась на странице сбора, но не проверялась нигде:
+    сбор с истёкшим сроком продолжал принимать пожертвования.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.author = make_user('expiry_author')
+        self.donor = make_user('expiry_donor', balance='1000')
+        self.fundraise = Fundraise.objects.create(
+            title='Сбор', description=LONG_DESCRIPTION, category='other',
+            target_amount=Decimal('10000'), author=self.author,
+            status='active', moderation_status='approved',
+            end_date=timezone.now() - timezone.timedelta(days=1),
+        )
+
+    def test_expired_fundraise_refuses_donation(self):
+        with self.assertRaises(services.OperationRejected):
+            services.donate(self.donor, self.fundraise, Decimal('100'))
+
+    def test_command_closes_expired(self):
+        call_command('close_expired_fundraises', stdout=StringIO())
+        self.fundraise.refresh_from_db()
+        self.assertEqual(self.fundraise.status, 'completed')
+        self.assertIsNotNone(self.fundraise.closed_at)
+
+    def test_future_end_date_does_not_block(self):
+        self.fundraise.end_date = timezone.now() + timezone.timedelta(days=5)
+        self.fundraise.save(update_fields=['end_date'])
+        services.donate(self.donor, self.fundraise, Decimal('100'))
+        self.fundraise.refresh_from_db()
+        self.assertEqual(self.fundraise.current_amount, Decimal('100'))
+
+
+class ApiFundraiseFlowTests(BaseCase):
+    """Через API сбор нельзя было отправить на проверку — он оставался черновиком навсегда."""
+
+    def setUp(self):
+        super().setUp()
+        self.author = make_user('api_flow_author')
+        give_distribution_consent(self.author)
+        from rest_framework_simplejwt.tokens import RefreshToken
+        self.headers = {
+            'HTTP_AUTHORIZATION': f'Bearer {RefreshToken.for_user(self.author).access_token}',
+        }
+
+    def test_create_returns_id_and_moderation_status(self):
+        response = self.client.post(
+            '/api/fundraises/',
+            data=json.dumps({
+                'title': 'Сбор через API', 'description': LONG_DESCRIPTION,
+                'category': 'other', 'target_amount': '1000',
+            }),
+            content_type='application/json', **self.headers,
+        )
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertIn('id', body)
+        self.assertEqual(body['moderation_status'], 'draft')
+
+    def test_submit_moves_to_pending(self):
+        fundraise = Fundraise.objects.create(
+            title='Сбор', description=LONG_DESCRIPTION, category='other',
+            target_amount=Decimal('1000'), author=self.author,
+            status='draft', moderation_status='draft',
+        )
+        response = self.client.post(f'/api/fundraises/{fundraise.pk}/submit/', **self.headers)
+        self.assertEqual(response.status_code, 200)
+        fundraise.refresh_from_db()
+        self.assertEqual(fundraise.moderation_status, 'pending')
+
+    def test_submit_reports_problems(self):
+        fundraise = Fundraise.objects.create(
+            title='Сбор', description='коротко', category='medical',
+            target_amount=Decimal('1000'), author=self.author,
+            status='draft', moderation_status='draft',
+        )
+        response = self.client.post(f'/api/fundraises/{fundraise.pk}/submit/', **self.headers)
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(response.json()['problems'])
+
+
+class TwoFactorDisableTests(BaseCase):
+    """Включить 2FA было можно, выключить — нет."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = make_user('tfa_user')
+        self.two_factor = TwoFactorAuth.objects.create(
+            user=self.user,
+            secret_key=TwoFactorAuthService.generate_secret(),
+            is_enabled=True,
+            backup_codes=TwoFactorAuthService.generate_backup_codes(),
+        )
+        self.client.login(username='tfa_user', password=PASSWORD)
+
+    def test_wrong_code_keeps_protection(self):
+        self.client.post(reverse('main:disable_2fa'), {'code': '000000'})
+        self.two_factor.refresh_from_db()
+        self.assertTrue(self.two_factor.is_enabled)
+
+    def test_backup_code_disables(self):
+        code = self.two_factor.backup_codes[0]
+        self.client.post(reverse('main:disable_2fa'), {'code': code})
+        self.two_factor.refresh_from_db()
+        self.assertFalse(self.two_factor.is_enabled)
+        self.assertEqual(self.two_factor.backup_codes, [])
+
+
+class InterfacePagesTests(BaseCase):
+    """
+    Рендер основных страниц. Раньше в тестах не было ни одной из них,
+    и ошибка в шаблоне обнаруживалась только пользователем.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.user = make_user('pages_user', balance='5000')
+        self.client.login(username='pages_user', password=PASSWORD)
+
+    def test_pages_render(self):
+        for name in [
+            'main:dashboard', 'main:transfer', 'main:history', 'main:topup',
+            'main:profile', 'main:leaders', 'main:fundraises',
+            'main:my_fundraises', 'main:my_donations', 'main:my_consents',
+            'main:withdrawal', 'main:my_withdrawals', 'main:setup_2fa',
+            'main:verification', 'main:my_restrictions', 'main:privacy_policy',
+            'main:user_agreement', 'main:cookie_policy', 'main:consent_processing',
+            'main:consent_distribution', 'main:legal_details', 'main:password_change',
+        ]:
+            with self.subTest(page=name):
+                self.assertEqual(self.client.get(reverse(name)).status_code, 200)
+
+    def test_quick_help_redirects_when_nobody_to_help(self):
+        """Страница осмысленна только при наличии получателей — иначе перенаправляет."""
+        self.assertEqual(self.client.get(reverse('main:quick_help')).status_code, 302)
+
+    def test_anonymous_pages_render(self):
+        self.client.logout()
+        for name in ['main:login', 'main:register', 'main:password_reset']:
+            with self.subTest(page=name):
+                self.assertEqual(self.client.get(reverse(name)).status_code, 200)
+
+    def test_topup_does_not_promise_free_money_in_live_mode(self):
+        """
+        Шаблон ссылался на переменную, которой не было в контексте: в боевом
+        режиме страница уверяла, что деньги не списываются.
+        """
+        with override_settings(ALLOW_SIMULATED_TOPUP=False, USE_REAL_PAYMENTS=True):
+            body = self.client.get(reverse('main:topup')).content.decode()
+        self.assertNotIn('ТЕСТОВЫЙ РЕЖИМ', body)
+        self.assertIn('ЮKassa', body)
+
+
+# ==================== ПОДТВЕРЖДЕНИЕ АДРЕСА ПОЧТЫ ====================
+
+class EmailConfirmationTests(BaseCase):
+    """
+    Адрес не проверялся вовсе: на непроверенный адрес уходили письма
+    о блокировке счёта и ссылка восстановления доступа, а опечатка
+    означала, что вернуть себе доступ к деньгам невозможно.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.user = make_user('unconfirmed_user', balance='5000', email_confirmed=False)
+
+    def test_registration_sends_confirmation(self):
+        self.client.post(reverse('main:register'), {
+            'username': 'fresh_user', 'email': 'fresh@example.com',
+            'password1': 'Sunrise-Harbor-42', 'password2': 'Sunrise-Harbor-42',
+            'accept_terms': 'on', 'consent_data_processing': 'on',
+        })
+        user = User.objects.get(username='fresh_user')
+        self.assertFalse(EmailConfirmation.is_email_confirmed(user))
+        self.assertTrue(any('email/confirm' in message.body for message in mail.outbox))
+
+    def test_withdrawal_blocked_until_confirmed(self):
+        with self.assertRaises(services.OperationRejected):
+            services.hold_for_withdrawal(
+                self.user, Decimal('1000'), 'card', {'card_number': '4111111111111111'}, '**** 1111',
+            )
+        self.assertEqual(Balance.objects.get(user=self.user).amount, Decimal('5000'))
+
+    def test_publication_blocked_until_confirmed(self):
+        give_distribution_consent(self.user)
+        fundraise = Fundraise.objects.create(
+            title='Сбор', description=LONG_DESCRIPTION, category='other',
+            target_amount=Decimal('1000'), author=self.user,
+            status='draft', moderation_status='draft',
+        )
+        problems = moderation.check_can_submit(fundraise)
+        self.assertTrue(any('электронной почты' in problem for problem in problems))
+
+    def test_donation_still_works(self):
+        """
+        Ограничивается распоряжение деньгами в свою пользу — вывод, перевод
+        и публикация сбора. Пожертвование остаётся доступным: деньги уходят
+        в проверенный сбор, а не обратно жертвователю, и обойти через него
+        запрет нельзя.
+        """
+        author = make_user('confirmed_author')
+        fundraise = Fundraise.objects.create(
+            title='Сбор', description=LONG_DESCRIPTION, category='other',
+            target_amount=Decimal('10000'), author=author,
+            status='active', moderation_status='approved',
+        )
+        services.donate(self.user, fundraise, Decimal('100'))
+        fundraise.refresh_from_db()
+        self.assertEqual(fundraise.current_amount, Decimal('100'))
+
+    def test_link_confirms_address(self):
+        email_confirmation.send_confirmation(self.user)
+        link = [
+            word for word in mail.outbox[-1].body.split() if '/email/confirm/' in word
+        ][0]
+        path = link[link.index('/email/confirm/'):]
+
+        response = self.client.get(path)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(EmailConfirmation.is_email_confirmed(self.user))
+
+    def test_link_stops_working_after_email_change(self):
+        """Ссылка, ушедшая на старый адрес, не должна подтверждать новый."""
+        email_confirmation.send_confirmation(self.user)
+        link = [w for w in mail.outbox[-1].body.split() if '/email/confirm/' in w][0]
+        path = link[link.index('/email/confirm/'):]
+
+        self.user.email = 'another@example.com'
+        self.user.save(update_fields=['email'])
+
+        self.client.get(path)
+        self.assertFalse(EmailConfirmation.is_email_confirmed(self.user))
+
+    def test_changing_email_invalidates_confirmation(self):
+        confirmed = make_user('changes_email')
+        self.assertTrue(EmailConfirmation.is_email_confirmed(confirmed))
+        confirmed.email = 'new-address@example.com'
+        confirmed.save(update_fields=['email'])
+        self.assertFalse(EmailConfirmation.is_email_confirmed(confirmed))
+
+    def test_resend_is_rate_limited(self):
+        self.client.login(username='unconfirmed_user', password=PASSWORD)
+        self.client.post(reverse('main:resend_email_confirmation'))
+        sent_after_first = len(mail.outbox)
+        self.client.post(reverse('main:resend_email_confirmation'))
+        self.assertEqual(len(mail.outbox), sent_after_first)
+
+    def test_existing_accounts_are_not_locked_out(self):
+        """Старые учётные записи не лишаются вывода задним числом."""
+        legacy = make_user('legacy_user', balance='5000', email_confirmed=False)
+        confirmation = EmailConfirmation.for_user(legacy)
+        confirmation.is_legacy = True
+        confirmation.save(update_fields=['is_legacy'])
+
+        withdrawal = services.hold_for_withdrawal(
+            legacy, Decimal('1000'), 'card', {'card_number': '4111111111111111'}, '**** 1111',
+        )
+        self.assertIsNotNone(withdrawal.pk)
+
+
+class EmailDomainTests(BaseCase):
+    """Одноразовые адреса и опечатки дают адрес, до которого не достучаться."""
+
+    def register(self, email):
+        return self.client.post(reverse('main:register'), {
+            'username': 'domain_probe', 'email': email,
+            'password1': 'Sunrise-Harbor-42', 'password2': 'Sunrise-Harbor-42',
+            'accept_terms': 'on', 'consent_data_processing': 'on',
+        })
+
+    def test_disposable_domain_refused(self):
+        self.register('someone@mailinator.com')
+        self.assertFalse(User.objects.filter(username='domain_probe').exists())
+
+    def test_typo_is_caught_including_swapped_letters(self):
+        from main.utils.email_domains import check_email_domain
+
+        self.assertIn('gmail.com', check_email_domain('a@gmial.com'))
+        self.assertIn('yandex.ru', check_email_domain('a@yadnex.ru'))
+
+    def test_normal_addresses_pass(self):
+        from main.utils.email_domains import check_email_domain
+
+        for address in ['a@gmail.com', 'a@mail.ru', 'a@ya.ru',
+                        'a@sberbank.ru', 'a@своя-компания.рф']:
+            with self.subTest(address=address):
+                self.assertIsNone(check_email_domain(address))
+
+    def test_valid_registration_passes(self):
+        self.register('someone@yandex.ru')
+        self.assertTrue(User.objects.filter(username='domain_probe').exists())
+
+
+class DebtRepaymentTests(BaseCase):
+    """
+    Пункт 7.4 оферты обещает погашение задолженности перед жертвователями,
+    но увидеть долг и вернуть деньги автор не мог никак.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.author = make_user('debt_author')
+        self.donor = make_user('debt_donor', balance='1000')
+        self.fundraise = Fundraise.objects.create(
+            title='Сбор', description=LONG_DESCRIPTION, category='other',
+            target_amount=Decimal('10000'), author=self.author,
+            status='active', moderation_status='approved',
+        )
+        self.client.login(username='debt_author', password=PASSWORD)
+
+    @override_settings(DONATION_COMMISSION_PERCENT=Decimal('0'))
+    def create_debt(self):
+        services.donate(self.donor, self.fundraise, Decimal('1000'))
+        # Автор потратил почти всё: при отмене вернуть можно только остаток
+        Balance.objects.filter(user=self.author).update(amount=Decimal('200'))
+        services.refund_donations(self.fundraise)
+        self.fundraise.status = 'cancelled'
+        self.fundraise.save(update_fields=['status'])
+
+    def test_debt_is_visible(self):
+        self.create_debt()
+        debt = services.outstanding_debt(self.author)
+        self.assertEqual(debt['total'], Decimal('800.00'))
+
+        body = self.client.get(reverse('main:my_debt')).content.decode()
+        self.assertIn('800', body)
+
+    def test_repayment_returns_money_to_donor(self):
+        self.create_debt()
+        donor_before = Balance.objects.get(user=self.donor).amount
+        Balance.objects.filter(user=self.author).update(amount=Decimal('800'))
+
+        self.client.post(reverse('main:my_debt'))
+
+        self.assertEqual(
+            Balance.objects.get(user=self.donor).amount, donor_before + Decimal('800'),
+        )
+        self.assertEqual(services.outstanding_debt(self.author)['total'], Decimal('0.00'))
+
+    def test_partial_repayment_keeps_remainder(self):
+        self.create_debt()
+        Balance.objects.filter(user=self.author).update(amount=Decimal('300'))
+        self.client.post(reverse('main:my_debt'))
+        self.assertEqual(services.outstanding_debt(self.author)['total'], Decimal('500.00'))
+
+    def test_repayment_does_not_create_money(self):
+        self.create_debt()
+        Balance.objects.filter(user=self.author).update(amount=Decimal('800'))
+        before = total_money()
+        self.client.post(reverse('main:my_debt'))
+        self.assertEqual(total_money(), before)
+
+    def test_no_debt_page_says_so(self):
+        body = self.client.get(reverse('main:my_debt')).content.decode()
+        self.assertIn('Задолженности нет', body)
+
+
+class DonorCountTests(BaseCase):
+    """Счётчик показывал пожертвования, а не людей."""
+
+    def setUp(self):
+        super().setUp()
+        self.author = make_user('count_author')
+        self.donor = make_user('count_donor', balance='1000')
+        self.fundraise = Fundraise.objects.create(
+            title='Сбор', description=LONG_DESCRIPTION, category='other',
+            target_amount=Decimal('10000'), author=self.author,
+            status='active', moderation_status='approved',
+        )
+
+    def test_same_donor_counted_once(self):
+        services.donate(self.donor, self.fundraise, Decimal('100'))
+        services.donate(self.donor, self.fundraise, Decimal('100'))
+        self.fundraise.refresh_from_db()
+        self.assertEqual(self.fundraise.donors_count, 1)
+        self.assertEqual(self.fundraise.current_amount, Decimal('200'))
+
+    def test_different_donors_counted_separately(self):
+        other = make_user('count_donor2', balance='1000')
+        services.donate(self.donor, self.fundraise, Decimal('100'))
+        services.donate(other, self.fundraise, Decimal('100'))
+        self.fundraise.refresh_from_db()
+        self.assertEqual(self.fundraise.donors_count, 2)
+
+    def test_refund_removes_donor_from_count(self):
+        services.donate(self.donor, self.fundraise, Decimal('100'))
+        services.refund_donations(self.fundraise)
+        self.fundraise.refresh_from_db()
+        self.assertEqual(self.fundraise.donors_count, 0)
+
+
+class RemovedEndpointsTests(BaseCase):
+    """Мёртвые адреса убраны, а не оставлены «на всякий случай»."""
+
+    def test_dead_urls_are_gone(self):
+        from django.urls import NoReverseMatch
+
+        for name in ['main:get_balance_json', 'main:cancel_transaction']:
+            with self.subTest(name=name):
+                with self.assertRaises(NoReverseMatch):
+                    reverse(name)
+
+
+class ChecksAfterReviewTests(BaseCase):
+    """Дефекты, найденные проверкой последней волны изменений."""
+
+    def setUp(self):
+        super().setUp()
+        self.author = make_user('review_author')
+        self.donor = make_user('review_donor', balance='1000')
+
+    def test_real_domains_similar_to_popular_are_accepted(self):
+        """mail.com, ymail.com и email.com — настоящие провайдеры."""
+        from main.utils.email_domains import check_email_domain
+
+        for address in ['a@mail.com', 'a@ymail.com', 'a@email.com', 'a@googlemail.com']:
+            with self.subTest(address=address):
+                self.assertIsNone(check_email_domain(address))
+
+    def test_typo_warning_can_be_overridden_on_second_attempt(self):
+        """Иначе проверка опечаток становится запретом на регистрацию."""
+        data = {
+            'username': 'typo_user', 'email': 'someone@gmial.com',
+            'password1': 'Sunrise-Harbor-42', 'password2': 'Sunrise-Harbor-42',
+            'accept_terms': 'on', 'consent_data_processing': 'on',
+        }
+        self.client.post(reverse('main:register'), data)
+        self.assertFalse(User.objects.filter(username='typo_user').exists())
+
+        self.client.post(reverse('main:register'), {**data, 'email_typo_confirmed': 'on'})
+        self.assertTrue(User.objects.filter(username='typo_user').exists())
+
+    def test_api_registration_checks_domain_and_sends_confirmation(self):
+        response = self.client.post(
+            '/api/auth/register/',
+            data=json.dumps({
+                'username': 'api_newbie', 'email': 'someone@mailinator.com',
+                'password': 'Sunrise-Harbor-42', 'password2': 'Sunrise-Harbor-42',
+                'accept_terms': True, 'consent_data_processing': True,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+
+        response = self.client.post(
+            '/api/auth/register/',
+            data=json.dumps({
+                'username': 'api_newbie', 'email': 'someone@yandex.ru',
+                'password': 'Sunrise-Harbor-42', 'password2': 'Sunrise-Harbor-42',
+                'accept_terms': True, 'consent_data_processing': True,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertFalse(response.json()['email_confirmed'])
+        self.assertTrue(any('email/confirm' in message.body for message in mail.outbox))
+
+    @override_settings(DONATION_COMMISSION_PERCENT=Decimal('10'))
+    def test_author_does_not_repay_commission_he_never_received(self):
+        """
+        Если на служебном счёте не хватает, это долг сервиса, а не автора:
+        автор получил сумму за вычетом комиссии.
+        """
+        fundraise = Fundraise.objects.create(
+            title='Сбор', description=LONG_DESCRIPTION, category='other',
+            target_amount=Decimal('10000'), author=self.author,
+            status='active', moderation_status='approved',
+        )
+        services.donate(self.donor, fundraise, Decimal('1000'))
+        # Комиссия выведена со служебного счёта, у автора денег достаточно
+        Balance.objects.filter(user=self.service_account).update(amount=Decimal('0'))
+        Balance.objects.filter(user=self.author).update(amount=Decimal('5000'))
+        author_before = Balance.objects.get(user=self.author).amount
+
+        services.refund_donations(fundraise)
+
+        spent_by_author = author_before - Balance.objects.get(user=self.author).amount
+        self.assertEqual(spent_by_author, Decimal('900.00'))
+
+    def test_blocked_user_can_reach_debt_page(self):
+        """Иначе круг замыкается: погасить нельзя, а удалить мешает долг."""
+        restrictions_service.apply_restriction(
+            user=self.author, kind='blocked', ground='terms_violation',
+            reason='Нарушение раздела 8.',
+        )
+        self.client.login(username='review_author', password=PASSWORD)
+        self.assertEqual(self.client.get(reverse('main:my_debt')).status_code, 200)
+        self.assertEqual(self.client.get(reverse('main:topup')).status_code, 200)
+
+    def test_legacy_record_without_email_is_not_confirmed(self):
+        user = make_user('no_email_user', balance='5000', email_confirmed=False)
+        confirmation = EmailConfirmation.for_user(user)
+        confirmation.is_legacy = True
+        confirmation.save(update_fields=['is_legacy'])
+        user.email = ''
+        user.save(update_fields=['email'])
+
+        self.assertFalse(EmailConfirmation.is_email_confirmed(user))
+        with self.assertRaises(services.OperationRejected):
+            services.hold_for_withdrawal(
+                user, Decimal('1000'), 'card', {'card_number': '4111111111111111'}, '**** 1111',
+            )
+
+    def test_legacy_user_can_confirm_voluntarily(self):
+        user = make_user('legacy_volunteer', email_confirmed=False)
+        confirmation = EmailConfirmation.for_user(user)
+        confirmation.is_legacy = True
+        confirmation.save(update_fields=['is_legacy'])
+
+        self.client.login(username='legacy_volunteer', password=PASSWORD)
+        self.client.post(reverse('main:resend_email_confirmation'))
+        self.assertTrue(any('email/confirm' in message.body for message in mail.outbox))
+
+    def test_transfer_requires_confirmed_email(self):
+        """Иначе неподтверждённый переводит баланс и выводит его с другого счёта."""
+        unconfirmed = make_user('unconfirmed_sender', balance='1000', email_confirmed=False)
+        with self.assertRaises(services.OperationRejected):
+            services.transfer(unconfirmed, self.author, Decimal('100'))
+
+    def test_donor_returning_after_refund_is_counted_again(self):
+        fundraise = Fundraise.objects.create(
+            title='Сбор', description=LONG_DESCRIPTION, category='other',
+            target_amount=Decimal('10000'), author=self.author,
+            status='active', moderation_status='approved',
+        )
+        services.donate(self.donor, fundraise, Decimal('100'))
+        services.refund_donations(fundraise)
+        fundraise.refresh_from_db()
+        self.assertEqual(fundraise.donors_count, 0)
+
+        # Возврат оставил сбор активным только в этом тесте — важно, что
+        # счётчик не уходит в расхождение с фактом
+        services.donate(self.donor, fundraise, Decimal('100'))
+        fundraise.refresh_from_db()
+        self.assertEqual(fundraise.donors_count, 1)
+
+
+class MobileAppTests(TestCase):
+    """
+    Приложение: манифест, service worker, офлайн, раздача APK.
+
+    Проверяется не «страница открывается», а то, что ломает приложение
+    молча: кэш денежных страниц, внешние адреса в service worker,
+    отсутствующие иконки и отпечаток ключа подписи.
+    """
+
+    def test_dev_machine_needs_no_production_packages(self):
+        """
+        При DEBUG=True настройки не должны требовать пакеты из раздела
+        «Прод» в requirements.txt.
+
+        Whitenoise стоял в MIDDLEWARE безусловно, а числился
+        прод-зависимостью: машина разработчика без него не запускалась
+        вовсе — вместо сервера ModuleNotFoundError и стена трассировки.
+
+        Настройки исполняются заново с DEBUG=True в отдельном
+        пространстве имён: прогон тестов идёт с DEBUG=False, и проверять
+        settings.MIDDLEWARE как есть — значит не проверять ничего.
+        """
+        import importlib.util
+        import os
+        from unittest.mock import patch
+
+        source = Path(__file__).resolve().parent.parent / 'angelsheart' / 'settings.py'
+        spec = importlib.util.spec_from_file_location('settings_debug_probe', source)
+        probe = importlib.util.module_from_spec(spec)
+
+        with patch.dict(os.environ, {'DEBUG': 'True'}, clear=False):
+            spec.loader.exec_module(probe)
+
+        self.assertTrue(probe.DEBUG, 'проба не поднялась в режиме разработки')
+        for middleware in probe.MIDDLEWARE:
+            for package in ('whitenoise', 'psycopg', 'redis', 'gunicorn'):
+                self.assertNotIn(
+                    package, middleware,
+                    f'{middleware} требует прод-пакет {package} на машине разработчика',
+                )
+
+    def test_manifest_is_valid_and_self_hosted(self):
+        response = self.client.get(reverse('main:web_manifest'))
+        self.assertEqual(response.status_code, 200)
+        manifest = json.loads(response.content)
+
+        self.assertEqual(manifest['display'], 'standalone')
+        self.assertEqual(manifest['start_url'], '/')
+        self.assertTrue(manifest['icons'])
+
+        # Иконка 192 и maskable обязательны: без первой Android не
+        # предлагает установку, без второй значок обрезается в круг
+        # вместе с краями рисунка
+        sizes = {icon['sizes'] for icon in manifest['icons']}
+        self.assertIn('192x192', sizes)
+        purposes = {icon.get('purpose', 'any') for icon in manifest['icons']}
+        self.assertIn('maskable', purposes)
+
+        for icon in manifest['icons']:
+            self.assertFalse(
+                icon['src'].startswith('http'),
+                f"иконка {icon['src']} ведёт на внешний адрес",
+            )
+
+    def test_manifest_icons_exist(self):
+        """Манифест, ссылающийся на несуществующий файл, ломает установку."""
+        from django.contrib.staticfiles import finders
+
+        manifest = json.loads(self.client.get(reverse('main:web_manifest')).content)
+        for icon in manifest['icons']:
+            path = icon['src'].split('/static/', 1)[-1]
+            self.assertIsNotNone(
+                finders.find(path), f'иконка {path} не найдена в статике',
+            )
+
+    def test_service_worker_served_from_root(self):
+        """
+        Область действия service worker ограничена каталогом, из которого
+        он получен: файл из /static/ управлял бы только статикой.
+        """
+        self.assertEqual(reverse('main:service_worker'), '/service-worker.js')
+
+        response = self.client.get('/service-worker.js')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('javascript', response['Content-Type'])
+        # Сам файл кэшировать нельзя, иначе обновление не доедет никогда
+        self.assertIn('no-store', response['Cache-Control'])
+
+    def test_service_worker_caches_only_static_and_offline(self):
+        """
+        Единственный надёжный способ проверить кэш — посмотреть, что
+        именно service worker кладёт в него при установке. Проверка
+        «в файле упоминается /api/» прошла бы и на коде, который эти
+        пути никуда не передаёт.
+        """
+        body = self.client.get('/service-worker.js').content.decode()
+
+        precache = re.search(r'const PRECACHE = \[(.*?)\];', body, re.S)
+        self.assertIsNotNone(precache, 'список прекэша не найден')
+        urls = re.findall(r"'([^']+)'", precache.group(1))
+        self.assertTrue(urls)
+
+        for url in urls:
+            self.assertTrue(
+                url.startswith('/static/') or url == reverse('main:offline'),
+                f'в кэш приложения попадает {url} — это не статика и не офлайн-страница',
+            )
+
+        # Прекэш запрашивается без куки: иначе сервер соберёт страницу
+        # для текущего пользователя и его баланс осядет в кэше, который
+        # переживает выход из учётной записи
+        self.assertIn("credentials: 'omit'", body)
+
+        # Навигации никогда не кладутся в кэш: ветка, отвечающая за
+        # страницы, не должна ничего писать
+        navigation_branch = body.split("request.mode === 'navigate'", 1)[1].split('return;', 1)[0]
+        self.assertNotIn('cache.put', navigation_branch)
+        self.assertNotIn('caches.open', navigation_branch)
+
+    def test_service_worker_has_no_template_leftovers(self):
+        """
+        Незакрытый или многострочный {# #} уезжает в файл текстом, и
+        service worker перестаёт быть валидным JavaScript — браузер
+        молча отказывается его регистрировать, а на сайте всё выглядит
+        как обычно. Один раз уже уехал.
+        """
+        body = self.client.get('/service-worker.js').content.decode()
+        for marker in ('{#', '#}', '{%', '{{'):
+            self.assertNotIn(marker, body, f'в service worker осталось {marker}')
+        self.assertTrue(body.lstrip().startswith('/*'))
+
+    def test_service_worker_sensitive_paths_listed(self):
+        """Список запрещённых к кэшу путей покрывает страницы с деньгами."""
+        body = self.client.get('/service-worker.js').content.decode()
+        for path in ('/api/', '/admin/', '/payment/', '/verification/', '/media/',
+                     '/history/', '/transfer/', '/topup/', '/withdrawal/', '/my-'):
+            self.assertIn(f"'{path}'", body, f'{path} не исключён из кэша')
+
+    def test_navigation_gets_offline_page_before_any_filter(self):
+        """
+        Обработчик навигаций обязан стоять ДО отсева «денежных» адресов.
+
+        Проверено вживую (сервер останавливался, браузер шёл на
+        /history/): когда отсев был первым, service worker пропускал
+        такой адрес мимо себя, и человек, потерявший сеть на «Истории»,
+        видел серую ошибку браузера вместо страницы «нет соединения».
+        То есть офлайн-режим не работал ровно там, где нужен, и заметить
+        это по тексту файла было нельзя — все нужные строки в нём были.
+        """
+        body = self.client.get('/service-worker.js').content.decode()
+        handler = body.split("addEventListener('fetch'", 1)[1]
+
+        navigate_at = handler.index("request.mode === 'navigate'")
+        sensitive_at = handler.index('isSensitive(url)')
+        self.assertLess(
+            navigate_at, sensitive_at,
+            'отсев адресов стоит раньше выдачи офлайн-страницы — '
+            'на денежных страницах офлайн-режим не сработает',
+        )
+        self.assertIn('offlineFallback', handler)
+
+    def test_offline_page_reveals_nothing_about_user(self):
+        """
+        Офлайн-страницу кладёт в кэш service worker, а кэш общий на
+        устройство и переживает выход из учётной записи. Значит, она
+        обязана быть одинаковой для всех: иначе на телефоне останется
+        страница с балансом того, кто входил последним.
+        """
+        anonymous = self.client.get(reverse('main:offline')).content.decode()
+
+        user = make_user('offline_probe', balance='12345.67')
+        self.client.force_login(user)
+        authorized = self.client.get(reverse('main:offline')).content.decode()
+
+        self.assertEqual(anonymous, authorized)
+        self.assertNotIn('offline_probe', authorized)
+        self.assertNotIn('12345', authorized)
+        # Шапки base.html здесь быть не должно — именно она рисует баланс
+        self.assertNotIn('balance-card-mini', authorized)
+        self.assertNotIn('bottom-nav', authorized)
+
+        # Многострочный {# #} Django не понимает — он однострочный, и его
+        # содержимое уезжает на страницу как текст. Один раз уже уехало.
+        self.assertNotIn('{#', authorized)
+        self.assertNotIn('{%', authorized)
+        self.assertTrue(authorized.lstrip().startswith('<!DOCTYPE html>'))
+
+    def test_cache_version_changes_when_offline_page_changes(self):
+        """
+        Если версия не зависит от шаблона, правка офлайн-страницы не
+        меняет ни версию, ни байты service worker: браузер не увидит
+        обновления и навсегда оставит в кэше старую страницу.
+        """
+        from main import pwa
+
+        before = pwa._cache_version()
+
+        template = Path(__file__).resolve().parent / 'templates' / 'main' / 'offline.html'
+        original = template.read_bytes()
+        try:
+            template.write_bytes(original + '\n<!-- правка -->\n'.encode('utf-8'))
+            self.assertNotEqual(pwa._cache_version(), before)
+        finally:
+            template.write_bytes(original)
+
+        self.assertEqual(pwa._cache_version(), before)
+
+    def test_service_worker_has_no_external_urls(self):
+        """
+        Внешний адрес в service worker означал бы обращение к чужому
+        серверу на каждой загрузке страницы — ровно то, от чего
+        избавлялись, убирая CDN.
+        """
+        import re
+
+        body = self.client.get('/service-worker.js').content.decode()
+        # Ищем `//host`: это ловит и `https://example.com`, и запись
+        # без протокола. Упоминание хоста в комментарии не ловится —
+        # именно на этом ложно падал такой же тест для вендорного CSS.
+        external = re.findall(r'//[a-z0-9.-]+\.[a-z]{2,}', body)
+        self.assertEqual(external, [], f'внешние адреса в service worker: {external}')
+
+    def test_offline_page_works(self):
+        response = self.client.get(reverse('main:offline'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'соединени')
+
+    def test_base_template_links_manifest_and_worker(self):
+        response = self.client.get(reverse('main:login'))
+        self.assertContains(response, 'manifest.webmanifest')
+        self.assertContains(response, 'service-worker.js')
+
+    def test_asset_links_absent_without_fingerprint(self):
+        """
+        Неверный отпечаток хуже отсутствующего: приложение молча
+        покажет адресную строку.
+        """
+        with override_settings(ANDROID_SIGNING_FINGERPRINTS='   ,  '):
+            # Пробелы и пустые элементы — не отпечаток: их отбрасывание
+            # не должно приводить к пустому, но формально валидному файлу
+            self.assertEqual(self.client.get('/.well-known/assetlinks.json').status_code, 404)
+
+    def test_asset_links_with_fingerprint(self):
+        with override_settings(
+            ANDROID_SIGNING_FINGERPRINTS='AA:BB, CC:DD',
+            ANDROID_PACKAGE_NAME='ru.test.app',
+        ):
+            response = self.client.get('/.well-known/assetlinks.json')
+            self.assertEqual(response.status_code, 200)
+            data = json.loads(response.content)
+
+        self.assertEqual(data[0]['target']['package_name'], 'ru.test.app')
+        self.assertEqual(data[0]['target']['sha256_cert_fingerprints'], ['AA:BB', 'CC:DD'])
+        self.assertIn('delegate_permission/common.handle_all_urls', data[0]['relation'])
+
+    def test_app_page_offers_browser_install_without_apk(self):
+        with override_settings(ANDROID_APK_PATH='/nonexistent/app.apk'):
+            response = self.client.get(reverse('main:app_page'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Установить приложение')
+        # Кнопки скачивания быть не должно: ссылка на отсутствующий файл
+        # приводит человека на страницу ошибки
+        self.assertNotContains(response, 'Скачать APK')
+
+    def test_apk_download_404_without_file(self):
+        with override_settings(ANDROID_APK_PATH='/nonexistent/app.apk'):
+            self.assertEqual(self.client.get(reverse('main:download_apk')).status_code, 404)
+
+    def test_apk_download_serves_file(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            apk = Path(tmp) / 'angelsheart.apk'
+            apk.write_bytes(b'PK\x03\x04fake')
+            with override_settings(ANDROID_APK_PATH=str(apk)):
+                page = self.client.get(reverse('main:app_page'))
+                self.assertContains(page, 'Скачать APK')
+
+                response = self.client.get(reverse('main:download_apk'))
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response['Content-Type'], 'application/vnd.android.package-archive',
+                )
+                self.assertIn('attachment', response['Content-Disposition'])
+                self.assertEqual(b''.join(response.streaming_content), b'PK\x03\x04fake')
+
+    def test_mobile_css_is_last_stylesheet(self):
+        """
+        Вёрстка написана инлайн-стилями; мобильный слой перекрывает её
+        только если подключён последним.
+        """
+        body = self.client.get(reverse('main:login')).content.decode()
+        self.assertIn('mobile.css', body)
+        self.assertGreater(body.index('mobile.css'), body.index('all.min.css'))
+        # Главное: позже встроенного <style> в теле документа. Раньше
+        # ссылка стояла в <head>, и правила мобильного слоя с равной
+        # специфичностью проигрывали стилям страницы по порядку.
+        self.assertGreater(body.index('mobile.css'), body.rindex('</style>'))
+
+    def test_bottom_nav_links_are_alive(self):
+        make_user('mobile_nav_user')
+        self.client.login(username='mobile_nav_user', password=PASSWORD)
+        body = self.client.get(reverse('main:dashboard')).content.decode()
+        self.assertIn('bottom-nav', body)
+
+        nav = body.split('class="bottom-nav"', 1)[1].split('</nav>', 1)[0]
+        links = re.findall(r'href="([^"]+)"', nav)
+        self.assertEqual(len(links), 5)
+        for link in links:
+            self.assertEqual(
+                self.client.get(link).status_code, 200, f'{link} из нижней навигации не открывается',
+            )
+
+    def test_anonymous_keeps_login_links_on_phone(self):
+        """
+        Правило, прячущее верхнее меню на телефоне, не должно задевать
+        гостя: нижней навигации у него нет, и эти две ссылки —
+        единственные кнопки «Вход» и «Регистрация» на странице.
+        """
+        body = self.client.get(reverse('main:login')).content.decode()
+        self.assertNotIn('nav-links-auth', body)
+        self.assertIn(reverse('main:register'), body)
+
+    def test_sections_hidden_on_phone_are_reachable(self):
+        """
+        Верхнее меню на телефоне скрыто целиком. Каждый его раздел
+        обязан быть достижим иначе — из нижней навигации или из меню
+        профиля, — иначе он просто исчезает: в установленном приложении
+        нет даже адресной строки, чтобы ввести адрес руками.
+        """
+        make_user('mobile_reach_user')
+        self.client.login(username='mobile_reach_user', password=PASSWORD)
+        body = self.client.get(reverse('main:dashboard')).content.decode()
+
+        hidden = body.split('nav-links-auth', 1)[1].split('</div>', 1)[0]
+        hidden_links = set(re.findall(r'href="([^"]+)"', hidden))
+        self.assertTrue(hidden_links)
+
+        nav = body.split('class="bottom-nav"', 1)[1].split('</nav>', 1)[0]
+        dropdown = body.split('dropdown-content', 1)[1].split('</div>', 1)[0]
+        reachable = set(re.findall(r'href="([^"]+)"', nav + dropdown))
+
+        self.assertEqual(
+            hidden_links - reachable, set(),
+            'раздел скрыт на телефоне и не продублирован нигде',
+        )
+
+    def test_apple_touch_icon_exists(self):
+        from django.contrib.staticfiles import finders
+
+        body = self.client.get(reverse('main:login')).content.decode()
+        match = re.search(r'rel="apple-touch-icon"[^>]*href="([^"]+)"', body)
+        self.assertIsNotNone(match, 'apple-touch-icon не объявлен')
+        path = match.group(1).split('/static/', 1)[-1]
+        self.assertIsNotNone(finders.find(path), f'иконка {path} не найдена')
+
+    def test_apk_download_accepts_head(self):
+        """Менеджеры загрузок Android начинают скачивание с HEAD."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            apk = Path(tmp) / 'angelsheart.apk'
+            apk.write_bytes(b'PK\x03\x04fake')
+            with override_settings(ANDROID_APK_PATH=str(apk)):
+                self.assertEqual(self.client.head(reverse('main:download_apk')).status_code, 200)
+
+    def test_apk_page_shows_checksum(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            apk = Path(tmp) / 'angelsheart.apk'
+            apk.write_bytes(b'PK\x03\x04fake')
+            digest = hashlib.sha256(apk.read_bytes()).hexdigest()
+            with override_settings(ANDROID_APK_PATH=str(apk)):
+                cache.clear()
+                self.assertContains(self.client.get(reverse('main:app_page')), digest)
+
+    def test_apk_served_by_nginx_when_configured(self):
+        """
+        Отдача питоном занимает рабочий процесс на всё время передачи.
+        Когда задана внутренняя локация, файл отдаёт nginx.
+        """
+        with override_settings(ANDROID_APK_INTERNAL_LOCATION='/internal-apk/angelsheart.apk'):
+            response = self.client.get(reverse('main:download_apk'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['X-Accel-Redirect'], '/internal-apk/angelsheart.apk')
+        self.assertEqual(response.content, b'')
+
+
+class MobileLayoutTests(TestCase):
+    """
+    Мобильная вёрстка и окна вместо браузерных.
+
+    Все проверки здесь — про то, что видит человек на телефоне:
+    обрезанный текст, системная плашка вместо окна сайта, молча
+    отвалившийся скрипт.
+    """
+
+    TEMPLATES = Path(__file__).resolve().parent / 'templates'
+
+    @staticmethod
+    def _strip_comments(text):
+        """Убирает комментарии, чтобы не ловить упоминания в объяснениях."""
+        text = re.sub(r'\{#.*?#\}', '', text, flags=re.S)
+        text = re.sub(r'\{%\s*comment\s*%\}.*?\{%\s*endcomment\s*%\}', '', text, flags=re.S)
+        text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
+        text = re.sub(r'^\s*//.*$', '', text, flags=re.M)
+        return text
+
+    def test_no_browser_dialogs(self):
+        """
+        Ни alert, ни confirm, ни prompt.
+
+        Системная плашка показывает адрес сайта в заголовке, замораживает
+        страницу целиком и в установленном приложении выглядит как чужая
+        ошибка. Вместо них — окно сайта: showAlertModal, showConfirmModal
+        и атрибут data-confirm.
+        """
+        allowed = ('showAlertModal', 'showConfirmModal', 'deferred.prompt')
+        offenders = []
+
+        for template in self.TEMPLATES.rglob('*.html'):
+            body = self._strip_comments(template.read_text(encoding='utf-8'))
+            for number, line in enumerate(body.splitlines(), 1):
+                for call in re.finditer(r'(?<![\w.])(alert|confirm|prompt)\s*\(', line):
+                    fragment = line[max(0, call.start() - 20):call.end()]
+                    if any(name in fragment for name in allowed):
+                        continue
+                    # window.alert = ... — это как раз подмена, а не вызов
+                    if 'window.alert =' in line:
+                        continue
+                    offenders.append(f'{template.name}:{number}: {line.strip()[:70]}')
+
+        self.assertEqual(offenders, [], 'остались браузерные окна:\n' + '\n'.join(offenders))
+
+    def test_dangerous_actions_ask_confirmation(self):
+        """
+        Необратимые действия спрашивают подтверждение — и спрашивают им
+        же, атрибутом data-confirm, а не выборочно.
+        """
+        must_confirm = {
+            'my_withdrawals.html': 'отмена заявки на вывод',
+            'my_debt.html': 'погашение задолженности',
+            'my_fundraises.html': 'завершение и отмена сбора',
+            'fundraise_detail.html': 'завершение и отмена сбора',
+            'fundraise_manage.html': 'удаление документа',
+            'moderate_fundraise.html': 'отклонение сбора',
+            '2fa_setup.html': 'выключение двухфакторной проверки',
+        }
+        for name, what in must_confirm.items():
+            body = (self.TEMPLATES / 'main' / name).read_text(encoding='utf-8')
+            self.assertIn('data-confirm', body, f'{name}: {what} без подтверждения')
+
+    def test_confirmation_machinery_present(self):
+        """Атрибут data-confirm бесполезен без обработчика в base.html."""
+        base = (self.TEMPLATES / 'base.html').read_text(encoding='utf-8')
+        self.assertIn('data-confirm', base)
+        self.assertIn('showAlertModal', base)
+        self.assertIn('requestSubmit', base)
+        # Кнопка формы должна отправлять форму именно собой: на выборе
+        # действия модератора («одобрить» против «отклонить») держится
+        # смысл страницы
+        self.assertIn('form.requestSubmit(element)', base)
+
+    def test_numbers_in_page_scripts_are_not_localized(self):
+        """
+        Число в коде страницы не должно печататься по русским правилам.
+
+        `{{ balance|floatformat:2 }}` давало `const balance = 17500,50;` —
+        синтаксическую ошибку. Браузер выбрасывает ВЕСЬ блок скрипта:
+        на странице вывода средств не работали ни проверка суммы, ни
+        переключение полей способа выплаты. Страница при этом выглядела
+        совершенно рабочей.
+        """
+        user = make_user('layout_probe', balance='17500.50')
+        UserVerification.objects.update_or_create(
+            user=user, defaults={'level': 'full', 'verified_at': timezone.now()},
+        )
+        self.client.force_login(user)
+
+        pages = ['/', '/transfer/', '/withdrawal/', '/topup/', '/history/', '/profile/']
+        for path in pages:
+            response = self.client.get(path)
+            if response.status_code != 200:
+                continue
+            body = response.content.decode()
+            for script in re.findall(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', body, re.S):
+                script = self._strip_comments(script)
+                # Присваивание или сравнение с числом вида 17500,50
+                bad = re.findall(r'[=<>(,]\s*-?\d+,\d+\s*[;),]', script)
+                self.assertEqual(
+                    bad, [],
+                    f'{path}: число с запятой в коде страницы — скрипт не запустится: {bad}',
+                )
+
+    def test_tables_get_column_labels_on_phone(self):
+        """
+        Таблица из семи колонок на телефоне показывает две, а полосы
+        прокрутки не видно — человек видит обрезанный текст. Строка
+        должна разворачиваться в карточку «подпись — значение».
+        """
+        base = (self.TEMPLATES / 'base.html').read_text(encoding='utf-8')
+        self.assertIn("setAttribute('data-label'", base)
+        self.assertIn("classList.add('has-labels')", base)
+
+        css = (Path(__file__).resolve().parent / 'static' / 'css' / 'mobile.css').read_text(
+            encoding='utf-8')
+        self.assertIn('table.has-labels', css)
+        self.assertIn('attr(data-label)', css)
+        # Запрет переноса превращал таблицу из двух колонок в ленту
+        self.assertNotIn('white-space: nowrap;\n    }', css.split('.filter-strip')[0])
+
+    def test_alert_stays_closable_without_network(self):
+        """
+        Без сети кнопка подтверждения гасится — но не в окне
+        предупреждения: там она просто закрывает окно. Иначе человек
+        оказывался заперт в окне, сообщающем о проблеме, а клавиши
+        Escape на телефоне нет.
+        """
+        base = (self.TEMPLATES / 'base.html').read_text(encoding='utf-8')
+        self.assertIn("classList.add('is-alert')", base)
+        self.assertIn("classList.remove('is-alert')", base)
+
+        css = (Path(__file__).resolve().parent / 'static' / 'css' / 'mobile.css').read_text(
+            encoding='utf-8')
+        self.assertIn('.confirm-modal:not(.is-alert) #confirmOkBtn', css)
+
+    def test_window_onclick_not_overwritten(self):
+        """
+        Присвоение window.onclick затирало обработчик страницы
+        регистрации, и окна Соглашения и Политики переставали
+        закрываться кликом по подложке.
+        """
+        base = (self.TEMPLATES / 'base.html').read_text(encoding='utf-8')
+        self.assertNotIn('window.onclick =', base)
+        self.assertIn("window.addEventListener('click'", base)
+
+    def test_destructive_button_is_not_first(self):
+        """
+        В окне подтверждения кнопка «Подтвердить» не должна стоять выше
+        «Отмены»: для необратимых действий первой по взгляду оказывалась
+        разрушительная, и порядок расходился с обходом клавиатурой.
+        """
+        css = (Path(__file__).resolve().parent / 'static' / 'css' / 'mobile.css').read_text(
+            encoding='utf-8')
+        self.assertNotIn('column-reverse', css)
+
+    def test_pluralize_not_used_with_three_forms(self):
+        """
+        Фильтр pluralize понимает две формы, а по-русски их три: на трёх
+        он молча возвращает пустую строку — выходило «У вас 1 активных
+        заяв».
+        """
+        offenders = []
+        for template in self.TEMPLATES.rglob('*.html'):
+            body = template.read_text(encoding='utf-8')
+            for match in re.finditer(r'pluralize:"([^"]*)"', body):
+                if match.group(1).count(',') > 1:
+                    offenders.append(f'{template.name}: {match.group(0)}')
+        self.assertEqual(offenders, [], 'pluralize с тремя формами:\n' + '\n'.join(offenders))
+
+    def test_table_labels_survive_colspan(self):
+        """
+        Ячейка с colspan занимает несколько колонок. Считать по номеру
+        ячейки — значит сдвинуть все подписи после неё на чужие места.
+        """
+        base = (self.TEMPLATES / 'base.html').read_text(encoding='utf-8')
+        self.assertIn("parseInt(cell.getAttribute('colspan')", base)
+        self.assertIn('column += span', base)
+
+    def test_long_words_wrap_on_wide_screen_too(self):
+        """
+        Название сбора без пробелов разносило страницу и на большом
+        экране: 1977 пикселей при 1280. Данные те же самые, значит
+        и правило переноса не должно быть заперто в медиазапросе.
+        """
+        css = (Path(__file__).resolve().parent / 'static' / 'css' / 'mobile.css').read_text(
+            encoding='utf-8')
+        before_media = css.split('@media', 1)[0]
+        self.assertIn('overflow-wrap: anywhere', before_media)
+        self.assertIn('overflow-wrap: break-word', before_media)
+        # Подпись кнопки не переносим: «Отозвать» вставало как
+        # «Отозват» и «ь» на отдельной строке
+        self.assertIn('overflow-wrap: normal', before_media)
+
+    def test_long_words_wrap_on_phone(self):
+        """
+        Название сбора без пробелов раздувало раскладку до 811 пикселей
+        на экране шириной 320: браузер отдалял страницу до трети, и
+        нечитаемым становился весь текст, а не только длинное слово.
+        """
+        css = (Path(__file__).resolve().parent / 'static' / 'css' / 'mobile.css').read_text(
+            encoding='utf-8')
+        self.assertIn('overflow-wrap: anywhere', css)
+        # Переключатели нельзя растягивать до 44 пикселей: кружок повисал
+        # над своей подписью
+        self.assertIn('input:not([type="radio"]):not([type="checkbox"])', css)
+        # Центрирование ленты фильтров прятало её начало без возможности долистать
+        self.assertIn('justify-content: flex-start !important', css)

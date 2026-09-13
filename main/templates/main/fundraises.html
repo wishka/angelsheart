@@ -35,7 +35,12 @@
 
 <!-- Фильтры -->
 <div class="card" style="margin-bottom: 2rem;">
-    <div style="display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;">
+    {% comment %}
+        На телефоне класс filter-strip превращает этот ряд в
+        горизонтальную ленту: иначе восемь категорий переносятся
+        по одной на строку и занимают пол-экрана.
+    {% endcomment %}
+    <div class="filter-strip" style="display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;">
         <a href="?category=all&status=active" class="btn {% if selected_category == 'all' %}btn-primary{% else %}btn-secondary{% endif %}">Все</a>
         <a href="?category=medical&status=active" class="btn {% if selected_category == 'medical' %}btn-primary{% else %}btn-secondary{% endif %}">🏥 Медицина</a>
         <a href="?category=education&status=active" class="btn {% if selected_category == 'education' %}btn-primary{% else %}btn-secondary{% endif %}">📚 Образование</a>
@@ -43,6 +48,13 @@
         <a href="?category=ecology&status=active" class="btn {% if selected_category == 'ecology' %}btn-primary{% else %}btn-secondary{% endif %}">🌿 Экология</a>
         <a href="?category=sport&status=active" class="btn {% if selected_category == 'sport' %}btn-primary{% else %}btn-secondary{% endif %}">⚽ Спорт</a>
         <a href="?category=art&status=active" class="btn {% if selected_category == 'art' %}btn-primary{% else %}btn-secondary{% endif %}">🎨 Искусство</a>
+        {% comment %}
+            «Бизнес» и «Другое» в фильтрах отсутствовали, хотя «Другое» стоит
+            в форме создания по умолчанию: такие сборы нельзя было найти
+            вообще ни под каким фильтром, кроме «Все».
+        {% endcomment %}
+        <a href="?category=business&status=active" class="btn {% if selected_category == 'business' %}btn-primary{% else %}btn-secondary{% endif %}">💼 Бизнес</a>
+        <a href="?category=other&status=active" class="btn {% if selected_category == 'other' %}btn-primary{% else %}btn-secondary{% endif %}">✨ Другое</a>
     </div>
 </div>
 
@@ -103,5 +115,19 @@
         </a>
     </div>
     {% endfor %}
+
+    {% if page_obj.has_other_pages %}
+    <div class="card" style="text-align: center; color: #6b5a5a;">
+        {% if page_obj.has_previous %}
+        <a href="?category={{ selected_category }}&status={{ selected_status }}&page={{ page_obj.previous_page_number }}"
+           style="color: #d4737a;">← Назад</a>
+        {% endif %}
+        <span style="margin: 0 1rem;">Страница {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+        <a href="?category={{ selected_category }}&status={{ selected_status }}&page={{ page_obj.next_page_number }}"
+           style="color: #d4737a;">Вперёд →</a>
+        {% endif %}
+    </div>
+    {% endif %}
 </div>
 {% endblock %}
