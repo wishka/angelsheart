@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+
+{% block title %}Модерация сборов | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1 style="color: #d4737a; margin-bottom: 0.5rem;">
+        <i class="fas fa-shield-alt"></i> Модерация сборов
+    </h1>
+    <p style="color: #6b5a5a; margin-bottom: 1.5rem;">
+        Ожидают решения: <strong>{{ pending_count }}</strong>.
+        Заявки показаны в порядке поступления.
+    </p>
+
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.5rem;">
+        {% for value, label in statuses %}
+        <a href="?status={{ value }}"
+           style="padding: 6px 14px; border-radius: 20px; text-decoration: none; font-size: 0.9rem;
+                  background: {% if selected_status == value %}#d4737a{% else %}#fdf4f0{% endif %};
+                  color: {% if selected_status == value %}white{% else %}#d4737a{% endif %};">
+            {{ label }}
+        </a>
+        {% endfor %}
+    </div>
+
+    {% if fundraises %}
+    <div style="display: grid; gap: 1rem;">
+        {% for fundraise in fundraises %}
+        <div style="background: #fdf4f0; border-radius: 16px; padding: 1.25rem;">
+            <div style="display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+                <div>
+                    <a href="{% url 'main:moderate_fundraise' fundraise.pk %}"
+                       style="color: #d4737a; font-weight: 700; font-size: 1.1rem; text-decoration: none;">
+                        {{ fundraise.title }}
+                    </a>
+                    <div style="color: #6b5a5a; font-size: 0.9rem; margin-top: 0.25rem;">
+                        {{ fundraise.get_category_display }} ·
+                        автор {{ fundraise.author.username }} ·
+                        цель {{ fundraise.target_amount|floatformat:0 }} ₽
+                    </div>
+                </div>
+                <div style="text-align: right; color: #b89a9a; font-size: 0.85rem;">
+                    {% if fundraise.submitted_at %}подана {{ fundraise.submitted_at|date:"d.m.Y H:i" }}{% endif %}
+                    {% if fundraise.moderated_at %}<br>решение {{ fundraise.moderated_at|date:"d.m.Y H:i" }}{% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if page_obj.has_other_pages %}
+    <div style="margin-top: 1.5rem; color: #6b5a5a;">
+        {% if page_obj.has_previous %}
+        <a href="?status={{ selected_status }}&page={{ page_obj.previous_page_number }}" style="color: #d4737a;">← Назад</a>
+        {% endif %}
+        <span style="margin: 0 1rem;">Страница {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+        <a href="?status={{ selected_status }}&page={{ page_obj.next_page_number }}" style="color: #d4737a;">Вперёд →</a>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% else %}
+    <p style="color: #6b5a5a;">Заявок с таким статусом нет.</p>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+
+{% block title %}Подтверждение входа | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 420px; margin: 0 auto;">
+    <h1 style="color: #d4737a; margin-bottom: 0.5rem; text-align: center;">
+        <i class="fas fa-shield-halved"></i> Подтверждение входа
+    </h1>
+    <p style="color: #6b5a5a; text-align: center; margin-bottom: 2rem;">
+        Введите код из приложения-аутентификатора
+    </p>
+
+    <form method="post">
+        {% csrf_token %}
+        <div style="margin-bottom: 1.5rem;">
+            <label for="code" style="display: block; margin-bottom: 0.5rem; color: #6b5a5a;">
+                Код подтверждения
+            </label>
+            <input type="text" id="code" name="code" class="form-control"
+                   inputmode="numeric" autocomplete="one-time-code"
+                   pattern="[0-9A-Za-z]*" maxlength="8" required autofocus
+                   placeholder="000000"
+                   style="text-align: center; font-size: 1.5rem; letter-spacing: 0.3rem;">
+            <small style="color: #9a8a8a; display: block; margin-top: 0.5rem;">
+                Потеряли доступ к приложению? Введите один из резервных кодов.
+            </small>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width: 100%;">
+            Войти
+        </button>
+    </form>
+
+    <div style="text-align: center; margin-top: 1.5rem;">
+        <a href="{% url 'main:login' %}" style="color: #9a8a8a; text-decoration: none; font-size: 0.9rem;">
+            Войти под другим аккаунтом
+        </a>
+    </div>
+</div>
+{% endblock %}

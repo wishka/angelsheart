@@ -1,50 +1,123 @@
-from rest_framework import serializers
-from django.contrib.auth.models import User
-from django.contrib.auth import authenticate
-from main.models import UserConsent, Balance, Transaction, Fundraise, Donation
 from decimal import Decimal
+
+from django.contrib.auth import authenticate, password_validation
+from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework import serializers
+
+from main.models import Balance, Donation, Fundraise, Transaction, UserConsent
+
+# Согласия, обязательные для регистрации. Веб-форма их требовала,
+# а API-регистрация не собирала вообще — пользователь заводился без
+# единой записи UserConsent, то есть без правового основания обработки.
+# Список берётся из модели: держать его отдельной строкой здесь означало
+# рассинхрон при добавлении нового обязательного согласия (так и вышло —
+# сюда был записан устаревший тип 'privacy' вместо 'data_processing').
+REQUIRED_CONSENTS = list(UserConsent.REQUIRED_TYPES) + ['cookies']
 
 
 # ==================== АУТЕНТИФИКАЦИЯ ====================
 
 class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=8)
+    password = serializers.CharField(write_only=True)
     password2 = serializers.CharField(write_only=True)
-    
+    # Имена полей отражают правовое основание, а не документ: акцепт оферты
+    # и согласие на обработку ПДн — разные вещи (ч. 1 ст. 9 152-ФЗ)
+    accept_terms = serializers.BooleanField(write_only=True)
+    consent_data_processing = serializers.BooleanField(write_only=True)
+    consent_distribution = serializers.BooleanField(write_only=True, required=False, default=False)
+
     class Meta:
         model = User
-        fields = ['username', 'email', 'password', 'password2']
-    
+        fields = [
+            'username', 'email', 'password', 'password2',
+            'accept_terms', 'consent_data_processing', 'consent_distribution',
+        ]
+        extra_kwargs = {'email': {'required': True, 'allow_blank': False}}
+
+    def validate_email(self, value):
+        # Email — идентификатор для восстановления доступа, дубликаты недопустимы
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError('Пользователь с таким email уже зарегистрирован')
+        return value
+
     def validate(self, data):
         if data['password'] != data['password2']:
-            raise serializers.ValidationError("Пароли не совпадают")
+            raise serializers.ValidationError({'password2': 'Пароли не совпадают'})
+
+        # Раньше проверялась только длина: пароль «12345678» принимался,
+        # хотя AUTH_PASSWORD_VALIDATORS его отвергают на веб-форме.
+        user = User(username=data.get('username'), email=data.get('email'))
+        try:
+            password_validation.validate_password(data['password'], user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'password': list(exc.messages)})
+
+        if not data.get('accept_terms'):
+            raise serializers.ValidationError({
+                'accept_terms': 'Для регистрации нужно принять Пользовательское соглашение',
+            })
+        if not data.get('consent_data_processing'):
+            raise serializers.ValidationError({
+                'consent_data_processing':
+                    'Без согласия на обработку персональных данных регистрация невозможна',
+            })
+
         return data
-    
+
     def create(self, validated_data):
-        validated_data.pop('password2')
-        user = User.objects.create_user(**validated_data)
-        return user
+        for field in ('password2', 'accept_terms', 'consent_data_processing',
+                      'consent_distribution'):
+            validated_data.pop(field, None)
+        return User.objects.create_user(**validated_data)
 
 
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
-    password = serializers.CharField()
-    
+    password = serializers.CharField(write_only=True)
+
     def validate(self, data):
-        user = authenticate(**data)
+        user = authenticate(
+            request=self.context.get('request'),
+            username=data.get('username'),
+            password=data.get('password'),
+        )
         if user and user.is_active:
             return user
-        raise serializers.ValidationError("Неверные учетные данные")
+        raise serializers.ValidationError('Неверные учетные данные')
 
 
 # ==================== ПОЛЬЗОВАТЕЛИ ====================
 
 class UserSerializer(serializers.ModelSerializer):
-    balance = serializers.DecimalField(source='balance.amount', max_digits=10, decimal_places=2, read_only=True)
-    
+    """
+    Публичное представление пользователя.
+
+    Ни email, ни баланс здесь больше нет: этот сериализатор используется
+    в списке /api/users/ и во вложенных структурах, и раньше отдавал
+    адреса и остатки всех пользователей любому авторизованному.
+    """
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'date_joined', 'balance']
+        fields = ['id', 'username', 'date_joined']
+
+
+class CurrentUserSerializer(serializers.ModelSerializer):
+    """Собственный профиль: email и баланс видны только владельцу."""
+
+    balance = serializers.DecimalField(
+        source='balance.amount', max_digits=12, decimal_places=2, read_only=True,
+    )
+    verification_level = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'date_joined', 'balance', 'verification_level']
+
+    def get_verification_level(self, obj):
+        verification = getattr(obj, 'verification', None)
+        return verification.level if verification else 'unverified'
 
 
 # ==================== СБОРЫ ====================
@@ -58,7 +131,7 @@ class FundraiseListSerializer(serializers.ModelSerializer):
         model = Fundraise
         fields = ['id', 'title', 'description', 'category', 'target_amount',
                   'current_amount', 'progress_percent', 'author_name', 'author_id',
-                  'created_at', 'donors_count', 'status', 'image_url']
+                  'created_at', 'donors_count', 'status', 'moderation_status', 'image_url']
     
     def get_progress_percent(self, obj):
         return obj.get_progress_percent()
@@ -68,11 +141,25 @@ class FundraiseDetailSerializer(serializers.ModelSerializer):
     progress_percent = serializers.SerializerMethodField()
     author = UserSerializer(read_only=True)
     is_author = serializers.SerializerMethodField()
-    
+    # Комментарий модератора адресован автору: это переписка о его заявке,
+    # а не сведения о сборе для посторонних
+    moderation_comment = serializers.SerializerMethodField()
+
     class Meta:
         model = Fundraise
-        fields = '__all__'
-    
+        # Явный список вместо '__all__': при добавлении в модель любого
+        # внутреннего поля оно автоматически попадало бы в публичный ответ.
+        fields = [
+            'id', 'title', 'description', 'category', 'target_amount',
+            'current_amount', 'progress_percent', 'author', 'is_author',
+            'created_at', 'end_date', 'status', 'image_url',
+            'is_featured', 'donors_count', 'moderation_status', 'moderation_comment',
+        ]
+        # Результат проверки меняется только через модерацию: доступный на
+        # запись moderation_status означал бы, что сбор публикует сам автор.
+        read_only_fields = ['current_amount', 'donors_count', 'is_featured', 'status',
+                            'moderation_status', 'moderation_comment']
+
     def get_progress_percent(self, obj):
         return obj.get_progress_percent()
     
@@ -81,6 +168,13 @@ class FundraiseDetailSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             return obj.author == request.user
         return False
+
+    def get_moderation_comment(self, obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user and user.is_authenticated and (obj.author_id == user.pk or user.is_staff):
+            return obj.moderation_comment
+        return ''
 
 
 class FundraiseCreateSerializer(serializers.ModelSerializer):
@@ -99,13 +193,28 @@ class FundraiseCreateSerializer(serializers.ModelSerializer):
 # ==================== ДОНАТЫ ====================
 
 class DonationSerializer(serializers.ModelSerializer):
-    donor_name = serializers.CharField(source='donor.username', read_only=True)
-    donor_id = serializers.IntegerField(source='donor.id', read_only=True)
-    
+    donor_name = serializers.SerializerMethodField()
+    donor_id = serializers.SerializerMethodField()
+
     class Meta:
         model = Donation
         fields = ['id', 'donor_name', 'donor_id', 'amount', 'message',
                   'created_at', 'is_anonymous']
+
+    def _is_visible(self, obj):
+        """Анонимность раскрывается только самому донору."""
+        if not obj.is_anonymous:
+            return True
+        request = self.context.get('request')
+        return bool(request and request.user.is_authenticated and request.user.pk == obj.donor_id)
+
+    def get_donor_name(self, obj):
+        # Флаг is_anonymous раньше просто отдавался клиенту вместе с именем
+        # донора — скрывать его должен был фронтенд, то есть не скрывал никто.
+        return obj.donor.username if self._is_visible(obj) else 'Аноним'
+
+    def get_donor_id(self, obj):
+        return obj.donor_id if self._is_visible(obj) else None
 
 
 class DonationCreateSerializer(serializers.Serializer):
@@ -138,19 +247,17 @@ class TransactionSerializer(serializers.ModelSerializer):
 class TransferSerializer(serializers.Serializer):
     receiver_username = serializers.CharField()
     amount = serializers.DecimalField(
-        max_digits=10,
+        max_digits=12,
         decimal_places=2,
         min_value=Decimal('0.01')
     )
-    comment = serializers.CharField(required=False, allow_blank=True)
-    
+    comment = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
     def validate_receiver_username(self, value):
-        from django.contrib.auth.models import User
         try:
-            user = User.objects.get(username=value)
-            return user
+            return User.objects.get(username__iexact=value.strip())
         except User.DoesNotExist:
-            raise serializers.ValidationError("Пользователь не найден")
+            raise serializers.ValidationError('Пользователь не найден')
 
 
 # ==================== КОНСЕНТЫ ====================

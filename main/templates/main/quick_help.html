@@ -24,7 +24,7 @@
         </div>
         
         <div style="display: flex; gap: 1rem; justify-content: center;">
-            <form method="post" action="{% url 'maintransfer' %}">
+            <form method="post" action="{% url 'main:transfer' %}">
                 {% csrf_token %}
                 <input type="hidden" name="receiver_username" value="{{ suggested_user.username }}">
                 <input type="hidden" name="amount" value="{{ suggested_amount }}">

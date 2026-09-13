@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+
+{% block title %}Мои пожертвования | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem;">
+        <div>
+            <h1 style="color: #d4737a; margin-bottom: 0.5rem;">
+                <i class="fas fa-hand-holding-heart"></i> Мои пожертвования
+            </h1>
+            <p style="color: #6b5a5a;">Сборы, которые вы поддержали</p>
+        </div>
+        <a href="{% url 'main:fundraises' %}" class="btn btn-primary">
+            <i class="fas fa-search"></i> Найти сбор
+        </a>
+    </div>
+
+    <div style="background: #fdf6f6; border-radius: 12px; padding: 1.25rem; margin-bottom: 2rem;">
+        <div style="color: #6b5a5a; font-size: 0.9rem;">Всего пожертвовано</div>
+        <div style="font-size: 1.75rem; font-weight: 700; color: #d4737a;">
+            {{ total_donated|floatformat:2 }} ₽
+        </div>
+    </div>
+
+    {% if donations %}
+    <div style="overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="text-align: left; border-bottom: 2px solid #f0e0e0;">
+                    <th style="padding: 0.75rem;">Дата</th>
+                    <th style="padding: 0.75rem;">Сбор</th>
+                    <th style="padding: 0.75rem;">Сумма</th>
+                    <th style="padding: 0.75rem;">Статус</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for donation in donations %}
+                <tr style="border-bottom: 1px solid #f7eded;">
+                    <td style="padding: 0.75rem; color: #6b5a5a; white-space: nowrap;">
+                        {{ donation.created_at|date:"d.m.Y H:i" }}
+                    </td>
+                    <td style="padding: 0.75rem;">
+                        <a href="{% url 'main:fundraise_detail' donation.fundraise.pk %}"
+                           style="color: #d4737a; text-decoration: none; font-weight: 600;">
+                            {{ donation.fundraise.title }}
+                        </a>
+                        {% if donation.is_anonymous %}
+                        <span style="color: #9a8a8a; font-size: 0.8rem;">(анонимно)</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding: 0.75rem; font-weight: 700;">
+                        {{ donation.amount|floatformat:2 }} ₽
+                    </td>
+                    <td style="padding: 0.75rem;">
+                        {% if donation.refunded_at %}
+                        <span style="background: #6c757d; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem;">
+                            Возвращено {{ donation.refunded_amount|floatformat:2 }} ₽
+                        </span>
+                        {% else %}
+                        <span style="background: #28a745; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem;">
+                            Отправлено
+                        </span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if page_obj and page_obj.has_other_pages %}
+    <div style="margin-top: 1.5rem; display: flex; gap: 0.5rem; justify-content: center;">
+        {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}" class="btn btn-secondary">Назад</a>
+        {% endif %}
+        <span style="padding: 8px 16px; color: #6b5a5a;">
+            {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}
+        </span>
+        {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}" class="btn btn-secondary">Вперёд</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div style="text-align: center; padding: 3rem 1rem; color: #9a8a8a;">
+        <i class="fas fa-heart" style="font-size: 3rem; color: #f0e0e0;"></i>
+        <p style="margin-top: 1rem;">Вы ещё никого не поддержали.</p>
+        <a href="{% url 'main:fundraises' %}" class="btn btn-primary" style="margin-top: 1rem;">
+            Посмотреть сборы
+        </a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

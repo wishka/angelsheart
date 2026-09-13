@@ -102,6 +102,92 @@
     </div>
 </div>
 
+<!-- Права субъекта персональных данных -->
+<div class="card" style="margin-top: 2rem;">
+    <h2 style="color: #d4737a; margin-bottom: 0.5rem;">
+        <i class="fas fa-user-shield"></i> Ваши данные
+    </h2>
+    <p style="color: #6b5a5a; margin-bottom: 1.5rem;">
+        Статья 14 152-ФЗ даёт вам право получить свои данные и потребовать их
+        уничтожения. Обе операции доступны здесь и выполняются сразу.
+    </p>
+
+    <div style="display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
+
+        <div style="background: #fdf6f6; border-radius: 12px; padding: 1.25rem;">
+            <h3 style="color: #6b5a5a; margin: 0 0 0.5rem; font-size: 1.05rem;">
+                <i class="fas fa-download"></i> Выгрузить копию данных
+            </h3>
+            <p style="color: #6b5a5a; font-size: 0.9rem;">
+                Файл JSON со всем, что сервис о вас хранит: учётная запись,
+                операции, сборы, согласия, журнал входов.
+            </p>
+            <a href="{% url 'main:export_my_data' %}" class="btn btn-secondary">
+                Скачать
+            </a>
+        </div>
+
+        <div style="background: #fff4f4; border: 1px solid #f0d0d0; border-radius: 12px; padding: 1.25rem;">
+            <h3 style="color: #d4737a; margin: 0 0 0.5rem; font-size: 1.05rem;">
+                <i class="fas fa-trash-alt"></i> Удалить учётную запись
+            </h3>
+            <p style="color: #6b5a5a; font-size: 0.9rem;">
+                Паспортные данные, сканы документов и платёжные реквизиты будут
+                уничтожены. Сведения об операциях сохранятся обезличенными на
+                срок, который требует закон.
+            </p>
+            <button type="button" class="btn btn-primary" onclick="showDeleteModal()"
+                    style="background: #d4737a;">
+                Удалить
+            </button>
+        </div>
+    </div>
+
+    <p style="color: #9a8a8a; font-size: 0.85rem; margin-top: 1.25rem;">
+        Перед удалением выведите остаток баланса и завершите активные сборы
+        и заявки на вывод — иначе средства будет невозможно вернуть.
+    </p>
+</div>
+
+<!-- Подтверждение удаления -->
+<div id="deleteModal" class="policy-modal" style="display: none;">
+    <div class="policy-modal-content" style="max-width: 520px;">
+        <div class="policy-modal-header">
+            <h3 style="color: #d4737a;">Удаление учётной записи</h3>
+        </div>
+        <div class="policy-modal-body">
+            <p style="color: #6b5a5a;">Это действие необратимо. Будут уничтожены:</p>
+            <ul style="color: #6b5a5a;">
+                <li>фамилия, имя, отчество, дата рождения, адрес;</li>
+                <li>паспортные данные и загруженные сканы документов;</li>
+                <li>платёжные реквизиты;</li>
+                <li>адрес электронной почты и настройки двухфакторной аутентификации.</li>
+            </ul>
+            <p style="color: #6b5a5a;">
+                Сведения о совершённых операциях сохранятся <strong>без связи
+                с вашей личностью</strong>: хранить их обязывает п. 4 ст. 7
+                115-ФЗ. Восстановить учётную запись будет нельзя.
+            </p>
+            <form method="post" action="{% url 'main:delete_account' %}" id="deleteForm">
+                {% csrf_token %}
+                <label style="display: block; color: #6b5a5a; margin: 1rem 0 0.5rem;">
+                    Для подтверждения введите своё имя пользователя
+                    <strong>{{ user.username }}</strong>:
+                </label>
+                <input type="text" name="confirm" class="form-control" required
+                       autocomplete="off" placeholder="{{ user.username }}">
+            </form>
+        </div>
+        <div class="policy-modal-footer">
+            <button class="btn btn-secondary" onclick="closeDeleteModal()">Отмена</button>
+            <button class="btn btn-primary" style="background: #d4737a;"
+                    onclick="document.getElementById('deleteForm').submit()">
+                Удалить навсегда
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- Модальное окно для отзыва согласия -->
 <div id="revokeModal" class="policy-modal" style="display: none;">
     <div class="policy-modal-content" style="max-width: 500px;">
@@ -150,10 +236,19 @@
         document.getElementById('revokeForm').submit();
     }
     
+    function showDeleteModal() {
+        document.getElementById('deleteModal').style.display = 'flex';
+    }
+
+    function closeDeleteModal() {
+        document.getElementById('deleteModal').style.display = 'none';
+    }
+
     // Закрытие по Escape
     document.addEventListener('keydown', function(event) {
         if (event.key === 'Escape') {
             closeRevokeModal();
+            closeDeleteModal();
         }
     });
 </script>

@@ -1,14 +1,28 @@
 import logging
-import uuid
 from decimal import Decimal
-from datetime import datetime
+
 from django.conf import settings
-from django.utils import timezone
-from django.db import transaction
 from django.core.mail import send_mail
-from django.template.loader import render_to_string
+from django.db import models, transaction
+from django.template.loader import TemplateDoesNotExist, render_to_string
+from django.utils import timezone
 
 logger = logging.getLogger('withdrawals')
+
+
+def luhn_valid(card_number):
+    """Проверка контрольной суммы номера карты по алгоритму Луна."""
+    digits = [int(ch) for ch in card_number if ch.isdigit()]
+    if not digits:
+        return False
+    checksum = 0
+    for index, digit in enumerate(reversed(digits)):
+        if index % 2 == 1:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        checksum += digit
+    return checksum % 10 == 0
 
 
 class MassWithdrawalService:
@@ -43,50 +57,46 @@ class MassWithdrawalService:
             )
             
             if result['success']:
-                # Обновляем статус заявки
-                withdrawal.status = 'completed'
-                withdrawal.transaction_id = result.get('payout_id')
-                withdrawal.processed_at = timezone.now()
-                withdrawal.save()
-                
-                # Отправляем уведомление пользователю
+                # complete() проверяет, что заявка ещё удерживает средства,
+                # и не даёт повторно завершить уже закрытую заявку
+                withdrawal.complete(
+                    admin_user=withdrawal.processed_by,
+                    transaction_id=result.get('payout_id'),
+                )
+
                 self._send_withdrawal_notification(withdrawal, success=True)
-                
-                logger.info(f"Заявка #{withdrawal.id} успешно обработана. "
-                            f"Транзакция: {result.get('payout_id')}")
-                
+
+                logger.info(
+                    'Заявка #%s выполнена, транзакция %s',
+                    withdrawal.id, result.get('payout_id'),
+                )
+
                 return {
                     'success': True,
                     'message': 'Выплата выполнена успешно',
-                    'transaction_id': result.get('payout_id')
+                    'transaction_id': result.get('payout_id'),
                 }
-            else:
-                # Ошибка при выплате
-                withdrawal.status = 'failed'
-                withdrawal.comment = result.get('error', 'Ошибка при выплате')
-                withdrawal.save()
-                
-                logger.error(f"Ошибка обработки заявки #{withdrawal.id}: {result.get('error')}")
-                
-                # Отправляем уведомление об ошибке администратору
-                self._send_admin_alert(withdrawal, result.get('error'))
-                
-                return {
-                    'success': False,
-                    'message': result.get('error', 'Ошибка при выплате')
-                }
-        
-        except Exception as e:
-            logger.exception(f"Критическая ошибка при обработке заявки #{withdrawal.id}: {str(e)}")
-            
-            withdrawal.status = 'failed'
-            withdrawal.comment = f'Системная ошибка: {str(e)}'
-            withdrawal.save()
-            
-            return {
-                'success': False,
-                'message': str(e)
-            }
+
+            # Выплата не прошла. mark_failed возвращает удержанную сумму
+            # на баланс: раньше статус менялся на несуществующий 'failed',
+            # а деньги пользователю не возвращались и просто исчезали.
+            error = result.get('error', 'Ошибка при выплате')
+            withdrawal.mark_failed(error)
+
+            logger.error('Ошибка обработки заявки #%s: %s', withdrawal.id, error)
+            self._send_withdrawal_notification(withdrawal, success=False)
+            self._send_admin_alert(withdrawal, error)
+
+            return {'success': False, 'message': error}
+
+        except Exception as exc:
+            logger.exception('Критическая ошибка при обработке заявки #%s', withdrawal.id)
+
+            # Средства обязаны вернуться к пользователю и при системном сбое
+            withdrawal.mark_failed(f'Системная ошибка: {exc}')
+            self._send_admin_alert(withdrawal, str(exc))
+
+            return {'success': False, 'message': 'Системная ошибка при выплате'}
     
     def process_mass_withdrawals(self, withdrawal_ids, admin_user=None):
         """
@@ -147,45 +157,68 @@ class MassWithdrawalService:
         return results
     
     def _get_provider(self, payment_method):
-        """Получение провайдера для конкретного способа вывода"""
-        from main.payments.yookassa import YooKassaProvider, SBPProvider, StripeProvider
-        
-        providers = {
-            'card': YooKassaProvider,
-            'sbp': SBPProvider,
-            'yoomoney': YooKassaProvider,
-            'crypto': YooKassaProvider,
-        }
-        
-        provider_class = providers.get(payment_method, YooKassaProvider)
-        return provider_class()
+        """
+        Провайдер выплаты.
+
+        Раньше словарь перечислял SBPProvider и StripeProvider, которые были
+        просто псевдонимами (SBPProvider = YooKassaProvider,
+        StripeProvider = MockPaymentProvider) — то есть выплата «через Stripe»
+        молча уходила в заглушку и рапортовала об успехе.
+        """
+        from main.payments.yookassa import YooKassaProvider
+
+        if payment_method not in ('card', 'sbp', 'yoomoney'):
+            raise ValueError(f'Неподдерживаемый способ выплаты: {payment_method}')
+        return YooKassaProvider()
     
     def _send_withdrawal_notification(self, withdrawal, success=True):
-        """Отправка уведомления пользователю о статусе вывода"""
+        """
+        Уведомление пользователю о статусе вывода.
+
+        Шаблоны писем в проекте отсутствовали: render_to_string бросал
+        TemplateDoesNotExist, исключение гасилось общим except, и письма
+        не отправлялись никогда. Теперь шаблоны есть, а отсутствие шаблона
+        не оставляет пользователя без уведомления — уходит текстовое письмо.
+        """
+        if not withdrawal.user.email:
+            return
+
+        if success:
+            subject = f'Вывод средств #{withdrawal.id} выполнен'
+            template = 'emails/withdrawal_success.html'
+            fallback = (
+                f'Заявка на вывод #{withdrawal.id} на сумму {withdrawal.amount} ₽ выполнена.'
+            )
+        else:
+            subject = f'Вывод средств #{withdrawal.id} не выполнен'
+            template = 'emails/withdrawal_failed.html'
+            fallback = (
+                f'Заявка на вывод #{withdrawal.id} на сумму {withdrawal.amount} ₽ '
+                f'не выполнена, средства возвращены на баланс. '
+                f'Причина: {withdrawal.comment or "не указана"}.'
+            )
+
+        html_message = None
         try:
-            if success:
-                subject = f'✅ Вывод средств #{withdrawal.id} выполнен'
-                template = 'emails/withdrawal_success.html'
-            else:
-                subject = f'❌ Вывод средств #{withdrawal.id} отклонен'
-                template = 'emails/withdrawal_failed.html'
-            
             html_message = render_to_string(template, {
                 'withdrawal': withdrawal,
                 'user': withdrawal.user,
                 'site_url': settings.SITE_URL,
             })
-            
+        except TemplateDoesNotExist:
+            logger.warning('Шаблон письма %s не найден, отправляю текстовое письмо', template)
+
+        try:
             send_mail(
                 subject=subject,
-                message='',
+                message=fallback,
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[withdrawal.user.email],
                 html_message=html_message,
-                fail_silently=True,
+                fail_silently=False,
             )
-        except Exception as e:
-            logger.warning(f"Не удалось отправить уведомление пользователю {withdrawal.user.email}: {e}")
+        except Exception:
+            logger.exception('Не удалось отправить уведомление по заявке #%s', withdrawal.id)
     
     def _send_admin_alert(self, withdrawal, error_message):
         """Отправка оповещения администратору об ошибке"""
@@ -240,116 +273,92 @@ class WithdrawalValidator:
     @staticmethod
     def validate_withdrawal_request(user, amount, payment_details, payment_method):
         """
-        Проверка заявки на вывод перед созданием
+        Проверка заявки на вывод перед созданием.
+
+        Раньше этот метод падал с `NameError: name 'self' is not defined`
+        (обращение к self внутри @staticmethod) и с `NameError: models`
+        (отсутствовал импорт) — и при этом не вызывался из вью вообще,
+        поэтому лимиты верификации не действовали.
 
         Returns:
             tuple: (is_valid, error_message)
         """
-        from main.models import WithdrawalRequest, UserVerification
-        
-        # 1. Проверка минимальной суммы
+        from main.models import WithdrawalRequest
+        from main.payments.verification import KYCService
+
+        amount = Decimal(amount)
+
         if amount < settings.MIN_WITHDRAWAL_AMOUNT:
-            return False, f"Минимальная сумма вывода — {settings.MIN_WITHDRAWAL_AMOUNT} ₽"
-        
-        # 2. Проверка максимальной суммы
+            return False, f'Минимальная сумма вывода — {settings.MIN_WITHDRAWAL_AMOUNT} ₽'
+
         if amount > settings.MAX_WITHDRAWAL_AMOUNT:
-            return False, f"Максимальная сумма вывода — {settings.MAX_WITHDRAWAL_AMOUNT} ₽"
-        
-        # 3. Проверка баланса
+            return False, f'Максимальная сумма вывода — {settings.MAX_WITHDRAWAL_AMOUNT} ₽'
+
         if user.balance.amount < amount:
-            return False, "Недостаточно средств на балансе"
-        
-        # 4. Проверка лимитов по верификации
-        try:
-            verification = user.verification
-            level = verification.level
-        except UserVerification.DoesNotExist:
-            level = 'unverified'
-        
-        limits = self._get_limits_by_level(level)
-        
-        if amount > limits['single_withdrawal']:
-            return False, f"Максимальная сумма одной выплаты для вашего уровня верификации — {limits['single_withdrawal']} ₽. Повысьте уровень верификации."
-        
-        # 5. Проверка дневного лимита
+            return False, 'Недостаточно средств на балансе'
+
+        # Лимиты по уровню верификации — единая реализация в KYCService
+        allowed, error = KYCService.check_withdrawal_limit(user, amount)
+        if not allowed:
+            return False, error
+
         today = timezone.now().date()
-        daily_total = WithdrawalRequest.objects.filter(
-            user=user,
-            created_at__date=today,
-            status__in=['pending', 'processing', 'completed']
-        ).aggregate(total=models.Sum('amount'))['total'] or 0
-        
-        if daily_total + amount > limits['daily_withdrawal']:
-            return False, f"Дневной лимит вывода для вашего уровня верификации — {limits['daily_withdrawal']} ₽"
-        
-        # 6. Проверка количества заявок в день
         today_requests = WithdrawalRequest.objects.filter(
             user=user,
             created_at__date=today,
-            status__in=['pending', 'processing']
+            status__in=WithdrawalRequest.HOLDING_STATUSES,
         ).count()
-        
+
         if today_requests >= 3:
-            return False, "Вы можете создать не более 3 активных заявок в день"
-        
-        # 7. Проверка реквизитов
+            return False, 'Вы можете создать не более 3 активных заявок в день'
+
         validation = WithdrawalValidator._validate_payment_details(payment_details, payment_method)
         if not validation['is_valid']:
             return False, validation['error']
-        
+
         return True, None
-    
-    @staticmethod
-    def _get_limits_by_level(level):
-        """Лимиты в зависимости от уровня верификации"""
-        limits = {
-            'unverified': {
-                'daily_withdrawal': 1000,
-                'monthly_withdrawal': 5000,
-                'single_withdrawal': 500,
-                'daily_payment': 10000,
-            },
-            'basic': {
-                'daily_withdrawal': 10000,
-                'monthly_withdrawal': 50000,
-                'single_withdrawal': 5000,
-                'daily_payment': 50000,
-            },
-            'full': {
-                'daily_withdrawal': 100000,
-                'monthly_withdrawal': None,
-                'single_withdrawal': 50000,
-                'daily_payment': 500000,
-            },
-        }
-        return limits.get(level, limits['unverified'])
-    
+
+
     @staticmethod
     def _validate_payment_details(details, method):
         """Проверка реквизитов для вывода"""
         if method == 'card':
-            card_number = details.get('card_number', '').replace(' ', '')
-            if len(card_number) not in [16, 18]:
+            card_number = ''.join(ch for ch in str(details.get('card_number') or '') if ch.isdigit())
+            if len(card_number) not in (16, 18):
                 return {'is_valid': False, 'error': 'Неверный номер карты'}
-            
-            card_holder = details.get('card_holder', '').upper()
+            if not luhn_valid(card_number):
+                # Контрольная сумма отсекает опечатки до обращения
+                # к платёжной системе
+                return {'is_valid': False, 'error': 'Номер карты указан с ошибкой'}
+
+            card_holder = str(details.get('card_holder') or '').strip()
             if len(card_holder) < 3:
                 return {'is_valid': False, 'error': 'Укажите имя держателя карты'}
-            
-            expiry = details.get('expiry_date', '')
+
+            expiry = str(details.get('expiry_date') or '').strip()
             if len(expiry) != 5 or expiry[2] != '/':
                 return {'is_valid': False, 'error': 'Неверный формат срока действия (MM/YY)'}
-        
+            month, year = expiry[:2], expiry[3:]
+            if not (month.isdigit() and year.isdigit() and 1 <= int(month) <= 12):
+                return {'is_valid': False, 'error': 'Неверный срок действия карты'}
+            # Карта не должна быть просрочена
+            now = timezone.now()
+            if (2000 + int(year), int(month)) < (now.year, now.month):
+                return {'is_valid': False, 'error': 'Срок действия карты истёк'}
+
         elif method == 'sbp':
-            phone = details.get('phone_number', '').replace('+', '').replace('-', '').replace(' ', '')
-            if len(phone) < 10:
+            phone = ''.join(ch for ch in str(details.get('phone_number') or '') if ch.isdigit())
+            if len(phone) not in (10, 11):
                 return {'is_valid': False, 'error': 'Неверный номер телефона'}
-        
+
         elif method == 'yoomoney':
-            wallet = details.get('wallet_number', '')
-            if not wallet.startswith('41001') or len(wallet) < 14:
+            wallet = str(details.get('wallet_number') or '').strip()
+            if not wallet.isdigit() or not wallet.startswith('41001') or len(wallet) < 14:
                 return {'is_valid': False, 'error': 'Неверный номер кошелька ЮMoney'}
-        
+
+        else:
+            return {'is_valid': False, 'error': 'Неподдерживаемый способ вывода'}
+
         return {'is_valid': True, 'error': None}
 
 

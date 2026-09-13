@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+
+{% block title %}Ограничения | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1 style="color: #d4737a; margin-bottom: 0.5rem;">
+        <i class="fas fa-lock"></i> Ограничения по учётной записи
+    </h1>
+
+    {% if active %}
+    <div style="background: #f8d7da; padding: 1.25rem; border-radius: 16px; margin: 1.5rem 0;">
+        <strong style="color: #721c24; font-size: 1.05rem;">{{ active.get_kind_display }}</strong>
+        <p style="color: #721c24; margin: 0.5rem 0 0;">
+            С {{ active.created_at|date:"d.m.Y H:i" }}. Основание: {{ active.get_ground_display }}.
+        </p>
+        <p style="color: #721c24; margin: 0.5rem 0 0;"><strong>Причина:</strong> {{ active.reason }}</p>
+        <p style="color: #721c24; margin: 0.75rem 0 0; font-size: 0.95rem;">
+            Ограничение не влечёт утрату права на средства: остаток Баланса остаётся
+            за вами (п. 9.4 Пользовательского соглашения).
+        </p>
+    </div>
+
+    {% if active.decision %}
+    <div style="background: #fdf4f0; padding: 1.25rem; border-radius: 16px; margin-bottom: 1.5rem;">
+        <strong style="color: #d4737a;">Решение по вашим объяснениям: {{ active.get_decision_display }}</strong>
+        <p style="color: #6b5a5a; margin: 0.5rem 0 0;">{{ active.decision_comment }}</p>
+    </div>
+    {% elif active.appeal_submitted_at %}
+    <div style="background: #fff3cd; padding: 1.25rem; border-radius: 16px; margin-bottom: 1.5rem;">
+        <strong style="color: #856404;">Объяснения приняты {{ active.appeal_submitted_at|date:"d.m.Y H:i" }}</strong>
+        <p style="color: #856404; margin: 0.5rem 0 0;">
+            Срок рассмотрения — до {{ active.appeal_deadline|date:"d.m.Y" }}
+            (5 рабочих дней, п. 9.3 Соглашения).
+        </p>
+        <p style="color: #6b5a5a; margin: 0.75rem 0 0; white-space: pre-line;">{{ active.appeal_text }}</p>
+    </div>
+    {% else %}
+    <h3 style="color: #d4737a; margin-bottom: 0.75rem;">Представить объяснения</h3>
+    <p style="color: #6b5a5a; margin-bottom: 1rem;">
+        Опишите обстоятельства и приложите пояснения. Оператор рассмотрит их
+        в течение 5 рабочих дней и сообщит мотивированное решение.
+    </p>
+    <form method="post">
+        {% csrf_token %}
+        <textarea name="appeal" class="form-control" rows="6" maxlength="5000" required
+                  placeholder="Ваши объяснения"></textarea>
+        <button type="submit" class="btn btn-primary" style="margin-top: 1rem;">
+            <i class="fas fa-paper-plane"></i> Отправить объяснения
+        </button>
+    </form>
+    {% endif %}
+
+    {% else %}
+    <p style="color: #6b5a5a;">Действующих ограничений по вашей учётной записи нет.</p>
+    {% endif %}
+
+    {% if restrictions %}
+    <hr style="border: none; border-top: 1px solid #f0e0e0; margin: 2rem 0;">
+    <h3 style="color: #d4737a; margin-bottom: 1rem;">История</h3>
+    <ul style="list-style: none; padding: 0;">
+        {% for item in restrictions %}
+        <li style="background: #fdf4f0; border-radius: 12px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; color: #6b5a5a;">
+            {{ item.created_at|date:"d.m.Y" }} — {{ item.get_kind_display }},
+            {{ item.get_ground_display }}.
+            {% if item.lifted_at %}Снято {{ item.lifted_at|date:"d.m.Y" }}.{% else %}Действует.{% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</div>
+{% endblock %}

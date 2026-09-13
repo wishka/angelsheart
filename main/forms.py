@@ -1,15 +1,27 @@
+from decimal import Decimal
+
 from django import forms
+from django.conf import settings
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.models import User
-from .models import Transaction, Fundraise, Donation, WithdrawalRequest
+
+from .models import Donation, Fundraise, Transaction, WithdrawalRequest
 
 
 class RegisterForm(UserCreationForm):
     email = forms.EmailField(required=True)
-    
+
     class Meta:
         model = User
         fields = ['username', 'email', 'password1', 'password2']
+
+    def clean_email(self):
+        # Email нужен для восстановления доступа и уведомлений о выплатах,
+        # поэтому дубликаты недопустимы. Django по умолчанию их разрешает.
+        email = self.cleaned_data['email']
+        if User.objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError('Пользователь с таким email уже зарегистрирован')
+        return email
 
 
 class TransferForm(forms.ModelForm):
@@ -59,19 +71,17 @@ class DonationForm(forms.ModelForm):
         }
     
     def clean_amount(self):
+        # Границы берутся из настроек, а не зашиты числами в трёх местах
         amount = self.cleaned_data['amount']
-        if amount <= 0:
-            raise forms.ValidationError('Сумма должна быть больше 0')
-        if amount < 1:
-            raise forms.ValidationError('Минимальная сумма пожертвования - 1 ₽')
-        if amount > 1000000:
-            raise forms.ValidationError('Максимальная сумма пожертвования 1 000 000 ₽')
+        if amount < settings.MIN_DONATION_AMOUNT:
+            raise forms.ValidationError(
+                f'Минимальная сумма пожертвования — {settings.MIN_DONATION_AMOUNT} ₽'
+            )
+        if amount > settings.MAX_DONATION_AMOUNT:
+            raise forms.ValidationError(
+                f'Максимальная сумма пожертвования — {settings.MAX_DONATION_AMOUNT} ₽'
+            )
         return amount
-    
-    def clean(self):
-        cleaned_data = super().clean()
-        # Эта проверка будет дополнена в view, так как там есть request.user
-        return cleaned_data
 
 
 class WithdrawalForm(forms.Form):
@@ -80,8 +90,9 @@ class WithdrawalForm(forms.Form):
         widget=forms.Select(attrs={'class': 'form-control'})
     )
     amount = forms.DecimalField(
-        min_value=500,
-        max_value=100000,
+        min_value=settings.MIN_WITHDRAWAL_AMOUNT,
+        max_value=settings.MAX_WITHDRAWAL_AMOUNT,
+        decimal_places=2,
         widget=forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'Сумма вывода'})
     )
     
@@ -111,14 +122,9 @@ class WithdrawalForm(forms.Form):
         widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': '41001XXXXXXXXXX'})
     )
     
-    def clean_amount(self):
-        amount = self.cleaned_data['amount']
-        if amount < 500:
-            raise forms.ValidationError('Минимальная сумма вывода - 500 ₽')
-        if amount > 100000:
-            raise forms.ValidationError('Максимальная сумма вывода - 100 000 ₽')
-        return amount
-    
+    # clean_amount удалён: границы уже заданы min_value/max_value поля
+    # и брались из настроек, а дублирующая проверка повторяла числа руками
+
     def clean(self):
         cleaned_data = super().clean()
         payment_method = cleaned_data.get('payment_method')

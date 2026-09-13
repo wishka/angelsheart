@@ -5,11 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Ангел-Хранитель{% endblock %} | Добрые дела</title>
 
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    {% load static %}
+    {% comment %}
+        Шрифты и иконки: локально или с внешних CDN.
 
-    <!-- Font Awesome -->
+        Загрузка с fonts.googleapis.com и cdnjs.cloudflare.com означает, что
+        на каждом показе любой страницы IP-адрес и User-Agent посетителя
+        уходят в США — это трансграничная передача персональных данных
+        (ст. 12 152-ФЗ), требующая отдельного уведомления Роскомнадзора.
+        Перед выводом в прод: python manage.py vendor_static
+    {% endcomment %}
+    {% if use_external_cdn %}
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    {% else %}
+    <link rel="stylesheet" href="{% static 'vendor/fonts/fonts.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/fontawesome/css/all.min.css' %}">
+    {% endif %}
 
     {% block extra_css %}{% endblock %}
 </head>
@@ -41,6 +53,13 @@
                     <span>{{ user.balance.amount|floatformat:2 }} ₽</span>
                 </div>
 
+                {% if user.is_staff or user.is_superuser %}
+                    <div class="payment-mode-indicator {% if USE_REAL_PAYMENTS %}mode-real{% else %}mode-test{% endif %}">
+                        <i class="fas {% if USE_REAL_PAYMENTS %}fa-check-circle{% else %}fa-flask{% endif %}"></i>
+                        <span>{% if USE_REAL_PAYMENTS %}LIVE{% else %}TEST{% endif %}</span>
+                    </div>
+                {% endif %}
+
                 <!-- Дропдаун профиля -->
                 <div class="dropdown">
                     <button class="dropdown-btn">
@@ -60,6 +79,13 @@
                         <a href="{% url 'main:setup_2fa' %}"><i class="fas fa-shield-alt"></i> Двухфакторная 2FA</a>
                         <a href="{% url 'main:verification' %}"><i class="fas fa-id-card"></i> Верификация (KYC)</a>
                         <a href="{% url 'main:my_consents' %}"><i class="fas fa-file-signature"></i> Мои согласия</a>
+                        <a href="{% url 'main:my_restrictions' %}"><i class="fas fa-lock"></i> Ограничения</a>
+                        {% if user.is_staff %}
+                        <div class="dropdown-divider"></div>
+                        <a href="{% url 'main:moderation_queue' %}"><i class="fas fa-shield-alt"></i> Модерация сборов</a>
+                        <a href="{% url 'main:restriction_queue' %}"><i class="fas fa-user-lock"></i> Ограничения: очередь</a>
+                        <a href="{% url 'main:breach_procedure' %}"><i class="fas fa-triangle-exclamation"></i> Инциденты: регламент</a>
+                        {% endif %}
                         <div class="dropdown-divider"></div>
                         <a href="{% url 'main:logout' %}" style="color: #c96b72;"><i class="fas fa-sign-out-alt"></i> Выход</a>
                     </div>
@@ -102,10 +128,22 @@
 
     <!-- Подвал -->
     <footer>
-        <div style="margin-bottom: 1rem;">
-            <a href="/privacy-policy/" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Политика конфиденциальности</a>
-            <a href="/user-agreement/" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Пользовательское соглашение</a>
-            <a href="/cookie-policy/" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Политика Cookies</a>
+        {% comment %}
+            Ссылки строятся тегом url, а не хардкодом: раньше здесь были
+            строки вида "/privacy-policy/", и при смене маршрута они молча
+            вели бы на 404.
+        {% endcomment %}
+        <div style="margin-bottom: 0.75rem;">
+            <a href="{% url 'main:user_agreement' %}" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Пользовательское соглашение</a>
+            <a href="{% url 'main:privacy_policy' %}" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Обработка персональных данных</a>
+            <a href="{% url 'main:cookie_policy' %}" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Cookies</a>
+            <a href="{% url 'main:legal_details' %}" style="color: #b89a9a; text-decoration: none; margin: 0 10px;">Реквизиты</a>
+        </div>
+        {# ч. 2 ст. 10 149-ФЗ: сведения о владельце сайта должны быть доступны #}
+        <div style="margin-bottom: 1rem; color: #b89a9a; font-size: 0.85rem;">
+            {{ operator.form }} {{ operator.name }} · ИНН {{ operator.inn }} ·
+            <a href="mailto:{{ operator.support_email }}" style="color: #b89a9a;">{{ operator.support_email }}</a>
+            · 18+
         </div>
         <i class="fas fa-heart" style="color: #d4737a;"></i> С любовью и добротой | Помогая другим, мы помогаем себе <i class="fas fa-heart" style="color: #d4737a;"></i>
     </footer>
@@ -117,27 +155,27 @@
                 <i class="fas fa-cookie-bite"></i>
                 <h2>Мы используем cookies</h2>
             </div>
+            {% comment %}
+                Текст приведён в соответствие с фактом. Раньше баннер обещал
+                «анализ трафика и персонализацию контента» и предлагал
+                отключить аналитические cookies, которых в проекте нет:
+                согласие на несуществующую обработку — это недостоверная
+                информация об услуге.
+            {% endcomment %}
             <div class="cookie-modal-body">
-                <p>Мы используем файлы cookie для улучшения работы сайта, анализа трафика и персонализации контента. Продолжая использовать наш сайт, вы соглашаетесь с нашей <a href="/privacy-policy/">Политикой конфиденциальности</a> и <a href="/cookie-policy/">Политикой использования cookies</a>.</p>
-                <div class="cookie-options" style="display: none;">
-                    <label>
-                        <input type="checkbox" id="necessaryCookies" checked disabled>
-                        <span>Необходимые (всегда активны)</span>
-                    </label>
-                    <label>
-                        <input type="checkbox" id="functionalCookies">
-                        <span>Функциональные</span>
-                    </label>
-                    <label>
-                        <input type="checkbox" id="analyticsCookies">
-                        <span>Аналитические</span>
-                    </label>
-                </div>
+                <p>
+                    Сайт использует только строго необходимые файлы cookie: они
+                    держат вас в аккаунте и защищают формы от подделки. Без них
+                    вход невозможен. Аналитических и рекламных cookie нет, данные
+                    о вашем поведении третьим лицам не передаются.
+                </p>
+                <p style="font-size: 0.9rem;">
+                    Подробности — в <a href="{% url 'main:cookie_policy' %}">Политике использования cookies</a>
+                    и <a href="{% url 'main:privacy_policy' %}">Политике обработки персональных данных</a>.
+                </p>
             </div>
             <div class="cookie-modal-footer">
-                <button class="btn btn-secondary" id="cookieSettings">Настройки</button>
-                <button class="btn btn-primary" id="acceptAllCookies">Принять все</button>
-                <button class="btn btn-secondary" id="acceptNecessaryOnly">Только необходимое</button>
+                <button class="btn btn-primary" id="acceptAllCookies">Понятно</button>
             </div>
         </div>
     </div>
@@ -863,9 +901,11 @@
             }
 
             function acceptCookies(types) {
+                // Ставится только cookie_consent. Раньше здесь заводились
+                // ещё functional_cookies и analytics_cookies — куки с именем
+                // «analytics» рядом с политикой, где написано «аналитики нет»,
+                // и оба файла отсутствовали в перечне политики.
                 setCookie('cookie_consent', 'true', 365);
-                setCookie('functional_cookies', types.functional ? 'true' : 'false', 365);
-                setCookie('analytics_cookies', types.analytics ? 'true' : 'false', 365);
                 const modal = document.getElementById('cookieModal');
                 if (modal) modal.style.display = 'none';
             }
@@ -879,27 +919,13 @@
                 }, 500);
             }
 
+            // Выбирать нечего: используются только строго необходимые cookie,
+            // без которых сайт не работает. Кнопки «Настройки» и «Только
+            // необходимое» убраны вместе с несуществующими категориями.
             const acceptAllBtn = document.getElementById('acceptAllCookies');
             if (acceptAllBtn) {
                 acceptAllBtn.addEventListener('click', function() {
-                    acceptCookies({ functional: true, analytics: true });
-                });
-            }
-
-            const acceptNecessaryBtn = document.getElementById('acceptNecessaryOnly');
-            if (acceptNecessaryBtn) {
-                acceptNecessaryBtn.addEventListener('click', function() {
-                    acceptCookies({ functional: false, analytics: false });
-                });
-            }
-
-            const settingsBtn = document.getElementById('cookieSettings');
-            if (settingsBtn) {
-                settingsBtn.addEventListener('click', function() {
-                    const options = document.querySelector('.cookie-options');
-                    if (options) {
-                        options.style.display = options.style.display === 'none' || options.style.display === '' ? 'flex' : 'none';
-                    }
+                    acceptCookies({ necessary: true });
                 });
             }
         });

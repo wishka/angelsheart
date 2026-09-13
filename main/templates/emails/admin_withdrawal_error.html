@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="ru">
+<body style="font-family: Arial, sans-serif; color: #3d3333;">
+  <p>Ошибка при выплате по заявке <strong>#{{ withdrawal.id }}</strong>.</p>
+  <ul>
+    <li>Пользователь: {{ withdrawal.user.username }}</li>
+    <li>Сумма: {{ withdrawal.amount }} ₽</li>
+    <li>Способ: {{ withdrawal.get_payment_method_display }}</li>
+    <li>Реквизиты: {{ withdrawal.payment_details_masked }}</li>
+  </ul>
+  <p>Текст ошибки: {{ error }}</p>
+  <p>Средства возвращены пользователю автоматически.</p>
+  <p><a href="{{ admin_url }}">Открыть заявку в админ-панели</a></p>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{% load custom_filters %}<!doctype html>
+<html lang="ru">
+<body style="font-family: Arial, sans-serif; color: #3d3333; line-height: 1.6;">
+  <p>Здравствуйте, {{ user.username }}!</p>
+  <p>
+    Заявка на вывод <strong>#{{ withdrawal.id }}</strong> на сумму
+    <strong>{{ withdrawal.amount|floatformat:2 }} ₽</strong> выполнена.
+  </p>
+  {% if withdrawal.transaction_id %}
+  <p>Идентификатор операции в платёжной системе: {{ withdrawal.transaction_id }}</p>
+  {% endif %}
+  <p>Средства отправлены на указанные вами реквизиты. Зачисление занимает до трёх рабочих дней.</p>
+  <p><a href="{{ site_url }}/my-withdrawals/">История заявок</a></p>
+  <p style="color: #9a8a8a; font-size: 12px;">Это письмо отправлено автоматически, отвечать на него не нужно.</p>
+</body>
+</html>

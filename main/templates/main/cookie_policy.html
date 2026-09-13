@@ -1,93 +1,122 @@
 {% extends 'base.html' %}
 
-{% block title %}Политика использования Cookies | Ангел-Хранитель{% endblock %}
+{% block title %}Политика использования cookies | Ангел-Хранитель{% endblock %}
 
 {% block content %}
 <div class="card">
-    <h1 style="color: #d4737a; margin-bottom: 2rem;">
-        <i class="fas fa-cookie-bite"></i> Политика использования Cookies
+    <h1 style="color: #d4737a; margin-bottom: 0.5rem;">
+        <i class="fas fa-cookie-bite"></i> Политика использования cookies
     </h1>
-    
+    <p style="color: #9a8a8a; margin-bottom: 2rem;">
+        Редакция {{ consent_version }} от {{ consent_updated }}
+    </p>
+
+    {% include 'main/_unfilled_warning.html' %}
+
     <div style="line-height: 1.8; color: #6b5a5a;">
-        <h2>1. Что такое cookies?</h2>
-        <p>Cookies (файлы cookie) — это небольшие текстовые файлы, которые сохраняются на вашем устройстве при посещении веб-сайтов. Они широко используются для обеспечения функционирования сайтов, повышения эффективности и предоставления информации владельцам сайтов.</p>
-        
-        <h2>2. Какие cookies мы используем</h2>
-        
-        <h3>2.1. Необходимые cookies</h3>
-        <p>Эти cookies необходимы для работы сайта и не могут быть отключены. Они используются для:</p>
+
+        <h2>1. Что такое cookies</h2>
+        <p>
+            Cookies — небольшие текстовые файлы, которые сайт сохраняет в вашем
+            браузере. Они позволяют узнать браузер при следующем запросе — например,
+            чтобы не просить вводить пароль на каждой странице.
+        </p>
+
+        <h2>2. Какие cookies использует Сервис</h2>
+        <p>
+            Ниже перечислены <strong>все</strong> файлы, которые устанавливает Сервис.
+            Рекламных и трекинговых cookies среди них нет.
+        </p>
+        {% if use_external_cdn %}
+        <p style="background: #fff4f4; border-radius: 12px; padding: 1rem;">
+            <strong style="color: #d4737a;">Внешние ресурсы.</strong>
+            Страницы сайта загружают шрифты и значки с серверов Google (США) и
+            Cloudflare (США). Сами по себе cookies они не устанавливают, но при
+            каждой загрузке получают ваш IP-адрес и сведения о браузере.
+            Подробнее — в п. 4.3
+            <a href="{% url 'main:privacy_policy' %}">Политики обработки персональных данных</a>.
+        </p>
+        {% endif %}
+
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 1rem;">
+            <thead>
+                <tr style="text-align: left; border-bottom: 2px solid #f0e0e0;">
+                    <th style="padding: 0.5rem;">Файл</th>
+                    <th style="padding: 0.5rem;">Назначение</th>
+                    <th style="padding: 0.5rem;">Срок</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr style="border-bottom: 1px solid #f7eded;">
+                    <td style="padding: 0.5rem;"><code>sessionid</code></td>
+                    <td style="padding: 0.5rem;">Идентификатор сессии. Без него невозможен вход в учётную запись</td>
+                    <td style="padding: 0.5rem;">До закрытия браузера либо 30 дней при выборе «Запомнить меня»</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #f7eded;">
+                    <td style="padding: 0.5rem;"><code>csrftoken</code></td>
+                    <td style="padding: 0.5rem;">Защита от подделки межсайтовых запросов. Без него нельзя отправить ни одну форму</td>
+                    <td style="padding: 0.5rem;">1 год</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #f7eded;">
+                    <td style="padding: 0.5rem;"><code>cookie_consent</code></td>
+                    <td style="padding: 0.5rem;">Запоминает ваш выбор в баннере, чтобы не показывать его повторно</td>
+                    <td style="padding: 0.5rem;">1 год</td>
+                </tr>
+                <tr>
+                    <td style="padding: 0.5rem;"><code>messages</code></td>
+                    <td style="padding: 0.5rem;">Переносит уведомление («Перевод выполнен») на следующую страницу</td>
+                    <td style="padding: 0.5rem;">До показа уведомления</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>
+            2.1. Все перечисленные файлы относятся к <strong>строго необходимым</strong>: без них
+            Сервис не работает. Такие файлы устанавливаются на основании
+            п. 5 ч. 1 ст. 6 152-ФЗ (исполнение договора) и не требуют отдельного
+            согласия — но вы вправе запретить их в браузере, потеряв возможность
+            пользоваться Сервисом.
+        </p>
+        <p>
+            2.2. Файлы <code>sessionid</code> и <code>csrftoken</code> помечены
+            флагами <code>HttpOnly</code> и <code>SameSite=Lax</code>, а при работе
+            по HTTPS — ещё и <code>Secure</code>. Это означает, что они недоступны
+            сценариям на странице и не передаются при переходах со сторонних сайтов.
+        </p>
+
+        <h2>3. Аналитика</h2>
+        <p>
+            Сервис <strong>не использует</strong> системы веб-аналитики: ни Яндекс.Метрики,
+            ни Google Analytics, ни собственных счётчиков. Сведения о вашем поведении
+            на сайте никуда не передаются. Если аналитика будет подключена, она будет
+            включаться только после вашего явного согласия, а настоящая Политика
+            будет обновлена до её запуска.
+        </p>
+
+        <h2>4. Как управлять cookies</h2>
+        <p>
+            Настройки браузера позволяют просматривать, ограничивать и удалять cookies:
+        </p>
         <ul>
-            <li>Аутентификации пользователей</li>
-            <li>Поддержания сессии после входа в систему</li>
-            <li>Защиты от CSRF-атак</li>
-            <li>Запоминания настроек конфиденциальности</li>
+            <li>Chrome: Настройки → Конфиденциальность и безопасность → Файлы cookie;</li>
+            <li>Firefox: Настройки → Приватность и защита → Куки и данные сайтов;</li>
+            <li>Safari: Настройки → Конфиденциальность;</li>
+            <li>Edge: Настройки → Файлы cookie и разрешения сайтов.</li>
         </ul>
-        
-        <h3>2.2. Функциональные cookies</h3>
-        <p>Эти cookies позволяют запоминать ваши предпочтения:</p>
-        <ul>
-            <li>Запоминание пользователя (функция "Запомнить меня")</li>
-            <li>Настройки интерфейса</li>
-            <li>Предпочтения по отображению</li>
-        </ul>
-        
-        <h3>2.3. Аналитические cookies</h3>
-        <p>Эти cookies помогают нам понять, как посетители взаимодействуют с сайтом:</p>
-        <ul>
-            <li>Анализ трафика</li>
-            <li>Популярные страницы</li>
-            <li>Время на сайте</li>
-            <li>Источники переходов</li>
-        </ul>
-        
-        <h2>3. Срок хранения cookies</h2>
-        <ul>
-            <li><strong>Сессионные cookies:</strong> удаляются после закрытия браузера</li>
-            <li><strong>Постоянные cookies:</strong> хранятся до 30 дней (или дольше с вашего согласия)</li>
-        </ul>
-        
-        <h2>4. Управление cookies</h2>
-        <p>Вы можете управлять cookies через настройки вашего браузера:</p>
-        <ul>
-            <li><strong>Google Chrome:</strong> Настройки → Конфиденциальность и безопасность → Cookies</li>
-            <li><strong>Mozilla Firefox:</strong> Настройки → Приватность и защита → Cookies</li>
-            <li><strong>Safari:</strong> Настройки → Конфиденциальность → Cookies</li>
-            <li><strong>Microsoft Edge:</strong> Настройки → Конфиденциальность → Cookies</li>
-        </ul>
-        
-        <h2>5. Отключение cookies</h2>
-        <p>Вы можете отключить cookies в настройках браузера, но это может привести к некорректной работе сайта. В частности, без необходимых cookies вы не сможете:</p>
-        <ul>
-            <li>Войти в свой аккаунт</li>
-            <li>Совершать переводы</li>
-            <li>Сохранять настройки</li>
-        </ul>
-        
-        <h2>6. Изменение согласия</h2>
-        <p>Вы можете изменить свое согласие на использование cookies в любое время, нажав на кнопку "Настройки cookies" в нижней части страницы.</p>
-        
-        <h2>7. Контактная информация</h2>
-        <p>По вопросам, связанным с использованием cookies, вы можете связаться с нами по email: privacy@angel-helper.ru</p>
-        
-        <div style="margin-top: 2rem; padding: 1rem; background: #fdf4f0; border-radius: 16px; text-align: center;">
-            <i class="fas fa-info-circle" style="color: #d4737a;"></i>
-            <p style="margin-top: 0.5rem; font-size: 0.9rem;">Продолжая использовать наш сайт, вы соглашаетесь с нашей политикой использования cookies.</p>
-            <button onclick="document.getElementById('cookieModal').style.display='block'" class="btn btn-secondary" style="margin-top: 0.5rem;">
-                <i class="fas fa-cog"></i> Настроить cookies
-            </button>
-        </div>
-        
-        <p style="margin-top: 2rem; font-size: 0.9rem;">Дата последнего обновления: {% now "d.m.Y" %}</p>
+        <p>
+            4.1. Удаление cookies приведёт к выходу из учётной записи. Отключение
+            cookies полностью сделает вход невозможным.
+        </p>
+
+        <h2>5. Контакты</h2>
+        <p>
+            Вопросы по использованию cookies: <strong>{{ operator.email }}</strong><br>
+            Оператор: {{ operator.form }} {{ operator.name }}, ИНН {{ operator.inn }}
+        </p>
+
+        <p style="margin-top: 2rem; color: #9a8a8a; font-size: 0.9rem;">
+            Редакция {{ consent_version }}. Дата последнего обновления: {{ consent_updated }}.
+        </p>
     </div>
 </div>
-
-<script>
-// Функция для показа модального окна cookies
-function showCookieModal() {
-    const modal = document.getElementById('cookieModal');
-    if (modal) {
-        modal.style.display = 'block';
-    }
-}
-</script>
 {% endblock %}

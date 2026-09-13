@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ru">
+<body style="font-family: Arial, sans-serif; color: #3d3333; line-height: 1.6;">
+  <p>Здравствуйте, {{ user.username }}!</p>
+  <p>Ваши объяснения по ограничению от {{ restriction.created_at|date:"d.m.Y" }} рассмотрены.</p>
+  <p><strong>Решение:</strong> {{ restriction.get_decision_display }}</p>
+  <p><strong>Мотивировка:</strong> {{ restriction.decision_comment }}</p>
+  {% if restriction.lifted_at %}
+  <p>Ограничение снято, операции по учётной записи доступны.</p>
+  {% else %}
+  <p>
+    Ограничение сохраняется. Остаток Баланса остаётся за вами и возвращается
+    на указанные вами реквизиты после снятия оснований (п. 9.4 Соглашения).
+  </p>
+  {% endif %}
+  <p>Вопросы: {{ operator.support_email }}</p>
+  <p style="color: #9a8a8a; font-size: 12px;">Это письмо отправлено автоматически, отвечать на него не нужно.</p>
+</body>
+</html>

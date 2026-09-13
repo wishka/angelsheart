@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+
+{% block title %}Ограничения: очередь | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1 style="color: #d4737a; margin-bottom: 1.5rem;">
+        <i class="fas fa-user-lock"></i> Ограничения по учётным записям
+    </h1>
+
+    {% if unnotified %}
+    <div style="background: #f8d7da; padding: 1rem 1.25rem; border-radius: 16px; margin-bottom: 1.5rem;">
+        <strong style="color: #721c24;">Пользователь не уведомлён</strong>
+        <p style="color: #721c24; margin: 0.5rem 0 0; font-size: 0.95rem;">
+            П. 9.2 Соглашения даёт на уведомление 1 рабочий день.
+        </p>
+        <ul style="color: #721c24; margin: 0.5rem 0 0; padding-left: 1.25rem;">
+            {% for item in unnotified %}
+            <li>
+                {{ item.user.username }} — срок до {{ item.notify_deadline|date:"d.m.Y H:i" }}
+                {% if item.notification_overdue %}<strong>(просрочено)</strong>{% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <h3 style="color: #d4737a; margin-bottom: 1rem;">Возражения на рассмотрении</h3>
+    {% if pending_appeals %}
+    {% for item in pending_appeals %}
+    <div style="background: #fdf4f0; border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem;">
+        <strong style="color: #d4737a;">{{ item.user.username }}</strong>
+        <span style="color: #b89a9a; font-size: 0.9rem;">
+            — {{ item.get_kind_display }}, {{ item.get_ground_display }}
+        </span>
+        <p style="color: #6b5a5a; margin: 0.5rem 0 0;"><strong>Причина ограничения:</strong> {{ item.reason }}</p>
+        <p style="color: #6b5a5a; margin: 0.5rem 0 0;">
+            <strong>Объяснения пользователя</strong>
+            ({{ item.appeal_submitted_at|date:"d.m.Y H:i" }}):
+        </p>
+        <div style="background: white; border-radius: 12px; padding: 0.75rem 1rem; margin-top: 0.5rem; color: #4a3f3f; white-space: pre-line;">{{ item.appeal_text }}</div>
+        <p style="color: {% if item.appeal_overdue %}#dc3545{% else %}#b89a9a{% endif %}; margin: 0.5rem 0 0; font-size: 0.9rem;">
+            Срок решения: {{ item.appeal_deadline|date:"d.m.Y" }}
+            {% if item.appeal_overdue %}— просрочено{% endif %}
+        </p>
+
+        <form method="post" action="{% url 'main:resolve_restriction' item.pk %}" style="margin-top: 1rem;">
+            {% csrf_token %}
+            <textarea name="comment" class="form-control" rows="3" maxlength="2000" required
+                      placeholder="Мотивировка решения — её получит пользователь"></textarea>
+            <div style="display: flex; gap: 1rem; margin-top: 0.75rem; flex-wrap: wrap;">
+                <button type="submit" name="decision" value="lifted" class="btn btn-primary">
+                    <i class="fas fa-unlock"></i> Снять ограничение
+                </button>
+                <button type="submit" name="decision" value="upheld" class="btn btn-secondary">
+                    <i class="fas fa-lock"></i> Оставить в силе
+                </button>
+            </div>
+        </form>
+    </div>
+    {% endfor %}
+    {% else %}
+    <p style="color: #6b5a5a;">Возражений на рассмотрении нет.</p>
+    {% endif %}
+
+    <hr style="border: none; border-top: 1px solid #f0e0e0; margin: 2rem 0;">
+
+    <h3 style="color: #d4737a; margin-bottom: 1rem;">Действующие ограничения</h3>
+    {% if active %}
+    <ul style="list-style: none; padding: 0;">
+        {% for item in active %}
+        <li style="background: #fdf4f0; border-radius: 12px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; color: #6b5a5a;">
+            {{ item.created_at|date:"d.m.Y" }} — <strong>{{ item.user.username }}</strong>,
+            {{ item.get_kind_display }}, {{ item.get_ground_display }}.
+            {% if item.notified_at %}Уведомлён {{ item.notified_at|date:"d.m.Y" }}.
+            {% else %}<span style="color: #dc3545;">Не уведомлён.</span>{% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p style="color: #6b5a5a;">Действующих ограничений нет.</p>
+    {% endif %}
+
+    <p style="color: #b89a9a; margin-top: 1.5rem; font-size: 0.9rem;">
+        Ограничение применяется в админ-панели: «Ограничения по учётным записям» →
+        «Добавить». Причина попадает в письмо пользователю дословно.
+    </p>
+</div>
+{% endblock %}

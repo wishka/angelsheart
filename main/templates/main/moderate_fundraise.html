@@ -1,0 +1,107 @@
+{% extends 'base.html' %}
+
+{% block title %}Проверка сбора | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card">
+    <a href="{% url 'main:moderation_queue' %}" style="color: #b89a9a;">← К очереди</a>
+
+    <h1 style="color: #d4737a; margin: 1rem 0 0.5rem;">{{ fundraise.title }}</h1>
+    <p style="color: #6b5a5a;">
+        {{ fundraise.get_category_display }} ·
+        цель {{ fundraise.target_amount|floatformat:0 }} ₽ ·
+        собрано {{ fundraise.current_amount|floatformat:0 }} ₽ ·
+        статус проверки: {{ fundraise.get_moderation_status_display }}
+    </p>
+
+    {% if flags %}
+    <div style="background: #fff3cd; padding: 1rem 1.25rem; border-radius: 16px; margin: 1.5rem 0;">
+        <strong style="color: #856404;">Обратите внимание</strong>
+        <ul style="color: #856404; margin: 0.5rem 0 0; padding-left: 1.25rem;">
+            {% for flag in flags %}<li>{{ flag }}</li>{% endfor %}
+        </ul>
+        <p style="color: #856404; margin: 0.75rem 0 0; font-size: 0.9rem;">
+            Это подсказки автоматической проверки, а не основание для отказа.
+            Решение принимаете вы.
+        </p>
+    </div>
+    {% endif %}
+
+    {% if problems %}
+    <div style="background: #f8d7da; padding: 1rem 1.25rem; border-radius: 16px; margin: 1.5rem 0;">
+        <strong style="color: #721c24;">Условия допуска не выполнены — одобрить нельзя</strong>
+        <ul style="color: #721c24; margin: 0.5rem 0 0; padding-left: 1.25rem;">
+            {% for problem in problems %}<li>{{ problem }}</li>{% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <h3 style="color: #d4737a; margin: 2rem 0 0.75rem;">Описание</h3>
+    <div style="background: #fdf4f0; border-radius: 16px; padding: 1.25rem; color: #4a3f3f; white-space: pre-line;">{{ fundraise.description }}</div>
+
+    <h3 style="color: #d4737a; margin: 2rem 0 0.75rem;">Автор</h3>
+    <ul style="list-style: none; padding: 0; color: #6b5a5a;">
+        <li><strong>Логин:</strong> {{ fundraise.author.username }}</li>
+        <li><strong>Регистрация:</strong> {{ fundraise.author.date_joined|date:"d.m.Y" }}</li>
+        <li><strong>Верификация:</strong> {{ author_level_name }} (требуется: {{ required_level_name }})</li>
+    </ul>
+
+    {% if author_fundraises %}
+    <p style="color: #6b5a5a;"><strong>Другие сборы автора:</strong></p>
+    <ul style="color: #6b5a5a;">
+        {% for other in author_fundraises %}
+        <li>
+            <a href="{% url 'main:moderate_fundraise' other.pk %}" style="color: #d4737a;">{{ other.title }}</a>
+            — {{ other.get_status_display }} / {{ other.get_moderation_status_display }},
+            {{ other.current_amount|floatformat:0 }} ₽
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    <h3 style="color: #d4737a; margin: 2rem 0 0.75rem;">Документы</h3>
+    {% if documents %}
+    <p style="color: #856404; background: #fff3cd; padding: 0.75rem 1rem; border-radius: 12px;">
+        Открытие документа записывается в журнал доступа к персональным данным.
+        Эти файлы могут содержать сведения о здоровье.
+    </p>
+    <ul style="list-style: none; padding: 0;">
+        {% for document in documents %}
+        <li style="background: #fdf4f0; border-radius: 12px; padding: 0.75rem 1rem; margin-bottom: 0.5rem;">
+            <a href="{% url 'main:fundraise_document' document.pk %}" style="color: #d4737a; font-weight: 600;">
+                {{ document.get_document_type_display }}
+            </a>
+            <span style="color: #b89a9a; font-size: 0.85rem;"> — {{ document.uploaded_at|date:"d.m.Y H:i" }}</span>
+            {% if document.comment %}<div style="color: #6b5a5a; font-size: 0.9rem;">{{ document.comment }}</div>{% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p style="color: #6b5a5a;">Документы не приложены.</p>
+    {% endif %}
+
+    <hr style="border: none; border-top: 1px solid #f0e0e0; margin: 2rem 0;">
+
+    <h3 style="color: #d4737a; margin-bottom: 1rem;">Решение</h3>
+    <form method="post">
+        {% csrf_token %}
+        <textarea name="comment" class="form-control" rows="4" maxlength="2000"
+                  placeholder="Комментарий автору. Обязателен при возврате на доработку и при отклонении."></textarea>
+        <div style="display: flex; gap: 1rem; margin-top: 1rem; flex-wrap: wrap;">
+            {% if not problems %}
+            <button type="submit" name="action" value="approve" class="btn btn-primary">
+                <i class="fas fa-check"></i> Одобрить и опубликовать
+            </button>
+            {% endif %}
+            <button type="submit" name="action" value="request_changes" class="btn btn-secondary">
+                <i class="fas fa-undo"></i> Вернуть на доработку
+            </button>
+            <button type="submit" name="action" value="reject" class="btn btn-secondary"
+                    style="background: #dc3545; color: white; border: none;"
+                    onclick="return confirm('Отклонить сбор? Собранные средства будут возвращены жертвователям.');">
+                <i class="fas fa-times"></i> Отклонить и вернуть средства
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}

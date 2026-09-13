@@ -1,21 +1,24 @@
-import uuid
-import json
-import qrcode
-from io import BytesIO
 import base64
+import logging
+import uuid
 from decimal import Decimal
+from io import BytesIO
+
+import qrcode
 from django.conf import settings
-from django.urls import reverse
+
 from .base import BasePaymentProvider
 
+logger = logging.getLogger('withdrawals')
+
 try:
-    import yookassa
-    from yookassa import Payment, Refund, Configuration, Payout
-    
+    from yookassa import Configuration, Payment, Payout, Refund
+
     YOOKASSA_AVAILABLE = True
 except ImportError:
     YOOKASSA_AVAILABLE = False
-    print("Warning: yookassa package not installed. Install with: pip install yookassa")
+    # print на импорте писал в stdout при каждом запуске любой команды
+    logger.warning('Пакет yookassa не установлен: pip install yookassa')
 
 
 class YooKassaProvider(BasePaymentProvider):
@@ -219,43 +222,9 @@ class YooKassaProvider(BasePaymentProvider):
             }
 
 
-class MockPaymentProvider(BasePaymentProvider):
-    """Mock-провайдер для тестирования (без реальных денег)"""
-    
-    def create_payment(self, amount: Decimal, user_id: int, metadata: dict = None) -> dict:
-        import uuid
-        return {
-            'success': True,
-            'payment_id': str(uuid.uuid4()),
-            'confirmation_url': '/payment/simulate/',
-            'status': 'pending'
-        }
-    
-    def check_payment(self, payment_id: str) -> dict:
-        return {
-            'success': True,
-            'status': 'succeeded',
-            'amount': Decimal('100'),
-            'paid_at': None
-        }
-    
-    def process_withdrawal(self, user_id: int, amount: Decimal, details: dict) -> dict:
-        import uuid
-        return {
-            'success': True,
-            'payout_id': str(uuid.uuid4()),
-            'status': 'succeeded'
-        }
-    
-    def refund_payment(self, payment_id: str, amount: Decimal = None) -> dict:
-        import uuid
-        return {
-            'success': True,
-            'refund_id': str(uuid.uuid4()),
-            'status': 'succeeded'
-        }
-
-
-# Для обратной совместимости
-SBPProvider = YooKassaProvider
-StripeProvider = MockPaymentProvider
+# MockPaymentProvider здесь был дубликатом класса из base.py, а псевдонимы
+# SBPProvider = YooKassaProvider и StripeProvider = MockPaymentProvider
+# создавали видимость поддержки трёх платёжных систем: выплата «через Stripe»
+# на деле уходила в заглушку и рапортовала об успехе, не переводя денег.
+# Единственный реальный провайдер — YooKassaProvider выше;
+# заглушка для тестов живёт в base.MockPaymentProvider.

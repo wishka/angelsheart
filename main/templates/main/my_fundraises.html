@@ -27,12 +27,44 @@
     <div style="background: #fff3cd; padding: 1rem; border-radius: 16px; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
         <i class="fas fa-info-circle" style="color: #856404; font-size: 1.5rem;"></i>
         <div style="flex: 1;">
-            <strong style="color: #856404;">У вас уже есть активный сбор</strong>
-            <p style="color: #856404; margin: 0;">Вы можете создать новый сбор только после завершения или отмены текущего.</p>
+            <strong style="color: #856404;">У вас уже есть незавершённый сбор</strong>
+            <p style="color: #856404; margin: 0;">Новый сбор можно создать после завершения или отмены текущего — считаются и черновик, и заявка на проверке.</p>
         </div>
     </div>
     {% endif %}
-    
+
+    <!-- Черновики и заявки на проверке -->
+    {% if draft_fundraises %}
+    <h3 style="color: #856404; margin-bottom: 1rem;">
+        <i class="fas fa-pen"></i> Черновики и заявки на проверке
+    </h3>
+    <div style="display: grid; gap: 1.5rem; margin-bottom: 2rem;">
+        {% for fundraise in draft_fundraises %}
+        <div style="background: #fffbf0; border: 1px solid #f0e0c0; border-radius: 20px; padding: 1.5rem;">
+            <h2 style="color: #856404; margin-bottom: 0.5rem; font-size: 1.3rem;">{{ fundraise.title }}</h2>
+            <span style="background: white; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; color: #856404;">
+                {{ fundraise.get_category_display }}
+            </span>
+            <span style="background: #f6e6c0; padding: 4px 12px; border-radius: 20px; font-size: 0.85rem; color: #856404; margin-left: 5px;">
+                {{ fundraise.get_moderation_status_display }}
+            </span>
+            <p style="color: #6b5a5a; margin: 0.75rem 0 0;">{{ fundraise.moderation_hint }}</p>
+            {% if fundraise.moderation_comment %}
+            <div style="background: white; border-left: 3px solid #d4737a; padding: 0.75rem 1rem; margin-top: 0.75rem; border-radius: 8px;">
+                <strong style="color: #d4737a;">Модератор:</strong>
+                <span style="color: #6b5a5a;">{{ fundraise.moderation_comment }}</span>
+            </div>
+            {% endif %}
+            <div style="display: flex; gap: 1rem; margin-top: 1rem; flex-wrap: wrap;">
+                <a href="{% url 'main:fundraise_manage' fundraise.pk %}" class="btn btn-primary" style="padding: 8px 20px;">
+                    <i class="fas fa-sliders-h"></i> Подготовить к публикации
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
     <!-- Активные сборы -->
     {% if active_fundraises %}
     <h3 style="color: #d4737a; margin-bottom: 1rem;">
@@ -81,14 +113,25 @@
                 <a href="{% url 'main:fundraise_detail' fundraise.pk %}" class="btn btn-primary" style="padding: 8px 20px;">
                     <i class="fas fa-eye"></i> Просмотреть
                 </a>
-                <a href="{% url 'main:complete_fundraise' fundraise.pk %}" class="btn btn-secondary" style="padding: 8px 20px; background: #28a745; color: white; border: none;" 
-                   onclick="return confirm('Вы уверены, что хотите завершить этот сбор? После завершения сбор нельзя будет возобновить.');">
-                    <i class="fas fa-check-circle"></i> Завершить
-                </a>
-                <a href="{% url 'main:cancel_fundraise' fundraise.pk %}" class="btn btn-secondary" style="padding: 8px 20px; background: #dc3545; color: white; border: none;"
-                   onclick="return confirm('Вы уверены, что хотите отменить этот сбор? Средства, уже поступившие на ваш баланс, останутся у вас.');">
-                    <i class="fas fa-times-circle"></i> Отменить
-                </a>
+{% comment %}
+                Завершение и отмена отправляются формой, а не ссылкой:
+                оба действия необратимы и работают с деньгами, а вью
+                принимают только POST.
+                {% endcomment %}
+                <form method="post" action="{% url 'main:complete_fundraise' fundraise.pk %}"
+                      onsubmit="return confirm('Завершить этот сбор? Возобновить его будет нельзя.');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-secondary" style="padding: 8px 20px; background: #28a745; color: white; border: none;">
+                        <i class="fas fa-check-circle"></i> Завершить
+                    </button>
+                </form>
+                <form method="post" action="{% url 'main:cancel_fundraise' fundraise.pk %}"
+                      onsubmit="return confirm('Отменить сбор? Собранные средства будут возвращены жертвователям.');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-secondary" style="padding: 8px 20px; background: #dc3545; color: white; border: none;">
+                        <i class="fas fa-times-circle"></i> Отменить
+                    </button>
+                </form>
             </div>
         </div>
         {% endfor %}

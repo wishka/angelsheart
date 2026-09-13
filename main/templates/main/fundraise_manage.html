@@ -1,0 +1,119 @@
+{% extends 'base.html' %}
+
+{% block title %}Подготовка сбора | Ангел-Хранитель{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1 style="color: #d4737a; margin-bottom: 0.5rem;">
+        <i class="fas fa-sliders-h"></i> {{ fundraise.title }}
+    </h1>
+    <p style="color: #6b5a5a; margin-bottom: 1.5rem;">{{ fundraise.moderation_hint }}</p>
+
+    {% if fundraise.moderation_comment %}
+    <div style="background: #fdf4f0; border-left: 4px solid #d4737a; padding: 1rem 1.25rem; border-radius: 12px; margin-bottom: 1.5rem;">
+        <strong style="color: #d4737a;">Комментарий модератора</strong>
+        <p style="color: #6b5a5a; margin: 0.5rem 0 0; white-space: pre-line;">{{ fundraise.moderation_comment }}</p>
+    </div>
+    {% endif %}
+
+    {% if problems %}
+    <div style="background: #fff3cd; padding: 1rem 1.25rem; border-radius: 16px; margin-bottom: 1.5rem;">
+        <strong style="color: #856404;">Что нужно сделать перед отправкой на проверку</strong>
+        <ul style="color: #856404; margin: 0.5rem 0 0; padding-left: 1.25rem;">
+            {% for problem in problems %}<li style="margin-bottom: 0.35rem;">{{ problem }}</li>{% endfor %}
+        </ul>
+    </div>
+    {% else %}
+    <div style="background: #d4edda; padding: 1rem 1.25rem; border-radius: 16px; margin-bottom: 1.5rem;">
+        <strong style="color: #155724;">Заявка готова к отправке.</strong>
+        <span style="color: #155724;">Модератор рассмотрит её и сообщит решение.</span>
+    </div>
+    {% endif %}
+
+    {% if can_submit %}
+    <form method="post" action="{% url 'main:submit_fundraise' fundraise.pk %}" style="margin-bottom: 2rem;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-primary">
+            <i class="fas fa-paper-plane"></i> Отправить на проверку
+        </button>
+    </form>
+    {% endif %}
+
+    <hr style="border: none; border-top: 1px solid #f0e0e0; margin: 2rem 0;">
+
+    <h3 style="color: #d4737a; margin-bottom: 1rem;">
+        <i class="fas fa-file-alt"></i> Подтверждающие документы
+    </h3>
+    <p style="color: #6b5a5a; margin-bottom: 1rem;">
+        {% if requires_documents %}
+        Для этой категории документ обязателен: жертвователи не могут проверить
+        заявленные обстоятельства сами, это делает модератор.
+        {% else %}
+        Необязательно, но документ ускоряет проверку и повышает доверие.
+        {% endif %}
+        Файлы видит только модератор — на странице сбора они не публикуются.
+    </p>
+
+    {% if documents %}
+    <ul style="list-style: none; padding: 0; margin-bottom: 1.5rem;">
+        {% for document in documents %}
+        <li style="background: #fdf4f0; border-radius: 12px; padding: 0.75rem 1rem; margin-bottom: 0.5rem;">
+            <a href="{% url 'main:fundraise_document' document.pk %}" style="color: #d4737a; font-weight: 600;">
+                {{ document.get_document_type_display }}
+            </a>
+            <span style="color: #b89a9a; font-size: 0.85rem;"> — {{ document.uploaded_at|date:"d.m.Y H:i" }}</span>
+            {% if document.comment %}<div style="color: #6b5a5a; font-size: 0.9rem;">{{ document.comment }}</div>{% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if fundraise.is_editable %}
+    <form method="post" action="{% url 'main:upload_fundraise_document' fundraise.pk %}"
+          enctype="multipart/form-data" style="margin-bottom: 2rem;">
+        {% csrf_token %}
+        <div style="display: grid; gap: 0.75rem; max-width: 520px;">
+            <select name="document_type" class="form-control" required>
+                <option value="">Тип документа</option>
+                {% for value, label in document_types %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+            </select>
+            <input type="file" name="file" class="form-control" accept="image/jpeg,image/png,image/heic,application/pdf" required>
+            <input type="text" name="comment" class="form-control" placeholder="Пояснение (необязательно)" maxlength="1000">
+            <button type="submit" class="btn btn-secondary">
+                <i class="fas fa-upload"></i> Приложить документ
+            </button>
+        </div>
+    </form>
+    {% endif %}
+
+    <hr style="border: none; border-top: 1px solid #f0e0e0; margin: 2rem 0;">
+
+    <h3 style="color: #d4737a; margin-bottom: 1rem;">
+        <i class="fas fa-edit"></i> Сведения о сборе
+    </h3>
+    {% if fundraise.is_editable %}
+    {% if fundraise.moderation_status == 'approved' %}
+    <p style="color: #856404; background: #fff3cd; padding: 0.75rem 1rem; border-radius: 12px;">
+        Сбор опубликован. Изменение названия, описания, категории, суммы или
+        изображения снимет его с публикации до повторной проверки.
+    </p>
+    {% endif %}
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save"></i> Сохранить
+        </button>
+    </form>
+    {% else %}
+    <p style="color: #6b5a5a;">
+        Пока заявка на проверке, редактирование недоступно — модератор должен
+        видеть тот же текст, который читал при рассмотрении.
+    </p>
+    {% endif %}
+
+    <div style="margin-top: 2rem;">
+        <a href="{% url 'main:my_fundraises' %}" style="color: #b89a9a;">← К моим сборам</a>
+    </div>
+</div>
+{% endblock %}

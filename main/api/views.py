@@ -1,18 +1,35 @@
-from rest_framework import viewsets, generics, status, filters
-from rest_framework.decorators import action, api_view, permission_classes
-from rest_framework.response import Response
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework_simplejwt.tokens import RefreshToken
-from django.db import transaction as db_transaction
-from django.db.models import Q, Sum
+import logging
+
 from django.contrib.auth.models import User
+from django.db.models import Q, Sum
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_yasg.utils import swagger_auto_schema
-from drf_yasg import openapi
+from rest_framework import filters, generics, status, viewsets
+from rest_framework.decorators import action, api_view, permission_classes, throttle_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
+from rest_framework_simplejwt.tokens import RefreshToken
 
-from main.models import Balance, Transaction, Fundraise, Donation, UserConsent
-from .serializers import *
+from main import services
+from main.models import Balance, Donation, Fundraise, Transaction, UserConsent
+from main.services import InsufficientFunds, OperationRejected
+from main.views import record_consents
+
 from .permissions import IsAuthorOrReadOnly, IsNotAuthor
+from .serializers import (
+    ConsentSerializer, CurrentUserSerializer, DonationCreateSerializer,
+    DonationSerializer, FundraiseCreateSerializer, FundraiseDetailSerializer,
+    FundraiseListSerializer, LoginSerializer, REQUIRED_CONSENTS,
+    RegisterSerializer, TransactionSerializer, TransferSerializer, UserSerializer,
+)
+
+logger = logging.getLogger('withdrawals')
+
+
+class DonateThrottle(ScopedRateThrottle):
+    """Отдельный лимит на пожертвования (ставка 'donate' в настройках)."""
+    scope = 'donate'
 
 
 # ==================== АУТЕНТИФИКАЦИЯ ====================
@@ -21,80 +38,128 @@ class RegisterView(generics.CreateAPIView):
     """Регистрация нового пользователя"""
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
-    
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'register'
+
     @swagger_auto_schema(
-        operation_description="Регистрация нового пользователя",
+        operation_description='Регистрация нового пользователя',
         request_body=RegisterSerializer,
-        responses={201: UserSerializer(), 400: "Ошибка валидации"}
+        responses={201: CurrentUserSerializer(), 400: 'Ошибка валидации'}
     )
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():
+        serializer.is_valid(raise_exception=True)
+
+        # Пользователь и его согласия создаются одной транзакцией.
+        # Раньше API-регистрация не фиксировала согласия вообще.
+        consent_types = list(REQUIRED_CONSENTS)
+        if serializer.validated_data.get('consent_distribution'):
+            consent_types.append('distribution')
+
+        with services.db_transaction.atomic():
             user = serializer.save()
-            refresh = RefreshToken.for_user(user)
-            return Response({
-                'user': UserSerializer(user).data,
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-            }, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            record_consents(request, user, consent_types)
+
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'user': CurrentUserSerializer(user).data,
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+        }, status=status.HTTP_201_CREATED)
 
 
 class LoginView(generics.GenericAPIView):
     """Авторизация пользователя"""
     serializer_class = LoginSerializer
     permission_classes = [AllowAny]
-    
+    # Отдельный лимит на подбор пароля: общий anon-лимит (100/день)
+    # слишком щедр для формы входа
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
+
     @swagger_auto_schema(
-        operation_description="Авторизация пользователя",
+        operation_description='Авторизация пользователя',
         request_body=LoginSerializer,
-        responses={200: "Токены", 401: "Ошибка авторизации"}
+        responses={200: 'Токены', 401: 'Ошибка авторизации', 403: 'Требуется 2FA'}
     )
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.validated_data
-            refresh = RefreshToken.for_user(user)
-            return Response({
-                'user': UserSerializer(user).data,
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-            })
-        return Response({'error': 'Неверные учетные данные'},
-                        status=status.HTTP_401_UNAUTHORIZED)
+        if not serializer.is_valid():
+            return Response({'error': 'Неверные учетные данные'},
+                            status=status.HTTP_401_UNAUTHORIZED)
+
+        user = serializer.validated_data
+
+        # Если у пользователя включена 2FA, пароль сам по себе доступа не даёт.
+        # Раньше веб-вход обходил 2FA, а API про неё вовсе не знал.
+        from main.models import TwoFactorAuth
+        if TwoFactorAuth.objects.filter(user=user, is_enabled=True).exists():
+            code = request.data.get('code')
+            from main.payments.security import TwoFactorAuthService
+            two_factor = TwoFactorAuth.objects.get(user=user)
+            valid = (
+                TwoFactorAuthService.verify_code(two_factor.secret_key, code)
+                or TwoFactorAuthService.consume_backup_code(two_factor, code)
+            )
+            if not valid:
+                return Response(
+                    {'error': 'Требуется код двухфакторной аутентификации',
+                     'code_required': True},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'user': CurrentUserSerializer(user).data,
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+        })
 
 
 class LogoutView(generics.GenericAPIView):
-    """Выход из системы"""
+    """Выход из системы с отзывом refresh-токена"""
     permission_classes = [IsAuthenticated]
-    
+    serializer_class = None
+
     def post(self, request):
+        refresh_token = request.data.get('refresh')
+        if not refresh_token:
+            return Response({'error': 'Не передан refresh-токен'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            refresh_token = request.data.get('refresh')
-            if refresh_token:
-                token = RefreshToken(refresh_token)
-                token.blacklist()
-            return Response({'message': 'Успешный выход'}, status=status.HTTP_200_OK)
+            RefreshToken(refresh_token).blacklist()
         except Exception:
-            return Response({'message': 'Успешный выход'}, status=status.HTTP_200_OK)
+            # Раньше здесь был except Exception: pass, и пользователю
+            # рапортовали об успешном выходе, хотя token_blacklist не был
+            # подключён и токен продолжал работать все 7 дней.
+            logger.warning('Не удалось отозвать refresh-токен пользователя %s', request.user.pk)
+            return Response({'error': 'Токен недействителен или уже отозван'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({'message': 'Успешный выход'}, status=status.HTTP_200_OK)
 
 
 # ==================== ПОЛЬЗОВАТЕЛИ ====================
 
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
-    """Просмотр пользователей"""
-    queryset = User.objects.all()
+    """
+    Просмотр пользователей.
+
+    Поиск по email убран, email и баланс из выдачи убраны: эндпоинт
+    отдавал адреса и остатки всех пользователей любому авторизованному.
+    """
+    queryset = User.objects.filter(is_active=True).order_by('username')
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['username', 'email']
+    search_fields = ['username']
     ordering_fields = ['username', 'date_joined']
-    
+
     @action(detail=False, methods=['get'])
     def me(self, request):
-        """Получить информацию о текущем пользователе"""
-        serializer = self.get_serializer(request.user)
-        return Response(serializer.data)
+        """Собственный профиль: единственное место, где видны email и баланс."""
+        return Response(CurrentUserSerializer(request.user).data)
     
     @action(detail=False, methods=['get'])
     def stats(self, request):
@@ -120,117 +185,184 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
 # ==================== СБОРЫ ====================
 
 class FundraiseViewSet(viewsets.ModelViewSet):
-    """Управление сборами средств"""
+    """
+    Управление сборами средств.
+
+    Правила допуска здесь те же, что и в веб-интерфейсе, и это не
+    дублирование ради симметрии: раньше API знал только `Fundraise.objects.all()`
+    и позволял в обход модерации всё — читать чужие черновики, создавать сбор
+    без согласия на распространение ПДн, править одобренный текст и удалять
+    сбор вместе с пожертвованиями.
+    """
+
     queryset = Fundraise.objects.all()
     permission_classes = [IsAuthenticated, IsAuthorOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['category', 'status']
     search_fields = ['title', 'description', 'author__username']
     ordering_fields = ['created_at', 'current_amount', 'target_amount', 'donors_count']
-    
+    # Удаление сбора недоступно: вместе с ним каскадом исчезали пожертвования
+    # и обязательство вернуть их. Сбор отменяется, а не удаляется.
+    http_method_names = ['get', 'post', 'put', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        """Видно опубликованное плюс собственные сборы; сотрудникам — всё."""
+        user = self.request.user
+        if user.is_staff:
+            return Fundraise.objects.all()
+        # Жертвователь видит сбор, в который отдал деньги, даже если тот
+        # снят с публикации: иначе веб и API снова расходятся — в вебе
+        # доступ донора есть.
+        return (
+            Fundraise.published()
+            | Fundraise.objects.filter(author=user)
+            | Fundraise.objects.filter(donations__donor=user)
+        ).distinct()
+
     def get_serializer_class(self):
         if self.action == 'create':
             return FundraiseCreateSerializer
         elif self.action == 'list':
             return FundraiseListSerializer
         return FundraiseDetailSerializer
-    
+
     def perform_create(self, serializer):
-        # Проверка на активный сбор
-        if Fundraise.objects.filter(author=self.request.user, status='active').exists():
-            from rest_framework import serializers
-            raise serializers.ValidationError({"error": "У вас уже есть активный сбор"})
-        serializer.save(author=self.request.user)
-    
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
-    def donate(self, request, pk=None):
-        """Пожертвовать в сбор"""
+        from rest_framework import serializers
+
+        from main.models import UserConsent
+
+        # Публикация сбора делает имя автора и описание общедоступными:
+        # ст. 10.1 152-ФЗ требует отдельного согласия
+        if not UserConsent.has_active_consent(self.request.user, 'distribution'):
+            raise serializers.ValidationError({
+                'error': 'Нужно согласие на распространение персональных данных',
+            })
+
+        if Fundraise.objects.filter(
+            author=self.request.user, status__in=Fundraise.UNFINISHED_STATUSES,
+        ).exists():
+            raise serializers.ValidationError({'error': 'У вас уже есть незавершённый сбор'})
+
+        # Сбор создаётся черновиком и публикуется только после проверки
+        serializer.save(author=self.request.user, status='draft', moderation_status='draft')
+
+    def perform_update(self, serializer):
+        """Правка проверенных сведений возвращает сбор на модерацию."""
         fundraise = self.get_object()
-        
-        # Проверка, что пользователь не автор
-        if fundraise.author == request.user:
-            return Response({'error': 'Нельзя пожертвовать в свой собственный сбор'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        
-        if fundraise.status != 'active':
-            return Response({'error': 'Сбор не активен'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        serializer = DonationCreateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        amount = float(serializer.validated_data['amount'])
-        
-        # Проверка баланса
-        if float(request.user.balance.amount) < amount:
-            return Response({'error': 'Недостаточно средств'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            with db_transaction.atomic():
-                # Списание с баланса донатера
-                donor_balance = Balance.objects.select_for_update().get(user=request.user)
-                donor_balance.amount -= amount
-                donor_balance.save()
-                
-                # Зачисление автору (с учетом комиссии 3%)
-                commission = amount * 0.03
-                author_amount = amount - commission
-                author_balance = Balance.objects.select_for_update().get(user=fundraise.author)
-                author_balance.amount += author_amount
-                author_balance.save()
-                
-                # Обновление сбора
-                fundraise.current_amount += amount
-                fundraise.donors_count += 1
-                fundraise.save()
-                
-                # Создание доната
-                donation = Donation.objects.create(
-                    donor=request.user,
-                    fundraise=fundraise,
-                    amount=amount,
-                    message=serializer.validated_data.get('message', ''),
-                    is_anonymous=serializer.validated_data.get('is_anonymous', False)
-                )
-                
-                # Создание транзакции
-                Transaction.objects.create(
-                    sender=request.user,
-                    receiver=fundraise.author,
-                    amount=author_amount,
-                    comment=f'Пожертвование на сбор "{fundraise.title}"',
-                    status='completed',
-                    is_donation=True,
-                    fundraise_id=fundraise.id
-                )
-                
-                return Response({
-                    'message': 'Пожертвование успешно',
-                    'donation': DonationSerializer(donation).data,
-                    'commission': commission
-                }, status=status.HTTP_201_CREATED)
-        
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if not fundraise.is_editable:
+            from rest_framework import serializers
+            raise serializers.ValidationError({
+                'error': 'Сбор на проверке — дождитесь решения модератора',
+            })
+
+        changed = {
+            field for field in Fundraise.MODERATED_FIELDS
+            if field in serializer.validated_data
+            and serializer.validated_data[field] != getattr(fundraise, field)
+        }
+        updated = serializer.save()
+        if changed and updated.moderation_status == 'approved':
+            updated.reset_moderation()
     
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated],
+            throttle_classes=[DonateThrottle])
+    def donate(self, request, pk=None):
+        """
+        Пожертвовать в сбор.
+
+        Вся арифметика ушла в services.donate. Прежняя реализация считала
+        на float (`amount = float(...)`, `commission = amount * 0.03`) и
+        падала с TypeError на `Decimal -= float` — эндпоинт не работал
+        вообще. Заодно ставка комиссии здесь была своя, 3 %, а в веб-версии
+        0 % — одна операция давала разный результат.
+        """
+        fundraise = self.get_object()
+
+        serializer = DonationCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            donation = services.donate(
+                donor=request.user,
+                fundraise=fundraise,
+                amount=serializer.validated_data['amount'],
+                message=serializer.validated_data.get('message', ''),
+                is_anonymous=serializer.validated_data.get('is_anonymous', False),
+            )
+        except (InsufficientFunds, OperationRejected) as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception('Ошибка пожертвования в сбор #%s через API', pk)
+            return Response({'error': 'Внутренняя ошибка'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        commission = getattr(donation, 'commission', None)
+        return Response({
+            'message': 'Пожертвование успешно',
+            'donation': DonationSerializer(donation, context={'request': request}).data,
+            'commission': str(commission.amount) if commission else '0.00',
+        }, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=['post'])
     def complete(self, request, pk=None):
         """Завершить сбор (только для автора)"""
         fundraise = self.get_object()
-        
+
         if fundraise.author != request.user:
             return Response({'error': 'Только автор может завершить сбор'},
                             status=status.HTTP_403_FORBIDDEN)
-        
+
         if fundraise.status != 'active':
-            return Response({'error': 'Сбор уже завершен'},
+            return Response({'error': 'Сбор уже завершён'},
                             status=status.HTTP_400_BAD_REQUEST)
-        
+
+        # Завершить можно только проверенный сбор: иначе так закрывался
+        # сбор, снятый с публикации после правки, и отклонить его
+        # с возвратом денег становилось нельзя.
+        if fundraise.moderation_status != 'approved':
+            return Response(
+                {'error': 'Сбор не прошёл проверку — завершить его нельзя, только отменить'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         fundraise.status = 'completed'
-        fundraise.save()
-        
-        return Response({'message': f'Сбор "{fundraise.title}" успешно завершен'})
+        fundraise.save(update_fields=['status'])
+
+        return Response({'message': f'Сбор «{fundraise.title}» успешно завершён'})
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """
+        Отменить сбор с возвратом пожертвований донорам.
+
+        В API этой операции не было вовсе, а в веб-версии отмена оставляла
+        деньги у автора.
+        """
+        fundraise = self.get_object()
+
+        if fundraise.author != request.user:
+            return Response({'error': 'Только автор может отменить сбор'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        if fundraise.status != 'active':
+            return Response({'error': 'Сбор уже завершён или отменён'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            with services.db_transaction.atomic():
+                result = services.refund_donations(fundraise)
+                fundraise.status = 'cancelled'
+                fundraise.save(update_fields=['status'])
+        except Exception:
+            logger.exception('Ошибка отмены сбора #%s через API', pk)
+            return Response({'error': 'Внутренняя ошибка'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({
+            'message': f'Сбор «{fundraise.title}» отменён',
+            'refunded': str(result['refunded']),
+            'shortfall': str(result['shortfall']),
+        })
 
 
 # ==================== ДОНАТЫ ====================
@@ -240,11 +372,11 @@ class DonationViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = DonationSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['fundraise_id', 'is_anonymous']
+    filterset_fields = ['fundraise', 'is_anonymous']
     ordering_fields = ['created_at', 'amount']
-    
+
     def get_queryset(self):
-        return Donation.objects.filter(donor=self.request.user)
+        return Donation.objects.filter(donor=self.request.user).select_related('fundraise', 'donor')
 
 
 # ==================== ТРАНЗАКЦИИ ====================
@@ -265,49 +397,32 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
     
     @action(detail=False, methods=['post'])
     def transfer(self, request):
-        """Сделать перевод другому пользователю"""
+        """
+        Перевод другому пользователю.
+
+        Прежняя реализация переводила сумму в float и падала с
+        `TypeError: unsupported operand type(s) for -=: 'decimal.Decimal'
+        and 'float'` — эндпоинт всегда отвечал 500.
+        """
         serializer = TransferSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        receiver = serializer.validated_data['receiver_username']
-        amount = float(serializer.validated_data['amount'])
-        comment = serializer.validated_data.get('comment', '')
-        
-        if receiver == request.user:
-            return Response({'error': 'Нельзя перевести самому себе'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        
-        if float(request.user.balance.amount) < amount:
-            return Response({'error': 'Недостаточно средств'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        
+        serializer.is_valid(raise_exception=True)
+
         try:
-            with db_transaction.atomic():
-                # Списание
-                sender_balance = Balance.objects.select_for_update().get(user=request.user)
-                sender_balance.amount -= amount
-                sender_balance.save()
-                
-                # Зачисление
-                receiver_balance = Balance.objects.select_for_update().get(user=receiver)
-                receiver_balance.amount += amount
-                receiver_balance.save()
-                
-                # Создание транзакции
-                transaction = Transaction.objects.create(
-                    sender=request.user,
-                    receiver=receiver,
-                    amount=amount,
-                    comment=comment,
-                    status='completed'
-                )
-                
-                return Response(TransactionSerializer(transaction).data,
-                                status=status.HTTP_201_CREATED)
-        
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            transaction = services.transfer(
+                sender=request.user,
+                receiver=serializer.validated_data['receiver_username'],
+                amount=serializer.validated_data['amount'],
+                comment=serializer.validated_data.get('comment', ''),
+            )
+        except (InsufficientFunds, OperationRejected) as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception('Ошибка перевода через API от %s', request.user.pk)
+            return Response({'error': 'Внутренняя ошибка'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response(TransactionSerializer(transaction).data,
+                        status=status.HTTP_201_CREATED)
     
     @action(detail=False, methods=['get'])
     def stats(self, request):
@@ -366,41 +481,37 @@ def dashboard_stats(request):
 
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def leaders_board(request):
-    """Рейтинг пользователей"""
-    top_senders = User.objects.filter(
-        sent_transactions__status='completed'
-    ).annotate(
-        total_sent=Sum('sent_transactions__amount')
-    ).order_by('-total_sent')[:10]
-    
-    top_receivers = User.objects.filter(
-        received_transactions__status='completed'
-    ).annotate(
-        total_received=Sum('received_transactions__amount')
-    ).order_by('-total_received')[:10]
-    
-    # Получаем балансы для пользователей
-    senders_data = []
-    for user in top_senders:
-        senders_data.append({
-            'id': user.id,
-            'username': user.username,
-            'total_sent': user.total_sent,
-            'balance': user.balance.amount if hasattr(user, 'balance') else 0
-        })
-    
-    receivers_data = []
-    for user in top_receivers:
-        receivers_data.append({
-            'id': user.id,
-            'username': user.username,
-            'total_received': user.total_received,
-            'balance': user.balance.amount if hasattr(user, 'balance') else 0
-        })
-    
+    """
+    Рейтинг пользователей.
+
+    Было permission_classes([AllowAny]) — эндпоинт без всякой авторизации
+    отдавал имена, обороты и **балансы** пользователей. Балансы убраны
+    совсем, пополнения и возвраты исключены из оборота.
+    """
+    sent_filter = Q(sent_transactions__status='completed') & ~Q(
+        sent_transactions__kind__in=['topup', 'refund']
+    )
+    received_filter = Q(received_transactions__status='completed') & ~Q(
+        received_transactions__kind__in=['topup', 'refund']
+    )
+
+    top_senders = User.objects.annotate(
+        total_sent=Sum('sent_transactions__amount', filter=sent_filter)
+    ).filter(total_sent__gt=0).order_by('-total_sent')[:10]
+
+    top_receivers = User.objects.annotate(
+        total_received=Sum('received_transactions__amount', filter=received_filter)
+    ).filter(total_received__gt=0).order_by('-total_received')[:10]
+
     return Response({
-        'top_senders': senders_data,
-        'top_receivers': receivers_data,
+        'top_senders': [
+            {'id': u.id, 'username': u.username, 'total_sent': u.total_sent}
+            for u in top_senders
+        ],
+        'top_receivers': [
+            {'id': u.id, 'username': u.username, 'total_received': u.total_received}
+            for u in top_receivers
+        ],
     })

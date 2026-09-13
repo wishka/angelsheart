@@ -1,0 +1,9 @@
+{% if '[' in operator.name %}
+    <div style="background: #fff4f4; border: 2px solid #d4737a; border-radius: 12px; padding: 1rem; margin-bottom: 2rem;">
+        <strong style="color: #d4737a;">Документ не заполнен.</strong>
+        <p style="margin: 0.5rem 0 0; color: #6b5a5a;">
+            Реквизиты оператора не подставлены — документ не имеет юридической
+            силы. Заполните переменные OPERATOR_* в .env перед публикацией.
+        </p>
+    </div>
+    {% endif %}

@@ -6,126 +6,485 @@
 <div style="max-width: 500px; margin: 0 auto;">
     <div class="card">
         <div style="text-align: center; margin-bottom: 2rem;">
-            <i class="fas fa-coins" style="font-size: 3rem; color: #e8a4aa;"></i>
-            <h1 style="color: #d4737a; margin-top: 1rem;">Пополнить баланс</h1>
-            <p style="color: #6b5a5a;">Безопасный платеж через ЮKassa</p>
+            <div class="icon-circle">
+                <i class="fas fa-coins"></i>
+            </div>
+            <h1 style="color: #d4737a; margin-top: 0; margin-bottom: 0.5rem;">Пополнить баланс</h1>
+            <p style="color: #6b5a5a; margin: 0;">
+                {% if USE_REAL_PAYMENTS %}
+                    Безопасный платеж через ЮKassa
+                {% else %}
+                    <span class="test-mode-badge">🧪 ТЕСТОВЫЙ РЕЖИМ</span>
+                    <br>Платежи не списывают реальные деньги
+                {% endif %}
+            </p>
         </div>
 
-        <div style="background: #fdf4f0; padding: 1rem; border-radius: 20px; margin-bottom: 1.5rem;">
-            <div style="display: flex; justify-content: space-between;">
-                <span>Текущий баланс:</span>
-                <strong style="color: #d4737a; font-size: 1.2rem;">{{ user.balance.amount|floatformat:2 }} ₽</strong>
+        <!-- Баланс -->
+        <div class="balance-card">
+            <div class="balance-info">
+                <div class="balance-icon">
+                    <i class="fas fa-wallet"></i>
+                </div>
+                <div>
+                    <div class="balance-label">ТЕКУЩИЙ БАЛАНС</div>
+                    <div class="balance-amount">{{ user.balance.amount|floatformat:2 }} ₽</div>
+                </div>
             </div>
         </div>
 
         <form method="post" id="paymentForm">
             {% csrf_token %}
 
+            <!-- Сумма пополнения -->
             <div class="form-group">
-                <label><i class="fas fa-money-bill-wave"></i> Сумма пополнения (₽)</label>
-                <input type="number"
-                       name="amount"
-                       id="amount"
-                       class="form-control"
-                       step="1"
-                       min="100"
-                       max="100000"
-                       required
-                       placeholder="От 100 до 100 000 ₽">
-                <small style="color: #b89a9a; display: block; margin-top: 5px;">
+                <label class="form-label">
+                    <i class="fas fa-ruble-sign"></i>
+                    <span>Сумма пополнения</span>
+                </label>
+                <div class="input-wrapper">
+                    <input type="number"
+                           name="amount"
+                           id="amount"
+                           class="form-control"
+                           step="1"
+                           min="100"
+                           max="100000"
+                           required
+                           placeholder="Введите сумму">
+                    <span class="input-suffix">₽</span>
+                </div>
+                <div class="form-hint">
+                    <i class="fas fa-info-circle"></i>
                     Минимальная сумма: 100 ₽, максимальная: 100 000 ₽
-                </small>
+                </div>
+
+                <!-- Быстрые суммы -->
+                <div class="quick-amounts">
+                    <button type="button" class="amount-quick-btn" data-amount="500">500 ₽</button>
+                    <button type="button" class="amount-quick-btn" data-amount="1000">1 000 ₽</button>
+                    <button type="button" class="amount-quick-btn" data-amount="2000">2 000 ₽</button>
+                    <button type="button" class="amount-quick-btn" data-amount="5000">5 000 ₽</button>
+                    <button type="button" class="amount-quick-btn" data-amount="10000">10 000 ₽</button>
+                </div>
             </div>
 
             <!-- Способы оплаты -->
             <div class="form-group">
-                <label><i class="fas fa-credit-card"></i> Способ оплаты</label>
-                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem;">
-                    <label class="payment-method">
+                <label class="form-label">
+                    <i class="fas fa-credit-card"></i>
+                    <span>Способ оплаты</span>
+                </label>
+                <div class="payment-methods-grid">
+                    <label class="payment-method" data-method="card">
                         <input type="radio" name="payment_method" value="card" checked>
-                        <i class="fab fa-cc-visa"></i> Банковская карта
+                        <i class="fab fa-cc-visa"></i>
+                        <span>Банковская карта</span>
                     </label>
-                    <label class="payment-method">
+                    <label class="payment-method" data-method="sbp">
                         <input type="radio" name="payment_method" value="sbp">
-                        <i class="fas fa-mobile-alt"></i> СБП
+                        <i class="fas fa-mobile-alt"></i>
+                        <span>СБП</span>
                     </label>
-                    <label class="payment-method">
+                    <label class="payment-method" data-method="yoomoney">
                         <input type="radio" name="payment_method" value="yoomoney">
-                        <i class="fab fa-yandex"></i> ЮMoney
-                    </label>
-                    <label class="payment-method">
-                        <input type="radio" name="payment_method" value="crypto">
-                        <i class="fab fa-bitcoin"></i> Криптовалюта
+                        <i class="fab fa-yandex"></i>
+                        <span>ЮMoney</span>
                     </label>
                 </div>
             </div>
 
-            <div style="background: #fff8e1; padding: 1rem; border-radius: 16px; margin: 1rem 0; font-size: 0.9rem;">
-                <i class="fas fa-shield-alt" style="color: #f9a825;"></i>
-                <span>Платеж защищен. Комиссия не взимается.</span>
+            <!-- Информация о платеже -->
+            <div class="security-note">
+                <div>
+                    <i class="fas fa-shield-alt"></i>
+                    <span>Платеж защищен. Комиссия не взимается.</span>
+                </div>
             </div>
 
-            <button type="submit" class="btn btn-primary" style="width: 100%;" id="submitBtn">
-                <i class="fas fa-check-circle"></i> Оплатить
+            {% if not USE_REAL_PAYMENTS %}
+            <!-- Для тестового режима - объяснение -->
+            <div class="test-info">
+                <i class="fas fa-info-circle"></i>
+                Сейчас используется <strong>ТЕСТОВЫЙ РЕЖИМ</strong>. Деньги не списываются, баланс пополняется мгновенно.
+            </div>
+            {% endif %}
+
+            <button type="submit" class="btn btn-primary" id="submitBtn">
+                <i class="fas {% if USE_REAL_PAYMENTS %}fa-credit-card{% else %}fa-flask{% endif %}"></i>
+                {% if USE_REAL_PAYMENTS %}Перейти к оплате{% else %}Пополнить (тест){% endif %}
             </button>
         </form>
     </div>
 
-    <div style="text-align: center; margin-top: 1rem; font-size: 0.85rem; color: #b89a9a;">
+    <div class="security-footer">
         <i class="fas fa-lock"></i> Безопасная оплата через ЮKassa
+        <span class="separator">•</span>
+        <i class="fas fa-clock"></i> Мгновенное зачисление
     </div>
 </div>
 
 <style>
-    .payment-method {
+    .icon-circle {
+        background: linear-gradient(135deg, #ffe6e8, #ffe0e3);
+        width: 70px;
+        height: 70px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 1rem;
+        transition: transform 0.3s;
+    }
+
+    .icon-circle:hover {
+        transform: scale(1.05);
+    }
+
+    .icon-circle i {
+        font-size: 2rem;
+        color: #d4737a;
+    }
+
+    .balance-card {
+        background: linear-gradient(135deg, #fdf4f0, #fff5f0);
+        padding: 1rem 1.5rem;
+        border-radius: 24px;
+        margin-bottom: 1.5rem;
+        transition: all 0.3s;
+    }
+
+    .balance-card:hover {
+        box-shadow: 0 4px 12px rgba(212, 115, 122, 0.1);
+    }
+
+    .balance-info {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .balance-icon {
+        background: white;
+        width: 45px;
+        height: 45px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .balance-icon i {
+        font-size: 1.3rem;
+        color: #d4737a;
+    }
+
+    .balance-label {
+        font-size: 0.7rem;
+        color: #b89a9a;
+        letter-spacing: 0.5px;
+    }
+
+    .balance-amount {
+        font-size: 1.4rem;
+        font-weight: 700;
+        color: #d4737a;
+    }
+
+    .form-group {
+        margin-bottom: 1.5rem;
+    }
+
+    .form-label {
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 10px;
-        border: 1px solid #e0d0d0;
-        border-radius: 12px;
+        margin-bottom: 10px;
+        font-weight: 600;
+        color: #6b5a5a;
+        font-size: 0.9rem;
+    }
+
+    .form-label i {
+        color: #d4737a;
+        width: 18px;
+    }
+
+    .input-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+
+    .input-icon {
+        position: absolute;
+        left: 18px;
+        color: #b89a9a;
+        font-size: 1rem;
+        pointer-events: none;
+        transition: all 0.3s;
+        z-index: 1;
+    }
+
+    .input-suffix {
+        position: absolute;
+        right: 18px;
+        color: #b89a9a;
+        font-size: 0.9rem;
+        pointer-events: none;
+    }
+
+    .form-control {
+        width: 100%;
+        padding: 14px 50px 14px 48px;
+        border: 2px solid #f0e0e0;
+        border-radius: 60px;
+        font-family: 'Quicksand', sans-serif;
+        font-size: 1rem;
+        transition: all 0.3s;
+        background: white;
+    }
+
+    .form-control:hover {
+        border-color: #e8a4aa;
+        transform: translateY(-1px);
+    }
+
+    .form-control:focus {
+        outline: none;
+        border-color: #d4737a;
+        box-shadow: 0 0 0 3px rgba(212, 115, 122, 0.15);
+        transform: translateY(-1px);
+    }
+
+    .input-wrapper:focus-within .input-icon {
+        color: #d4737a;
+    }
+
+    .form-hint {
+        margin-top: 8px;
+        font-size: 0.7rem;
+        color: #b89a9a;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .quick-amounts {
+        display: flex;
+        gap: 0.6rem;
+        margin-top: 14px;
+        flex-wrap: wrap;
+    }
+
+    .amount-quick-btn {
+        background: white;
+        border: 2px solid #e8d8d8;
+        padding: 7px 16px;
+        border-radius: 60px;
         cursor: pointer;
         transition: all 0.3s;
+        color: #6b5a5a;
+        font-size: 0.8rem;
+        font-family: 'Quicksand', sans-serif;
+        font-weight: 600;
+    }
+
+    .amount-quick-btn:hover {
+        background: #d4737a;
+        border-color: #d4737a;
+        color: white;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(212, 115, 122, 0.3);
+    }
+
+    .payment-methods-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.75rem;
+    }
+
+    .payment-method {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        border: 2px solid #f0e0e0;
+        border-radius: 60px;
+        cursor: pointer;
+        transition: all 0.3s;
+        background: white;
     }
 
     .payment-method:hover {
         border-color: #d4737a;
         background: #fdf4f0;
+        transform: translateY(-2px);
     }
 
     .payment-method input {
         margin: 0;
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+        accent-color: #d4737a;
+    }
+
+    .payment-method i {
+        font-size: 1.2rem;
+        color: #d4737a;
+    }
+
+    .payment-method span {
+        flex: 1;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: #6b5a5a;
+    }
+
+    .security-note {
+        background: #fff8e1;
+        padding: 0.85rem;
+        border-radius: 50px;
+        text-align: center;
+        margin: 1rem 0;
+    }
+
+    .security-note div {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-size: 0.8rem;
+        color: #856404;
+    }
+
+    .test-info {
+        background: #e8f4fd;
+        padding: 0.85rem 1rem;
+        border-radius: 16px;
+        margin: 1rem 0;
+        font-size: 0.8rem;
+        color: #0c5460;
+        text-align: center;
+    }
+
+    .test-info i {
+        margin-right: 8px;
+    }
+
+    .test-mode-badge {
+        background: #ffc107;
+        color: #333;
+        padding: 4px 12px;
+        border-radius: 50px;
+        font-size: 0.7rem;
+        font-weight: 700;
+        display: inline-block;
+        margin-bottom: 5px;
+    }
+
+    .btn-primary {
+        width: 100%;
+        justify-content: center;
+        padding: 14px 20px;
+        border-radius: 60px;
+        font-weight: 700;
+        transition: all 0.3s;
+    }
+
+    .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(212, 115, 122, 0.4);
+    }
+
+    .security-footer {
+        text-align: center;
+        margin-top: 1rem;
+        font-size: 0.75rem;
+        color: #b89a9a;
+    }
+
+    .security-footer .separator {
+        margin: 0 8px;
+    }
+
+    @media (max-width: 480px) {
+        .payment-methods-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .quick-amounts {
+            gap: 0.4rem;
+        }
+
+        .amount-quick-btn {
+            padding: 5px 12px;
+            font-size: 0.7rem;
+        }
     }
 </style>
 
 <script>
-    const form = document.getElementById('paymentForm');
-    const amountInput = document.getElementById('amount');
-    const submitBtn = document.getElementById('submitBtn');
+    (function() {
+        const form = document.getElementById('paymentForm');
+        const amountInput = document.getElementById('amount');
+        const submitBtn = document.getElementById('submitBtn');
+        const quickAmountBtns = document.querySelectorAll('.amount-quick-btn');
 
-    if (form) {
-        form.addEventListener('submit', function(e) {
-            const amount = parseFloat(amountInput.value);
-
-            if (isNaN(amount) || amount < 100) {
+        // Быстрые суммы
+        quickAmountBtns.forEach(button => {
+            button.addEventListener('click', function(e) {
                 e.preventDefault();
-                alert('Минимальная сумма пополнения - 100 ₽');
-                amountInput.focus();
-                return false;
-            }
+                const amount = this.getAttribute('data-amount');
+                amountInput.value = amount;
+                amountInput.style.borderColor = '#d4737a';
 
-            if (amount > 100000) {
-                e.preventDefault();
-                alert('Максимальная сумма пополнения - 100 000 ₽');
-                amountInput.focus();
-                return false;
-            }
-
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> Перенаправление на оплату...';
-
-            return true;
+                // Визуальный эффект
+                this.style.transform = 'scale(0.95)';
+                setTimeout(() => {
+                    this.style.transform = '';
+                }, 150);
+            });
         });
-    }
+
+        // Валидация суммы
+        amountInput.addEventListener('input', function() {
+            const amount = parseFloat(this.value);
+            if (amount >= 100 && amount <= 100000) {
+                this.style.borderColor = '#28a745';
+            } else if (amount > 0) {
+                this.style.borderColor = '#dc3545';
+            } else {
+                this.style.borderColor = '#f0e0e0';
+            }
+        });
+
+        // Отправка формы
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                const amount = parseFloat(amountInput.value);
+
+                if (isNaN(amount) || amount < 100) {
+                    e.preventDefault();
+                    alert('Минимальная сумма пополнения - 100 ₽');
+                    amountInput.focus();
+                    return false;
+                }
+
+                if (amount > 100000) {
+                    e.preventDefault();
+                    alert('Максимальная сумма пополнения - 100 000 ₽');
+                    amountInput.focus();
+                    return false;
+                }
+
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> {% if USE_REAL_PAYMENTS %}Перенаправление на оплату...{% else %}Пополнение...{% endif %}';
+
+                return true;
+            });
+        }
+    })();
 </script>
 {% endblock %}

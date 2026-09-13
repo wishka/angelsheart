@@ -27,11 +27,17 @@
 
     <!-- Статистика -->
     <div class="stats-grid">
+        {% if is_own_profile %}
+        {% comment %}
+            Баланс виден только владельцу: раньше карточка показывала
+            остаток любого пользователя всякому, кто открыл его профиль.
+        {% endcomment %}
         <div class="stat-card">
             <i class="fas fa-coins stat-icon" style="color: #d4737a;"></i>
             <h3 class="stat-title">Баланс</h3>
             <div class="stat-value">{{ balance|floatformat:2 }} ₽</div>
         </div>
+        {% endif %}
         <div class="stat-card">
             <i class="fas fa-arrow-up stat-icon" style="color: #28a745;"></i>
             <h3 class="stat-title">Отправлено</h3>

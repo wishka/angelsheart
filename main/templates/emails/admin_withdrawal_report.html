@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<body style="font-family: Arial, sans-serif; color: #3d3333;">
+  <p>Отчёт о массовой выплате, инициировал: {{ admin.username }}</p>
+  <ul>
+    <li>Всего заявок: {{ results.total }}</li>
+    <li>Успешно: {{ results.success }}</li>
+    <li>С ошибкой: {{ results.failed }}</li>
+  </ul>
+  {% if results.details %}
+  <table border="1" cellpadding="6" cellspacing="0" style="border-collapse: collapse;">
+    <tr><th>Заявка</th><th>Результат</th><th>Сообщение</th></tr>
+    {% for item in results.details %}
+    <tr>
+      <td>#{{ item.id }}</td>
+      <td>{% if item.success %}успешно{% else %}ошибка{% endif %}</td>
+      <td>{{ item.message }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <p><a href="{{ site_url }}/admin/main/withdrawalrequest/">Заявки на вывод</a></p>
+</body>
+</html>

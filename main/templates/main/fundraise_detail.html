@@ -154,6 +154,12 @@
                         <strong>Это ваш сбор</strong><br>
                         Вы не можете пожертвовать средства в свой собственный сбор.
                     </p>
+                    <p style="color: #856404; margin: 0.5rem 0 0;">{{ fundraise.moderation_hint }}</p>
+                    {% if fundraise.moderation_comment %}
+                    <p style="color: #856404; margin: 0.5rem 0 0;">
+                        <strong>Модератор:</strong> {{ fundraise.moderation_comment }}
+                    </p>
+                    {% endif %}
                 </div>
 
                 <div style="background: #fdf4f0; padding: 1rem; border-radius: 16px; margin-bottom: 1rem;">
@@ -175,24 +181,44 @@
                     <a href="{% url 'main:my_fundraises' %}" class="btn btn-secondary" style="text-align: center;">
                         <i class="fas fa-list"></i> Мои сборы
                     </a>
+                    {% if fundraise.is_editable %}
+                    <a href="{% url 'main:fundraise_manage' fundraise.pk %}" class="btn btn-secondary" style="text-align: center;">
+                        <i class="fas fa-sliders-h"></i> Подготовка и документы
+                    </a>
+                    {% endif %}
                     {% if fundraise.status == 'active' %}
-                    <a href="{% url 'main:complete_fundraise' fundraise.pk %}" class="btn btn-secondary" style="text-align: center; background: #28a745; color: white; border: none;"
-                       onclick="return confirm('Вы уверены, что хотите завершить этот сбор?');">
-                        <i class="fas fa-check-circle"></i> Завершить сбор
-                    </a>
-                    <a href="{% url 'main:cancel_fundraise' fundraise.pk %}" class="btn btn-secondary" style="text-align: center; background: #dc3545; color: white; border: none;"
-                       onclick="return confirm('Вы уверены, что хотите отменить этот сбор?');">
-                        <i class="fas fa-times-circle"></i> Отменить сбор
-                    </a>
+{% comment %}
+                    Обе кнопки — формы: действия необратимы и работают
+                    с деньгами, вью принимают только POST.
+                    {% endcomment %}
+                    <form method="post" action="{% url 'main:complete_fundraise' fundraise.pk %}"
+                          onsubmit="return confirm('Завершить этот сбор? Возобновить его будет нельзя.');">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-secondary" style="width: 100%; background: #28a745; color: white; border: none;">
+                            <i class="fas fa-check-circle"></i> Завершить сбор
+                        </button>
+                    </form>
+                    <form method="post" action="{% url 'main:cancel_fundraise' fundraise.pk %}"
+                          onsubmit="return confirm('Отменить сбор? Собранные средства будут возвращены жертвователям.');">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-secondary" style="width: 100%; background: #dc3545; color: white; border: none;">
+                            <i class="fas fa-times-circle"></i> Отменить сбор
+                        </button>
+                    </form>
                     {% endif %}
                 </div>
 
-            {% elif fundraise.status != 'active' %}
-                <!-- СБОР ЗАВЕРШЕН ИЛИ ОТМЕНЕН -->
+            {% elif not accepts_donations %}
+                {% comment %}
+                Раньше условием было status != 'active', и любой непринимающий
+                сбор подписывался как «отменён». Теперь причина называется точно:
+                сбор может быть на проверке, и это не отмена.
+                {% endcomment %}
                 <div style="background: #d4edda; padding: 1rem; border-radius: 16px; margin-bottom: 1rem; text-align: center;">
-                    <i class="fas fa-check-circle" style="color: #155724; font-size: 2rem; margin-bottom: 0.5rem; display: inline-block;"></i>
+                    <i class="fas fa-info-circle" style="color: #155724; font-size: 2rem; margin-bottom: 0.5rem; display: inline-block;"></i>
                     <p style="color: #155724; margin: 0;">
-                        <strong>{% if fundraise.status == 'completed' %}Сбор успешно завершен{% else %}Сбор отменен{% endif %}</strong>
+                        <strong>{{ fundraise.moderation_hint }}</strong><br>
+                        Сбор не принимает пожертвования.
                     </p>
                 </div>
 

@@ -1,0 +1,70 @@
+{% extends 'base.html' %}
+
+{% block title %}Реквизиты и контакты{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1 style="color: #d4737a; margin-bottom: 0.5rem;">
+        <i class="fas fa-address-card"></i> Реквизиты и контакты
+    </h1>
+    <p style="color: #9a8a8a; margin-bottom: 2rem;">
+        Сведения раскрываются в соответствии с ч. 2 ст. 10 Федерального закона
+        от 27.07.2006 № 149-ФЗ
+    </p>
+
+    {% include 'main/_unfilled_warning.html' %}
+
+    <div style="line-height: 1.8; color: #6b5a5a;">
+        <h2>Владелец сайта</h2>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 2rem;">
+            <tr style="border-bottom: 1px solid #f7eded;">
+                <td style="padding: 0.6rem 0; width: 40%;">Организационная форма</td>
+                <td>{{ operator.form }}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #f7eded;">
+                <td style="padding: 0.6rem 0;">Наименование</td><td>{{ operator.name }}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #f7eded;">
+                <td style="padding: 0.6rem 0;">ОГРНИП</td><td>{{ operator.ogrnip }}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #f7eded;">
+                <td style="padding: 0.6rem 0;">ИНН</td><td>{{ operator.inn }}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #f7eded;">
+                <td style="padding: 0.6rem 0;">Адрес</td><td>{{ operator.address }}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #f7eded;">
+                <td style="padding: 0.6rem 0;">Поддержка</td>
+                <td><a href="mailto:{{ operator.support_email }}">{{ operator.support_email }}</a></td>
+            </tr>
+            <tr style="border-bottom: 1px solid #f7eded;">
+                <td style="padding: 0.6rem 0;">Персональные данные</td>
+                <td><a href="mailto:{{ operator.email }}">{{ operator.email }}</a></td>
+            </tr>
+            <tr>
+                <td style="padding: 0.6rem 0;">Телефон</td><td>{{ operator.phone }}</td>
+            </tr>
+        </table>
+
+        <h2>Документы</h2>
+        <ul>
+            <li><a href="{% url 'main:user_agreement' %}">Пользовательское соглашение (публичная оферта)</a></li>
+            <li><a href="{% url 'main:privacy_policy' %}">Политика обработки персональных данных</a></li>
+            <li><a href="{% url 'main:consent_processing' %}">Согласие на обработку персональных данных</a></li>
+            <li><a href="{% url 'main:consent_distribution' %}">Согласие на распространение персональных данных</a></li>
+            <li><a href="{% url 'main:cookie_policy' %}">Политика использования cookies</a></li>
+        </ul>
+
+        <h2>Возрастное ограничение</h2>
+        <p>18+. Сервис не предназначен для лиц младше 18 лет.</p>
+
+        <h2>Надзорные органы</h2>
+        <p>
+            Роскомнадзор — по вопросам обработки персональных данных:
+            <a href="https://rkn.gov.ru" target="_blank" rel="noopener">rkn.gov.ru</a><br>
+            Роспотребнадзор — по вопросам защиты прав потребителей:
+            <a href="https://rospotrebnadzor.ru" target="_blank" rel="noopener">rospotrebnadzor.ru</a>
+        </p>
+    </div>
+</div>
+{% endblock %}

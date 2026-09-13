@@ -1,2 +1,36 @@
+# Секреты — никогда не в репозитории.
+# .env был закоммичен: как только в него лягут боевые ключи ЮKassa,
+# они навсегда останутся в истории git.
+.env
+.env.*
+!.env.example
+
+# База данных и пользовательские файлы
+db.sqlite3
+db.sqlite3-journal
+db_test.sqlite3
+/media/
+/private-media/
+/staticfiles/
+
+# Логи
 logs/
 *.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# IDE и ОС
+.idea/
+.vscode/
+.DS_Store
+
+# Тесты и покрытие
+.coverage
+htmlcov/
+.pytest_cache/
