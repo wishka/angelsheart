@@ -112,6 +112,7 @@ fun ConfirmBlockDialog(name: String, onConfirm: () -> Unit, onDismiss: () -> Uni
 fun ReportDialog(
     authorName: String,
     messageText: String,
+    title: String = "Жалоба на сообщение",
     onSubmit: (reason: String, comment: String, alsoBlock: Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -121,7 +122,7 @@ fun ReportDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Жалоба на сообщение") },
+        title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(

@@ -181,6 +181,11 @@ class ChatMessage(models.Model):
     image = models.ImageField('Изображение', upload_to='chat/%Y/%m/', blank=True,
                               storage=private_media_storage)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Правки и удаление автором. modified_at двигается при любом изменении
+    # сообщения — по нему открытый чат забирает правки (?changed_since=)
+    edited_at = models.DateTimeField(null=True, blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    modified_at = models.DateTimeField(auto_now=True, db_index=True)
     # Скрыто модератором или автоматически после нескольких жалоб.
     # Текст не стирается: модератору нужно видеть, на что жаловались,
     # а решение можно отменить.
@@ -367,3 +372,124 @@ class DeviceToken(models.Model):
     class Meta:
         verbose_name = 'Устройство для уведомлений'
         verbose_name_plural = 'Устройства для уведомлений'
+
+
+# ==================== ЛЕНТА ====================
+
+class Follow(models.Model):
+    """Подписка: follower видит в ленте публикации following."""
+
+    follower = models.ForeignKey(User, on_delete=models.CASCADE, related_name='following_set')
+    following = models.ForeignKey(User, on_delete=models.CASCADE, related_name='followers_set')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Подписка'
+        verbose_name_plural = 'Подписки'
+        constraints = [
+            models.UniqueConstraint(fields=['follower', 'following'], name='unique_follow'),
+        ]
+
+
+class Post(models.Model):
+    """
+    Публикация в ленте.
+
+    Видимость:
+      public    — всем, но только если у автора действует согласие на
+                  распространение ПДн (анкета открыта для поиска): пост,
+                  который читает любой, — это распространение;
+      followers — только подписчикам.
+    Без согласия «public» при сохранении превращается в «followers»
+    (services.create_post) — молча расширить круг читателей нельзя.
+    """
+
+    VISIBILITY_PUBLIC = 'public'
+    VISIBILITY_FOLLOWERS = 'followers'
+    VISIBILITY_CHOICES = [
+        (VISIBILITY_PUBLIC, 'Всем'),
+        (VISIBILITY_FOLLOWERS, 'Подписчикам'),
+    ]
+    MAX_LENGTH = 5000
+
+    author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='posts')
+    text = models.TextField(max_length=MAX_LENGTH, blank=True)
+    image = models.ImageField('Изображение', upload_to='posts/%Y/%m/', blank=True,
+                              storage=private_media_storage)
+    visibility = models.CharField(max_length=10, choices=VISIBILITY_CHOICES,
+                                  default=VISIBILITY_FOLLOWERS)
+    is_hidden = models.BooleanField('Скрыто модератором', default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    edited_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Публикация'
+        verbose_name_plural = 'Публикации'
+        ordering = ['-id']
+        indexes = [models.Index(fields=['author', '-id'])]
+
+    def __str__(self):
+        return f'{self.author}: {self.text[:40]}'
+
+
+class PostLike(models.Model):
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='likes')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='post_likes')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['post', 'user'], name='unique_post_like'),
+        ]
+
+
+class PostComment(models.Model):
+    MAX_LENGTH = 1000
+
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='comments')
+    author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='post_comments')
+    text = models.TextField(max_length=MAX_LENGTH)
+    is_hidden = models.BooleanField('Скрыто модератором', default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Комментарий'
+        verbose_name_plural = 'Комментарии'
+        ordering = ['id']
+
+
+class ContentReport(models.Model):
+    """
+    Жалоба на публикацию или комментарий. Устроена как MessageReport:
+    текст копируется в момент подачи, решение модератора — по объекту.
+    """
+
+    post = models.ForeignKey(Post, on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name='reports')
+    comment = models.ForeignKey(PostComment, on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name='reports')
+    reporter = models.ForeignKey(User, on_delete=models.CASCADE, related_name='content_reports')
+    reason = models.CharField('Причина', max_length=10, choices=MessageReport.REASON_CHOICES)
+    comment_text = models.TextField('Комментарий к жалобе', max_length=500, blank=True)
+    content_text = models.TextField('Текст на момент жалобы')
+    author = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name='content_reports_received', verbose_name='Автор')
+    status = models.CharField('Статус', max_length=10, choices=MessageReport.STATUS_CHOICES,
+                              default=MessageReport.STATUS_NEW, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name='+')
+
+    class Meta:
+        verbose_name = 'Жалоба на публикацию'
+        verbose_name_plural = 'Жалобы на публикации'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['post', 'comment', 'reporter'],
+                                    name='unique_content_report'),
+        ]
+
+    @property
+    def target(self):
+        return self.comment or self.post

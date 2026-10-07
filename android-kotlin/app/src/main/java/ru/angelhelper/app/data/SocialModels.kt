@@ -27,6 +27,8 @@ data class Person(
     val hasAvatar: Boolean = false,
     /** Меняется при смене фото — ключ кэша. */
     val avatarVersion: String = "",
+    /** Есть только в карточке человека, в результатах поиска — null. */
+    val follow: FollowInfo? = null,
 ) {
     /** Короткая строка под именем: «28 лет · Москва». */
     val summary: String
@@ -89,8 +91,13 @@ data class ChatMessage(
     val isHidden: Boolean = false,
     /** В сообщении фото; загружается отдельно по id сообщения. */
     val hasImage: Boolean = false,
+    val edited: Boolean = false,
+    val deleted: Boolean = false,
 ) {
-    val canReport: Boolean get() = !isMine && !isHidden && senderId != null
+    /** Своё и не удалённое — можно исправить или удалить. */
+    val canEdit: Boolean get() = isMine && !deleted && !isHidden
+
+    val canReport: Boolean get() = !isMine && !isHidden && !deleted && senderId != null
 
     /** Для строки в списке чатов: фото без подписи — «📷 Фото». */
     val previewText: String

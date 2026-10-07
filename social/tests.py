@@ -599,3 +599,184 @@ class PushTests(SocialTestCase):
 
     def test_empty_token_rejected(self):
         self.assertEqual(self.client.post('/api/devices/', {'token': ''}, format='json').status_code, 400)
+
+
+from social.models import Follow, Post  # noqa: E402
+
+
+class FeedTests(SocialTestCase):
+    def setUp(self):
+        super().setUp()
+        self.anna = make_user('anna', discoverable=True)   # анкета открыта — может публиковать для всех
+        self.ivan = make_user('ivan')                       # анкета закрыта
+        self.anna_client = APIClient()
+        self.anna_client.force_authenticate(self.anna)
+        self.ivan_client = APIClient()
+        self.ivan_client.force_authenticate(self.ivan)
+
+    def post(self, client, text, visibility='followers'):
+        response = client.post('/api/posts/', {'text': text, 'visibility': visibility}, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        return response.json()
+
+    def feed(self, client, scope='following'):
+        return [p['text'] for p in client.get('/api/feed/', {'scope': scope}).json()['results']]
+
+    def test_public_post_requires_distribution_consent(self):
+        anna_post = self.post(self.anna_client, 'Всем привет', 'public')
+        self.assertEqual(anna_post['visibility'], 'public')
+        ivan_post = self.post(self.ivan_client, 'Тоже всем', 'public')
+        self.assertEqual(ivan_post['visibility'], 'followers')
+        self.assertIn('подписчикам', ivan_post['notice'])
+        self.assertEqual(self.feed(self.client, 'all'), ['Всем привет'])
+
+    def test_followers_only_post_visible_after_follow(self):
+        self.post(self.anna_client, 'Для своих')
+        self.assertEqual(self.feed(self.client), [])
+        response = self.client.post(f'/api/people/{self.anna.pk}/follow/', {'follow': True}, format='json')
+        self.assertEqual(response.json()['followers_count'], 1)
+        self.assertEqual(self.feed(self.client), ['Для своих'])
+        self.client.post(f'/api/people/{self.anna.pk}/follow/', {'follow': False}, format='json')
+        self.assertEqual(self.feed(self.client), [])
+
+    def test_cannot_follow_hidden_stranger(self):
+        response = self.client.post(f'/api/people/{self.ivan.pk}/follow/', {'follow': True}, format='json')
+        self.assertEqual(response.status_code, 403)
+
+    def test_block_breaks_follow_and_hides_posts(self):
+        self.client.post(f'/api/people/{self.anna.pk}/follow/', {'follow': True}, format='json')
+        post = self.post(self.anna_client, 'Публично', 'public')
+        services.block_user(self.anna, self.me)
+        self.assertFalse(Follow.objects.exists())
+        self.assertEqual(self.feed(self.client, 'all'), [])
+        self.assertEqual(self.client.get(f"/api/posts/{post['id']}/").status_code, 404)
+
+    def test_like_comment_and_counts(self):
+        post = self.post(self.anna_client, 'Пост', 'public')
+        liked = self.client.post(f"/api/posts/{post['id']}/like/", {'liked': True}, format='json').json()
+        self.assertEqual((liked['likes_count'], liked['liked']), (1, True))
+        self.client.post(f"/api/posts/{post['id']}/like/", {'liked': True}, format='json')  # повтор
+        self.client.post(f"/api/posts/{post['id']}/comments/", {'text': 'Класс'}, format='json')
+        detail = self.client.get(f"/api/posts/{post['id']}/").json()
+        self.assertEqual((detail['likes_count'], detail['comments_count']), (1, 1))
+        comments = self.anna_client.get(f"/api/posts/{post['id']}/comments/").json()['results']
+        self.assertEqual(comments[0]['text'], 'Класс')
+        self.assertTrue(comments[0]['can_delete'])  # автор поста может удалить чужой комментарий
+
+    def test_only_author_edits_and_deletes(self):
+        post = self.post(self.anna_client, 'Было')
+        self.assertEqual(self.client.put(f"/api/posts/{post['id']}/", {'text': 'Х'}, format='json').status_code, 404)
+        edited = self.anna_client.put(f"/api/posts/{post['id']}/", {'text': 'Стало'}, format='json').json()
+        self.assertEqual((edited['text'], edited['edited']), ('Стало', True))
+        self.assertEqual(self.client.delete(f"/api/posts/{post['id']}/").status_code, 404)
+        self.assertEqual(self.anna_client.delete(f"/api/posts/{post['id']}/").status_code, 200)
+        self.assertFalse(Post.objects.exists())
+
+    def test_feed_pagination_by_cursor(self):
+        for i in range(25):
+            Post.objects.create(author=self.anna, text=f'p{i}', visibility='public')
+        first = self.client.get('/api/feed/', {'scope': 'all'}).json()
+        self.assertEqual(len(first['results']), 20)
+        second = self.client.get('/api/feed/', {'scope': 'all', 'before': first['next_before']}).json()
+        self.assertEqual(len(second['results']), 5)
+        self.assertIsNone(second['next_before'])
+        self.assertEqual({p['id'] for p in first['results']} & {p['id'] for p in second['results']}, set())
+
+    def test_reports_hide_post_after_three(self):
+        post = self.post(self.anna_client, 'Спам', 'public')
+        for name in ('r1', 'r2', 'r3'):
+            client = APIClient()
+            client.force_authenticate(make_user(name))
+            self.assertEqual(client.post(f"/api/posts/{post['id']}/report/", {'reason': 'spam'},
+                                         format='json').status_code, 201)
+        self.assertTrue(Post.objects.get().is_hidden)
+        self.assertEqual(self.feed(self.client, 'all'), [])
+        # Автор свой скрытый пост видит, с пометкой
+        own = self.anna_client.get(f"/api/posts/{post['id']}/").json()
+        self.assertTrue(own['is_hidden'])
+
+    def test_profile_counts_and_posts(self):
+        self.post(self.anna_client, 'Один', 'public')
+        self.client.post(f'/api/people/{self.anna.pk}/follow/', {'follow': True}, format='json')
+        person = self.client.get(f'/api/people/{self.anna.pk}/').json()
+        self.assertEqual((person['posts_count'], person['followers_count'], person['is_following']), (1, 1, True))
+        posts = self.client.get(f'/api/people/{self.anna.pk}/posts/').json()['results']
+        self.assertEqual([p['text'] for p in posts], ['Один'])
+
+    def test_erasure_removes_posts_and_follows(self):
+        self.post(self.anna_client, 'Пост', 'public')
+        self.client.post(f'/api/people/{self.anna.pk}/follow/', {'follow': True}, format='json')
+        services.erase_user_social_data(self.anna)
+        self.assertFalse(Post.objects.exists())
+        self.assertFalse(Follow.objects.exists())
+
+
+class MessageEditTests(SocialTestCase):
+    def setUp(self):
+        super().setUp()
+        self.anna = make_user('anna')
+        self.chat, _ = services.get_or_create_direct_chat(self.me, self.anna)
+        self.message = services.send_message(self.chat, self.me, 'Ошибка')
+        self.url = f'/api/chats/{self.chat.pk}/messages/{self.message.pk}/'
+
+    def test_edit_and_poll_changes(self):
+        anna = APIClient()
+        anna.force_authenticate(self.anna)
+        first = anna.get(f'/api/chats/{self.chat.pk}/messages/').json()
+        response = self.client.put(self.url, {'text': 'Исправлено'}, format='json')
+        self.assertEqual(response.json()['text'], 'Исправлено')
+        self.assertTrue(response.json()['edited'])
+        poll = anna.get(f'/api/chats/{self.chat.pk}/messages/', {
+            'after': self.message.pk, 'changed_since': first['server_time'],
+        }).json()
+        self.assertEqual(poll['results'], [])
+        self.assertEqual([m['text'] for m in poll['changed']], ['Исправлено'])
+
+    def test_only_sender_edits_or_deletes(self):
+        anna = APIClient()
+        anna.force_authenticate(self.anna)
+        self.assertEqual(anna.put(self.url, {'text': 'x'}, format='json').status_code, 404)
+        self.assertEqual(anna.delete(self.url).status_code, 404)
+
+    def test_delete_for_everyone(self):
+        self.assertEqual(self.client.delete(self.url).json()['text'], 'Сообщение удалено')
+        thread = self.client.get(f'/api/chats/{self.chat.pk}/messages/').json()['results']
+        self.assertTrue(thread[0]['deleted'])
+        self.assertEqual(self.client.put(self.url, {'text': 'x'}, format='json').status_code, 404)
+
+
+class CommunityAdminTests(SocialTestCase):
+    def setUp(self):
+        super().setUp()
+        self.group = services.create_community(self.me, 'Группа')
+        self.anna, self.ivan = make_user('anna'), make_user('ivan')
+        services.join_community(self.group, self.anna)
+        services.join_community(self.group, self.ivan)
+        self.anna_client = APIClient()
+        self.anna_client.force_authenticate(self.anna)
+        self.base = f'/api/groups/{self.group.pk}/'
+
+    def test_roles_and_removal(self):
+        self.assertEqual(self.anna_client.post(self.base + 'role/', {'user_id': self.ivan.pk, 'role': 'admin'}).status_code, 403)
+        self.client.post(self.base + 'role/', {'user_id': self.anna.pk, 'role': 'admin'})
+        # Администратор исключает участника, но не владельца
+        self.assertEqual(self.anna_client.post(self.base + 'remove/', {'user_id': self.ivan.pk}).status_code, 200)
+        self.assertFalse(ChatMember.objects.filter(chat=self.group.chat, user=self.ivan).exists())
+        self.assertEqual(self.anna_client.post(self.base + 'remove/', {'user_id': self.me.pk}).status_code, 400)
+
+    def test_transfer_ownership(self):
+        response = self.client.post(self.base + 'transfer/', {'user_id': self.anna.pk})
+        self.assertEqual(response.json()['my_status'], 'admin')
+        self.group.refresh_from_db()
+        self.assertEqual(self.group.owner, self.anna)
+        # Теперь прежний владелец может выйти
+        self.assertEqual(self.client.post(self.base + 'leave/').status_code, 200)
+
+    def test_update_and_delete(self):
+        self.assertEqual(self.anna_client.put(self.base, {'name': 'X'}, format='json').status_code, 403)
+        updated = self.client.put(self.base, {'name': 'Новое имя', 'is_private': True}, format='json').json()
+        self.assertEqual((updated['name'], updated['is_private']), ('Новое имя', True))
+        self.assertEqual(self.anna_client.delete(self.base).status_code, 403)
+        self.assertEqual(self.client.delete(self.base).status_code, 200)
+        self.assertFalse(Community.objects.exists())
+        self.assertFalse(Chat.objects.exists())

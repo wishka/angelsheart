@@ -65,15 +65,17 @@ object DemoSocial {
 
     private class DemoCommunity(
         val id: Int,
-        val name: String,
-        val description: String,
-        val topic: Interest?,
-        val isPrivate: Boolean,
-        val owner: String,
+        var name: String,
+        var description: String,
+        var topic: Interest?,
+        var isPrivate: Boolean,
+        var owner: String,
         var myStatus: String,
         var membersCount: Int,
         var chatId: Int,
         val pending: MutableList<ChatMember> = mutableListOf(),
+        /** Администраторы группы (логины) — для управления ролями в демо. */
+        val admins: MutableSet<String> = mutableSetOf(),
     )
 
     private val me = ChatMember(MY_ID, ME, "Вы")
@@ -196,7 +198,12 @@ object DemoSocial {
     }
 
     fun person(id: Int): Outcome<Person> =
-        people.firstOrNull { it.id == id }?.let { Outcome.Ok(it.copy(isBlocked = id in blocked)) }
+        if (id == MY_ID) {
+            Outcome.Ok(
+                Person(MY_ID, ME, profile.displayName.ifBlank { ME }, profile.city, null, profile.gender,
+                    profile.about, profile.interests)
+            )
+        } else people.firstOrNull { it.id == id }?.let { Outcome.Ok(it.copy(isBlocked = id in blocked)) }
             ?: Outcome.Fail("Пользователь не найден или скрыл анкету")
 
     // ==================== ЧАТЫ ====================
@@ -271,12 +278,54 @@ object DemoSocial {
         return Outcome.Ok(info(chat, withMembers = true))
     }
 
-    fun messages(chatId: Int, afterId: Long?): Outcome<List<ChatMessage>> {
+    /** Счётчик правок: «время сервера» демо-режима — по нему отдаются изменённые сообщения. */
+    private var changeVersion = 0L
+    private val changedAt = mutableMapOf<Long, Long>()
+
+    fun messages(chatId: Int, afterId: Long?, changedSince: String? = null): Outcome<MessagesUpdate> {
         val chat = chats.firstOrNull { it.id == chatId } ?: return Outcome.Fail("Чат не найден")
         val list = if (afterId == null) chat.messages.takeLast(50) else chat.messages.filter { it.id > afterId }
         list.lastOrNull()?.let { chat.readUpTo = maxOf(chat.readUpTo, it.id) }
-        return Outcome.Ok(list.map { present(chat, it) })
+        val since = changedSince?.toLongOrNull()
+        val fresh = list.map { it.id }.toSet()
+        val changed = if (since == null) emptyList() else chat.messages.filter {
+            (changedAt[it.id] ?: 0L) > since && it.id !in fresh
+        }
+        return Outcome.Ok(
+            MessagesUpdate(list.map { present(chat, it) }, changed.map { present(chat, it) }, changeVersion.toString())
+        )
     }
+
+    private fun editOwn(chatId: Int, messageId: Long, change: (ChatMessage) -> ChatMessage?): Outcome<ChatMessage> {
+        val chat = chats.firstOrNull { it.id == chatId } ?: return Outcome.Fail("Чат не найден")
+        val index = chat.messages.indexOfFirst { it.id == messageId && it.isMine && !it.deleted }
+        if (index < 0) return Outcome.Fail("Изменить можно только своё сообщение")
+        val updated = change(chat.messages[index]) ?: return Outcome.Fail("Сообщение пустое")
+        chat.messages[index] = updated
+        changedAt[messageId] = ++changeVersion
+        return Outcome.Ok(updated)
+    }
+
+    fun editMessage(chatId: Int, messageId: Long, text: String): Outcome<ChatMessage> =
+        editOwn(chatId, messageId) { message ->
+            val trimmed = text.trim()
+            if (trimmed.isEmpty() && !message.hasImage) null else message.copy(text = trimmed, edited = true)
+        }
+
+    fun deleteMessage(chatId: Int, messageId: Long): Outcome<ChatMessage> =
+        editOwn(chatId, messageId) { message ->
+            messageImages.remove(message.id)
+            message.copy(text = "Сообщение удалено", hasImage = false, deleted = true)
+        }
+
+    /** В демо-переписке не больше 50 сообщений — более ранних нет. */
+    fun olderMessages(): Outcome<Page<ChatMessage>> = Outcome.Ok(Page(emptyList(), null))
+
+    fun isBlocked(userId: Int): Boolean = userId in blocked
+
+    fun personById(userId: Int): Person? = people.firstOrNull { it.id == userId }
+
+    val allPeople: List<Person> get() = people
 
     fun send(chatId: Int, text: String): Outcome<ChatMessage> {
         val chat = chats.firstOrNull { it.id == chatId } ?: return Outcome.Fail("Чат не найден")
@@ -359,7 +408,11 @@ object DemoSocial {
             members = if (member) {
                 (chat?.members ?: listOf(me)).map {
                     CommunityMember(it.id, it.username, it.displayName,
-                        if (it.username == group.owner) "owner" else "member")
+                        when (it.username) {
+                            group.owner -> "owner"
+                            in group.admins -> "admin"
+                            else -> "member"
+                        })
                 }
             } else emptyList(),
             pendingRequests = if (group.myStatus == "owner" || group.myStatus == "admin") group.pending.toList() else emptyList(),
@@ -402,7 +455,7 @@ object DemoSocial {
         return Outcome.Ok(view(group))
     }
 
-    fun action(id: Int, action: String, userId: Int?): Outcome<CommunityReply> {
+    fun action(id: Int, action: String, userId: Int?, role: String? = null): Outcome<CommunityReply> {
         val group = communities.firstOrNull { it.id == id } ?: return Outcome.Fail("Группа не найдена")
         val text = when (action) {
             "join" -> when {
@@ -448,9 +501,73 @@ object DemoSocial {
                     "Заявка отклонена"
                 }
             }
+            "role", "transfer", "remove" -> when (val result = adminAction(group, action, userId, role)) {
+                is Outcome.Ok -> result.value
+                is Outcome.Fail -> return Outcome.Fail(result.message)
+            }
             else -> return Outcome.Fail("Неизвестное действие")
         }
         return Outcome.Ok(CommunityReply(view(group), text))
+    }
+
+    /** Роли, передача и исключение. Правила как на сервере. */
+    private fun adminAction(group: DemoCommunity, action: String, userId: Int?, role: String?): Outcome<String> {
+        val ownerOnly = Outcome.Fail("Это может только владелец группы")
+        val chat = chats.firstOrNull { it.id == group.chatId }
+        val member = chat?.members?.firstOrNull { it.id == userId } ?: return Outcome.Fail("Участник не найден")
+        return when (action) {
+            "role" -> when {
+                group.myStatus != "owner" -> ownerOnly
+                member.username == group.owner -> Outcome.Fail("Роль владельца меняется передачей группы")
+                else -> {
+                    if (role == "admin") group.admins += member.username else group.admins -= member.username
+                    Outcome.Ok("${member.username} теперь ${if (role == "admin") "администратор" else "участник"}")
+                }
+            }
+            "transfer" -> when {
+                group.myStatus != "owner" -> ownerOnly
+                member.username == ME -> Outcome.Fail("Вы и так владелец")
+                else -> {
+                    group.owner = member.username
+                    group.admins -= member.username
+                    group.admins += ME
+                    group.myStatus = "admin"
+                    Outcome.Ok("Владелец группы теперь ${member.username}")
+                }
+            }
+            else -> when {  // remove
+                group.myStatus != "owner" && group.myStatus != "admin" ->
+                    Outcome.Fail("Это может только администратор группы")
+                member.username == group.owner -> Outcome.Fail("Владельца исключить нельзя")
+                member.username in group.admins && group.myStatus != "owner" ->
+                    Outcome.Fail("Администратора может исключить только владелец")
+                else -> {
+                    chat.members.remove(member)
+                    group.admins -= member.username
+                    group.membersCount -= 1
+                    Outcome.Ok("${member.username} исключён из группы")
+                }
+            }
+        }
+    }
+
+    fun update(id: Int, name: String, description: String, topic: String, isPrivate: Boolean): Outcome<Community> {
+        val group = communities.firstOrNull { it.id == id } ?: return Outcome.Fail("Группа не найдена")
+        if (group.myStatus != "owner" && group.myStatus != "admin") return Outcome.Fail("Это может только администратор группы")
+        if (name.isBlank()) return Outcome.Fail("Укажите название группы")
+        group.name = name.trim()
+        group.description = description.trim()
+        group.topic = interests.firstOrNull { it.slug == topic }
+        group.isPrivate = isPrivate
+        return Outcome.Ok(view(group))
+    }
+
+    fun delete(id: Int): Outcome<String> {
+        val group = communities.firstOrNull { it.id == id } ?: return Outcome.Fail("Группа не найдена")
+        if (group.myStatus != "owner") return Outcome.Fail("Это может только владелец группы")
+        communities.remove(group)
+        chats.removeAll { it.id == group.chatId }
+        return Outcome.Ok("Группа удалена")
     }
 
     /** Группе без обсуждения в демо-данных оно создаётся при вступлении. */

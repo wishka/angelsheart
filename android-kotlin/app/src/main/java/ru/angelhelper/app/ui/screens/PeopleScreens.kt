@@ -39,6 +39,7 @@ import ru.angelhelper.app.data.PeopleFilter
 import ru.angelhelper.app.data.Person
 import ru.angelhelper.app.data.SocialProfile
 import ru.angelhelper.app.data.ageTitle
+import ru.angelhelper.app.data.plural
 import ru.angelhelper.app.ui.AppViewModel
 import ru.angelhelper.app.ui.EmptyNote
 import ru.angelhelper.app.ui.Field
@@ -48,7 +49,7 @@ import ru.angelhelper.app.ui.PrimaryButton
 import ru.angelhelper.app.ui.RemoteImage
 import ru.angelhelper.app.ui.Screen
 import ru.angelhelper.app.ui.SecondaryButton
-import ru.angelhelper.app.ui.StubBanner
+import ru.angelhelper.app.ui.Notice
 import ru.angelhelper.app.ui.UiState
 
 // ==================== ОБЩИЕ ЧАСТИ СООБЩЕСТВА ====================
@@ -97,28 +98,6 @@ fun PersonAvatar(
             .clip(CircleShape),
         placeholder = { Initials(name, size) },
     )
-}
-
-/**
- * Переключатель «Люди | Группы» сверху раздела сообщества.
- *
- * Одна вкладка нижней панели на оба экрана: панель и так держит пять
- * разделов, шестой сжал бы подписи до нечитаемых.
- */
-@Composable
-fun CommunitySwitch(vm: AppViewModel, peopleSelected: Boolean) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(
-            selected = peopleSelected,
-            onClick = { if (!peopleSelected) vm.goRoot(Screen.People) },
-            label = { Text("Люди") },
-        )
-        FilterChip(
-            selected = !peopleSelected,
-            onClick = { if (peopleSelected) vm.goRoot(Screen.Groups) },
-            label = { Text("Группы") },
-        )
-    }
 }
 
 /** Ряд переключаемых меток: интересы, пол, тема группы. */
@@ -182,8 +161,6 @@ fun PeopleScreen(vm: AppViewModel, state: UiState) {
         )
     )
 
-    CommunitySwitch(vm, peopleSelected = true)
-
     Panel(title = "Поиск людей") {
         Field(query, { query = it }, "Имя, @логин или город")
         if (showFilters) {
@@ -214,7 +191,7 @@ fun PeopleScreen(vm: AppViewModel, state: UiState) {
         PrimaryButton("Найти", busy = state.busy, onClick = { search() })
     }
 
-    Panel(title = if (state.people.isEmpty()) "Результаты" else "Найдено: ${state.people.size}") {
+    Panel(title = if (state.people.isEmpty()) "Результаты" else "Показано: ${state.people.size}") {
         if (state.people.isEmpty()) {
             EmptyNote("Никого не нашли. Попробуйте ослабить фильтры.")
         } else {
@@ -222,6 +199,9 @@ fun PeopleScreen(vm: AppViewModel, state: UiState) {
                 PersonRow(vm, person) { vm.go(Screen.PersonDetail(person.id)) }
                 if (index != state.people.lastIndex) HorizontalDivider()
             }
+        }
+        if (state.peopleNext != null) {
+            SecondaryButton("Показать ещё", onClick = { vm.morePeople() })
         }
         Caption(
             "В поиске только те, кто сам открыл свою анкету. Написать можно и " +
@@ -284,9 +264,28 @@ fun PersonDetailScreen(vm: AppViewModel, state: UiState, id: Int) {
         }
     }
 
+    person.follow?.let { follow ->
+        Panel {
+            Caption(
+                listOf(
+                    plural(follow.postsCount, "запись", "записи", "записей"),
+                    plural(follow.followersCount, "подписчик", "подписчика", "подписчиков"),
+                    plural(follow.followingCount, "подписка", "подписки", "подписок"),
+                ).joinToString(" · ")
+            )
+            when {
+                follow.isFollowing -> SecondaryButton("Отписаться", onClick = { vm.follow(person.id, false) })
+                follow.canFollow -> PrimaryButton("Подписаться", busy = state.busy, onClick = { vm.follow(person.id, true) })
+            }
+        }
+    }
+
     var confirmBlock by remember(id) { mutableStateOf(false) }
-    if (person.isBlocked) {
-        StubBanner("${person.displayName} в вашем чёрном списке: переписка закрыта для обоих.")
+    val isMe = person.id == state.socialProfile?.userId || person.username == vm.currentUsername
+    if (isMe) {
+        PrimaryButton("Новая запись", onClick = { vm.go(Screen.NewPost) })
+    } else if (person.isBlocked) {
+        Notice("${person.displayName} в вашем чёрном списке: переписка закрыта для обоих.")
         Panel {
             PrimaryButton("Разблокировать", busy = state.busy, onClick = { vm.unblock(person.id) })
         }
@@ -303,6 +302,17 @@ fun PersonDetailScreen(vm: AppViewModel, state: UiState, id: Int) {
             onConfirm = { vm.block(person.username) },
             onDismiss = { confirmBlock = false },
         )
+    }
+
+    // Записи человека: те, что вам видны (публичные или для подписчиков)
+    if (state.personPosts.isNotEmpty()) {
+        Text("Записи", style = MaterialTheme.typography.titleMedium)
+        state.personPosts.forEach { post ->
+            PostCard(vm, post, onOpen = { vm.go(Screen.PostDetail(post.id)) })
+        }
+        if (state.personPostsNext != null) {
+            SecondaryButton("Показать ещё", onClick = { vm.morePersonPosts(person.id) })
+        }
     }
 }
 
@@ -362,7 +372,7 @@ fun SocialProfileEditScreen(vm: AppViewModel, state: UiState) {
     }
 
     if (profile.isDiscoverable && !profile.distributionConsent) {
-        StubBanner(
+        Notice(
             "Согласие на распространение персональных данных отозвано, поэтому " +
                 "анкета в поиске не видна. Сохраните анкету с включённым показом, " +
                 "чтобы дать согласие снова."

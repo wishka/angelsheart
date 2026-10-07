@@ -123,6 +123,10 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 
+    // Юнит-тесты (app/src/test): правила демо-режима, склейка страниц,
+    // модели. Выполняются на JVM без эмулятора: ./gradlew testDebugUnitTest
+    testImplementation("junit:junit:4.13.2")
+
     // Push-уведомления. Единственная зависимость не из AndroidX: доставку
     // на Android без собственного постоянного соединения делает только
     // Firebase Cloud Messaging. Текст сообщений через него не идёт —

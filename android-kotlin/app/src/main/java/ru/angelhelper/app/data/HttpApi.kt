@@ -431,21 +431,14 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         )
     }
 
-    override suspend fun fundraises(search: String): Outcome<List<Fundraise>> = request {
-        val path = if (search.isBlank()) {
-            "api/fundraises/"
-        } else {
-            "api/fundraises/?search=" + java.net.URLEncoder.encode(search, "UTF-8")
-        }
+    override suspend fun fundraises(search: String, page: Int): Outcome<Page<Fundraise>> = request {
+        val path = withQuery(
+            "api/fundraises/",
+            listOf("search" to search.trim(), "page" to page.toString()),
+        )
         val reply = authorized(path, "GET", null)
         if (reply.code !in 200..299) return@request failure(reply)
-
-        val items = itemsOf(reply.body)
-        val list = ArrayList<Fundraise>(items.length())
-        for (index in 0 until items.length()) {
-            list.add(fundraiseOf(items.getJSONObject(index)))
-        }
-        Outcome.Ok(list)
+        Outcome.Ok(pageOf(reply.body, page, ::fundraiseOf))
     }
 
     override suspend fun fundraise(id: Int): Outcome<Fundraise> = request {
@@ -497,16 +490,10 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         Outcome.Ok("Перевод на ${money(json, "amount")} ₽ отправлен пользователю $receiver")
     }
 
-    override suspend fun transactions(): Outcome<List<Tx>> = request {
-        val reply = authorized("api/transactions/", "GET", null)
+    override suspend fun transactions(page: Int): Outcome<Page<Tx>> = request {
+        val reply = authorized(withQuery("api/transactions/", listOf("page" to page.toString())), "GET", null)
         if (reply.code !in 200..299) return@request failure(reply)
-
-        val items = itemsOf(reply.body)
-        val list = ArrayList<Tx>(items.length())
-        for (index in 0 until items.length()) {
-            list.add(txOf(items.getJSONObject(index)))
-        }
-        Outcome.Ok(list)
+        Outcome.Ok(pageOf(reply.body, page, ::txOf))
     }
 
     override suspend fun leaders(): Outcome<List<Leader>> = request {
@@ -622,6 +609,8 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         senderId = json.intOrNull("sender_id"),
         isHidden = json.optBoolean("is_hidden", false),
         hasImage = json.optBoolean("has_image", false),
+        edited = json.optBoolean("edited", false),
+        deleted = json.optBoolean("deleted", false),
     )
 
     private fun memberOf(json: JSONObject) = ChatMember(
@@ -675,6 +664,45 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         return Outcome.Ok(parseList(itemsOf(reply.body), parse))
     }
 
+    /**
+     * Страница по номеру. DRF отдаёт {count, next, results}: next — адрес
+     * следующей страницы или null. Номер следующей считается здесь, а не
+     * берётся из адреса: в нём хост сервера, каким его видит Django за
+     * прокси, и он может не совпасть с тем, куда ходит приложение.
+     */
+    private fun <T> pageOf(body: String, page: Int, parse: (JSONObject) -> T): Page<T> {
+        val trimmed = body.trim()
+        if (trimmed.startsWith("[")) return Page(parseList(JSONArray(trimmed), parse), null)
+        val json = JSONObject(trimmed)
+        val hasNext = !json.isNull("next") && json.optString("next", "").isNotEmpty()
+        return Page(parseList(json.optJSONArray("results"), parse), if (hasNext) (page + 1).toString() else null)
+    }
+
+    /** Страница по курсору: {results, next_before} — лента, комментарии. */
+    private fun <T> cursorPageOf(body: String, parse: (JSONObject) -> T): Page<T> {
+        val json = JSONObject(body)
+        val next = if (json.isNull("next_before")) null else json.optLong("next_before").toString()
+        return Page(parseList(json.optJSONArray("results"), parse), next)
+    }
+
+    private fun <T> getPage(path: String, page: Int, parse: (JSONObject) -> T): Outcome<Page<T>> {
+        val reply = authorized(withQuery(path.substringBefore('?'), queryPairs(path) + ("page" to page.toString())), "GET", null)
+        if (reply.code !in 200..299) return failure(reply)
+        return Outcome.Ok(pageOf(reply.body, page, parse))
+    }
+
+    private fun <T> getCursorPage(path: String, before: String?, parse: (JSONObject) -> T): Outcome<Page<T>> {
+        val reply = authorized(withQuery(path.substringBefore('?'), queryPairs(path) + ("before" to (before ?: ""))), "GET", null)
+        if (reply.code !in 200..299) return failure(reply)
+        return Outcome.Ok(cursorPageOf(reply.body, parse))
+    }
+
+    /** Параметры уже собранного адреса — чтобы добавить к ним страницу. */
+    private fun queryPairs(path: String): List<Pair<String, String>> =
+        path.substringAfter('?', "").split('&').filter { it.contains('=') }.map {
+            it.substringBefore('=') to java.net.URLDecoder.decode(it.substringAfter('='), "UTF-8")
+        }
+
     private fun <T> getOne(path: String, method: String, payload: JSONObject?, parse: (JSONObject) -> T): Outcome<T> {
         val reply = authorized(path, method, payload)
         if (reply.code !in 200..299) return failure(reply)
@@ -705,7 +733,7 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         getOne("api/profile/", "PUT", payload, ::socialProfileOf)
     }
 
-    override suspend fun people(filter: PeopleFilter): Outcome<List<Person>> = request {
+    override suspend fun people(filter: PeopleFilter, page: Int): Outcome<Page<Person>> = request {
         val path = withQuery(
             "api/people/",
             listOf(
@@ -717,15 +745,25 @@ class HttpApi(private val prefs: AppPrefs) : Api {
                 "interests" to filter.interests.joinToString(","),
             ),
         )
-        getList(path, ::personOf)
+        getPage(path, page, ::personOf)
     }
 
     override suspend fun person(id: Int): Outcome<Person> = request {
-        getOne("api/people/$id/", "GET", null, ::personOf)
+        getOne("api/people/$id/", "GET", null) { json ->
+            personOf(json).copy(follow = followOf(json))
+        }
     }
 
-    override suspend fun chats(): Outcome<List<ChatInfo>> = request {
-        getList("api/chats/", ::chatOf)
+    private fun followOf(json: JSONObject) = FollowInfo(
+        followersCount = json.optInt("followers_count"),
+        followingCount = json.optInt("following_count"),
+        postsCount = json.optInt("posts_count"),
+        isFollowing = json.optBoolean("is_following", false),
+        canFollow = json.optBoolean("can_follow", false),
+    )
+
+    override suspend fun chats(page: Int): Outcome<Page<ChatInfo>> = request {
+        getPage("api/chats/", page, ::chatOf)
     }
 
     override suspend fun chat(id: Int): Outcome<ChatInfo> = request {
@@ -738,11 +776,40 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         getOne("api/chats/", "POST", JSONObject().put("usernames", names).put("title", title), ::chatOf)
     }
 
-    override suspend fun messages(chatId: Int, afterId: Long?): Outcome<List<ChatMessage>> = request {
-        val path = withQuery("api/chats/$chatId/messages/", listOf("after" to (afterId?.toString() ?: "")))
-        val reply = authorized(path, "GET", null)
+    override suspend fun messages(chatId: Int, afterId: Long?, changedSince: String?): Outcome<MessagesUpdate> =
+        request {
+            val path = withQuery(
+                "api/chats/$chatId/messages/",
+                listOf("after" to (afterId?.toString() ?: ""), "changed_since" to (changedSince ?: "")),
+            )
+            val reply = authorized(path, "GET", null)
+            if (reply.code !in 200..299) return@request failure(reply)
+            val json = JSONObject(reply.body)
+            Outcome.Ok(
+                MessagesUpdate(
+                    items = parseList(json.optJSONArray("results"), ::messageOf),
+                    changed = parseList(json.optJSONArray("changed"), ::messageOf),
+                    serverTime = json.text("server_time"),
+                    hasMore = json.optBoolean("has_more", false),
+                )
+            )
+        }
+
+    override suspend fun olderMessages(chatId: Int, beforeId: Long): Outcome<Page<ChatMessage>> = request {
+        val reply = authorized("api/chats/$chatId/messages/?before=$beforeId", "GET", null)
         if (reply.code !in 200..299) return@request failure(reply)
-        Outcome.Ok(parseList(JSONObject(reply.body).optJSONArray("results"), ::messageOf))
+        val json = JSONObject(reply.body)
+        val items = parseList(json.optJSONArray("results"), ::messageOf)
+        val hasMore = json.optBoolean("has_more", false)
+        Outcome.Ok(Page(items, if (hasMore && items.isNotEmpty()) items.first().id.toString() else null))
+    }
+
+    override suspend fun editMessage(chatId: Int, messageId: Long, text: String): Outcome<ChatMessage> = request {
+        getOne("api/chats/$chatId/messages/$messageId/", "PUT", JSONObject().put("text", text), ::messageOf)
+    }
+
+    override suspend fun deleteMessage(chatId: Int, messageId: Long): Outcome<ChatMessage> = request {
+        getOne("api/chats/$chatId/messages/$messageId/", "DELETE", null, ::messageOf)
     }
 
     override suspend fun sendMessage(chatId: Int, text: String): Outcome<ChatMessage> = request {
@@ -753,12 +820,12 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         getOne("api/chats/$chatId/leave/", "POST", JSONObject()) { it.text("message") }
     }
 
-    override suspend fun communities(search: String, mineOnly: Boolean): Outcome<List<Community>> = request {
+    override suspend fun communities(search: String, mineOnly: Boolean, page: Int): Outcome<Page<Community>> = request {
         val path = withQuery(
             "api/groups/",
             listOf("search" to search.trim(), "mine" to if (mineOnly) "1" else ""),
         )
-        getList(path, ::communityOf)
+        getPage(path, page, ::communityOf)
     }
 
     override suspend fun community(id: Int): Outcome<Community> = request {
@@ -779,10 +846,11 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         getOne("api/groups/", "POST", payload, ::communityOf)
     }
 
-    override suspend fun communityAction(id: Int, action: String, userId: Int?): Outcome<CommunityReply> =
+    override suspend fun communityAction(id: Int, action: String, userId: Int?, role: String?): Outcome<CommunityReply> =
         request {
             val payload = JSONObject()
             if (userId != null) payload.put("user_id", userId)
+            if (role != null) payload.put("role", role)
             getOne("api/groups/$id/$action/", "POST", payload) { json ->
                 CommunityReply(communityOf(json), json.text("message"))
             }
@@ -793,6 +861,214 @@ class HttpApi(private val prefs: AppPrefs) : Api {
     override suspend fun registerDevice(token: String): Outcome<Unit> = request {
         getOne("api/devices/", "POST", JSONObject().put("token", token).put("platform", "android")) { }
     }
+
+    override suspend fun updateCommunity(
+        id: Int,
+        name: String,
+        description: String,
+        topic: String,
+        isPrivate: Boolean,
+    ): Outcome<Community> = request {
+        val payload = JSONObject()
+            .put("name", name)
+            .put("description", description)
+            .put("topic", topic)
+            .put("is_private", isPrivate)
+        getOne("api/groups/$id/", "PUT", payload, ::communityOf)
+    }
+
+    override suspend fun deleteCommunity(id: Int): Outcome<String> = request {
+        getOne("api/groups/$id/", "DELETE", null) { it.text("message") }
+    }
+
+    // ==================== ЛЕНТА ====================
+
+    private fun authorOf(json: JSONObject) = Author(
+        id = json.optInt("id"),
+        username = json.text("username"),
+        displayName = json.text("display_name").ifBlank { json.text("username") },
+        hasAvatar = json.optBoolean("has_avatar", false),
+        avatarVersion = json.text("avatar_version"),
+    )
+
+    private fun postOf(json: JSONObject) = Post(
+        id = json.optLong("id"),
+        author = authorOf(json.optJSONObject("author") ?: JSONObject()),
+        text = json.text("text"),
+        hasImage = json.optBoolean("has_image", false),
+        visibility = json.text("visibility"),
+        createdAt = json.text("created_at"),
+        edited = json.optBoolean("edited", false),
+        isMine = json.optBoolean("is_mine", false),
+        isHidden = json.optBoolean("is_hidden", false),
+        likesCount = json.optInt("likes_count"),
+        commentsCount = json.optInt("comments_count"),
+        liked = json.optBoolean("liked", false),
+    )
+
+    private fun commentOf(json: JSONObject) = PostComment(
+        id = json.optLong("id"),
+        author = authorOf(json.optJSONObject("author") ?: JSONObject()),
+        text = json.text("text"),
+        createdAt = json.text("created_at"),
+        isMine = json.optBoolean("is_mine", false),
+        canDelete = json.optBoolean("can_delete", false),
+    )
+
+    override suspend fun feed(scope: String, before: String?): Outcome<Page<Post>> = request {
+        getCursorPage("api/feed/?scope=$scope", before, ::postOf)
+    }
+
+    override suspend fun personPosts(userId: Int, before: String?): Outcome<Page<Post>> = request {
+        getCursorPage("api/people/$userId/posts/", before, ::postOf)
+    }
+
+    override suspend fun post(id: Long): Outcome<Post> = request {
+        getOne("api/posts/$id/", "GET", null, ::postOf)
+    }
+
+    override suspend fun createPost(text: String, jpeg: ByteArray?, visibility: String): Outcome<PostResult> =
+        request {
+            val reply = authorizedBinary(
+                "api/posts/", "POST",
+                fields = mapOf("text" to text, "visibility" to visibility),
+                part = jpeg?.let(::photo),
+            ).asReply()
+            if (reply.code !in 200..299) return@request failure(reply)
+            val json = JSONObject(reply.body)
+            Outcome.Ok(PostResult(postOf(json), json.text("notice")))
+        }
+
+    override suspend fun editPost(id: Long, text: String): Outcome<Post> = request {
+        getOne("api/posts/$id/", "PUT", JSONObject().put("text", text), ::postOf)
+    }
+
+    override suspend fun deletePost(id: Long): Outcome<String> = request {
+        getOne("api/posts/$id/", "DELETE", null) { it.text("message") }
+    }
+
+    override suspend fun likePost(id: Long, liked: Boolean): Outcome<Post> = request {
+        getOne("api/posts/$id/like/", "POST", JSONObject().put("liked", liked), ::postOf)
+    }
+
+    override suspend fun comments(postId: Long, before: String?): Outcome<Page<PostComment>> = request {
+        getCursorPage("api/posts/$postId/comments/", before, ::commentOf)
+    }
+
+    override suspend fun addComment(postId: Long, text: String): Outcome<PostComment> = request {
+        getOne("api/posts/$postId/comments/", "POST", JSONObject().put("text", text), ::commentOf)
+    }
+
+    override suspend fun deleteComment(postId: Long, commentId: Long): Outcome<String> = request {
+        getOne("api/posts/$postId/comments/$commentId/", "DELETE", null) { it.text("message") }
+    }
+
+    override suspend fun reportPost(
+        postId: Long,
+        commentId: Long?,
+        reason: String,
+        comment: String,
+        alsoBlock: Boolean,
+    ): Outcome<String> = request {
+        val payload = JSONObject().put("reason", reason).put("comment", comment).put("block", alsoBlock)
+        if (commentId != null) payload.put("comment_id", commentId)
+        getOne("api/posts/$postId/report/", "POST", payload) { it.text("message") }
+    }
+
+    override suspend fun follow(userId: Int, follow: Boolean): Outcome<FollowInfo> = request {
+        getOne("api/people/$userId/follow/", "POST", JSONObject().put("follow", follow)) { json ->
+            FollowInfo(
+                followersCount = json.optInt("followers_count"),
+                followingCount = json.optInt("following_count"),
+                postsCount = json.optInt("posts_count"),
+                isFollowing = json.optBoolean("is_following", follow),
+                canFollow = true,
+            )
+        }
+    }
+
+    override suspend fun postImage(id: Long): Outcome<ByteArray> = request {
+        bytesOrFailure(authorizedBinary("api/posts/$id/image/", "GET"))
+    }
+
+    // ==================== КОШЕЛЁК ====================
+
+    private fun choices(array: JSONArray?) = parseList(array) { Choice(it.text("id"), it.text("title")) }
+
+    override suspend fun wallet(): Outcome<WalletInfo> = request {
+        getOne("api/wallet/", "GET", null) { json ->
+            val topup = json.optJSONObject("topup") ?: JSONObject()
+            val withdraw = json.optJSONObject("withdraw") ?: JSONObject()
+            WalletInfo(
+                balance = money(json, "balance"),
+                topupMin = money(topup, "min_amount"),
+                topupMax = money(topup, "max_amount"),
+                topupMethods = choices(topup.optJSONArray("methods")),
+                topupSimulated = topup.optBoolean("simulated", false),
+                withdrawMin = money(withdraw, "min_amount"),
+                withdrawMax = money(withdraw, "max_amount"),
+                withdrawMethods = choices(withdraw.optJSONArray("methods")),
+                sbpBanks = choices(withdraw.optJSONArray("sbp_banks")),
+                verificationLevel = json.text("verification_level"),
+            )
+        }
+    }
+
+    override suspend fun topUp(amount: String, method: String): Outcome<TopUpResult> = request {
+        val payload = JSONObject().put("amount", amount).put("payment_method", method)
+        getOne("api/wallet/topup/", "POST", payload) { json ->
+            TopUpResult(
+                completed = json.text("status") == "completed",
+                message = json.text("message"),
+                confirmationUrl = json.text("confirmation_url").ifBlank { null },
+            )
+        }
+    }
+
+    private fun withdrawalOf(json: JSONObject) = Withdrawal(
+        id = json.optInt("id"),
+        amount = money(json, "amount"),
+        methodTitle = json.text("payment_method_display"),
+        details = json.text("details"),
+        status = json.text("status"),
+        statusTitle = json.text("status_display"),
+        createdAt = json.text("created_at"),
+        canCancel = json.optBoolean("can_cancel", false),
+    )
+
+    override suspend fun withdrawals(): Outcome<List<Withdrawal>> = request {
+        getList("api/wallet/withdrawals/", ::withdrawalOf)
+    }
+
+    override suspend fun createWithdrawal(fields: Map<String, String>): Outcome<String> = request {
+        val payload = JSONObject()
+        fields.forEach { (key, value) -> payload.put(key, value) }
+        getOne("api/wallet/withdrawals/", "POST", payload) { it.text("message") }
+    }
+
+    override suspend fun cancelWithdrawal(id: Int): Outcome<String> = request {
+        getOne("api/wallet/withdrawals/$id/cancel/", "POST", JSONObject()) { it.text("message") }
+    }
+
+    override suspend fun verification(): Outcome<VerificationInfo> = request {
+        getOne("api/verification/", "GET", null) { json ->
+            val limits = json.optJSONObject("limits") ?: JSONObject()
+            val limitMap = LinkedHashMap<String, String>()
+            limits.keys().forEach { key -> limitMap[key] = money(limits, key) }
+            VerificationInfo(
+                level = json.text("level"),
+                levelTitle = json.text("level_display"),
+                submitted = json.optBoolean("submitted", false),
+                passportMasked = json.text("passport_masked"),
+                limits = limitMap,
+                documents = parseList(json.optJSONArray("documents")) {
+                    KycDocument(it.optInt("id"), it.text("type_display"), it.text("status_display"), it.text("uploaded_at"))
+                },
+                documentTypes = choices(json.optJSONArray("document_types")),
+            )
+        }
+    }
+
 
     override suspend fun unregisterDevice(token: String): Outcome<Unit> = request {
         getOne("api/devices/unregister/", "POST", JSONObject().put("token", token)) { }
@@ -869,28 +1145,34 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         getOne("api/chats/$chatId/messages/$messageId/report/", "POST", payload) { it.text("message") }
     }
 
-    // ==================== ЗАГЛУШКИ ====================
-    // Этих точек в серверном API нет. Реализации совпадают с демо-режимом
-    // намеренно: пусть отказ выглядит одинаково, где бы ни работало
-    // приложение, и пусть нигде не создаётся впечатления, будто деньги
-    // действительно пришли.
-
-    override suspend fun topUp(amount: String, method: String): Outcome<String> =
-        Demo.topUpReply(amount)
-
-    override suspend fun withdraw(
-        amount: String,
-        method: String,
-        target: String,
-    ): Outcome<String> = Demo.withdrawReply(amount)
-
     override suspend fun submitVerification(
         fullName: String,
         birthDate: String,
         series: String,
         number: String,
-    ): Outcome<String> = Demo.verificationReply()
+    ): Outcome<String> = request {
+        val payload = JSONObject()
+            .put("full_name", fullName)
+            .put("birth_date", birthDate)
+            .put("passport_series", series)
+            .put("passport_number", number)
+        getOne("api/verification/", "POST", payload) { it.text("message") }
+    }
 
-    override suspend fun resetPassword(email: String): Outcome<String> =
-        Demo.passwordResetReply(email)
+    override suspend fun uploadDocument(type: String, jpeg: ByteArray): Outcome<String> = request {
+        val reply = authorizedBinary(
+            "api/verification/documents/", "POST",
+            fields = mapOf("document_type" to type),
+            part = Part("document_image", "document.jpg", "image/jpeg", jpeg),
+        ).asReply()
+        if (reply.code !in 200..299) return@request failure(reply)
+        Outcome.Ok(JSONObject(reply.body).text("message"))
+    }
+
+    override suspend fun resetPassword(email: String): Outcome<String> = request {
+        // Без токена: человек как раз не может войти
+        val reply = call("api/auth/password-reset/", "POST", JSONObject().put("email", email), null)
+        if (reply.code !in 200..299) return@request Outcome.Fail(errorText(reply))
+        Outcome.Ok(JSONObject(reply.body).text("message"))
+    }
 }

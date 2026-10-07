@@ -150,15 +150,9 @@ fun LabelValue(label: String, value: String, strong: Boolean = false) {
     }
 }
 
-/**
- * Заметное предупреждение о том, что экран — заглушка.
- *
- * Стоит на каждом экране, за которым нет серверной операции. Без такой
- * пометки тестовое приложение врёт: человек видит «заявка создана» и
- * решает, что деньги действительно ушли.
- */
+/** Заметная плашка-пояснение: демо-режим, чёрный список и т. п. */
 @Composable
-fun StubBanner(text: String) {
+fun Notice(text: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(

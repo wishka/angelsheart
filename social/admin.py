@@ -109,3 +109,54 @@ class MessageReportAdmin(admin.ModelAdmin):
     @admin.action(description='Отклонить: оставить сообщение')
     def reject_reports(self, request, queryset):
         self._resolve(request, queryset, accept=False)
+
+
+from .models import ContentReport, Post  # noqa: E402
+
+
+@admin.register(Post)
+class PostAdmin(admin.ModelAdmin):
+    list_display = ['id', 'author', 'visibility', 'is_hidden', 'created_at']
+    list_filter = ['visibility', 'is_hidden']
+    search_fields = ['author__username', 'text']
+    raw_id_fields = ['author']
+
+
+@admin.register(ContentReport)
+class ContentReportAdmin(admin.ModelAdmin):
+    """Жалобы на публикации и комментарии — так же, как на сообщения."""
+
+    list_display = ['id', 'created_at', 'reason', 'status', 'author', 'reporter', 'kind', 'short_text']
+    list_filter = ['status', 'reason']
+    search_fields = ['author__username', 'reporter__username', 'content_text']
+    readonly_fields = ['post', 'comment', 'reporter', 'reason', 'comment_text', 'content_text',
+                       'author', 'created_at', 'resolved_at', 'resolved_by']
+    fields = readonly_fields + ['status']
+    actions = ['accept_reports', 'reject_reports']
+
+    @admin.display(description='Что')
+    def kind(self, report):
+        return 'комментарий' if report.comment_id else 'публикация'
+
+    @admin.display(description='Текст')
+    def short_text(self, report):
+        return report.content_text[:80]
+
+    def _resolve(self, request, queryset, accept):
+        from .feed import resolve_content_reports
+        done = set()
+        for report in queryset:
+            key = (report.post_id, report.comment_id)
+            if key in done or report.target is None:
+                continue
+            resolve_content_reports(report, request.user, accept)
+            done.add(key)
+        self.message_user(request, f'Обработано: {len(done)}', level=admin_messages.SUCCESS)
+
+    @admin.action(description='Принять: скрыть')
+    def accept_reports(self, request, queryset):
+        self._resolve(request, queryset, accept=True)
+
+    @admin.action(description='Отклонить: оставить')
+    def reject_reports(self, request, queryset):
+        self._resolve(request, queryset, accept=False)

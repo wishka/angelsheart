@@ -33,6 +33,17 @@ import ru.angelhelper.app.data.Profile
 import ru.angelhelper.app.data.SESSION_EXPIRED
 import ru.angelhelper.app.data.TWO_FACTOR_REQUIRED
 import ru.angelhelper.app.data.Tx
+import ru.angelhelper.app.data.FollowInfo
+import ru.angelhelper.app.data.MessagesUpdate
+import ru.angelhelper.app.data.Page
+import ru.angelhelper.app.data.Post
+import ru.angelhelper.app.data.PostComment
+import ru.angelhelper.app.data.PostResult
+import ru.angelhelper.app.data.TopUpResult
+import ru.angelhelper.app.data.VerificationInfo
+import ru.angelhelper.app.data.WalletInfo
+import ru.angelhelper.app.data.Withdrawal
+import ru.angelhelper.app.data.appendPage
 
 /**
  * Экраны приложения.
@@ -46,6 +57,7 @@ sealed interface Screen {
     data object Login : Screen
     data object Register : Screen
     data object PasswordReset : Screen
+    /** Кошелёк: баланс, оборот и последние операции. */
     data object Dashboard : Screen
     data object Fundraises : Screen
     data class FundraiseDetail(val id: Int) : Screen
@@ -59,12 +71,18 @@ sealed interface Screen {
     data object Consents : Screen
     data object Settings : Screen
 
+    // Лента
+    data object Feed : Screen
+    data class PostDetail(val id: Long) : Screen
+    data object NewPost : Screen
+
     // Сообщество
     data object People : Screen
     data class PersonDetail(val id: Int) : Screen
     data object Groups : Screen
     data class GroupDetail(val id: Int) : Screen
     data object NewGroup : Screen
+    data class GroupEdit(val id: Int) : Screen
     data object Chats : Screen
     data class Chat(val id: Int) : Screen
     data object NewChat : Screen
@@ -95,8 +113,11 @@ data class UiState(
     val profile: Profile? = null,
     val dashboard: Dashboard? = null,
     val fundraises: List<Fundraise> = emptyList(),
+    val fundraisesNext: String? = null,
+    val fundraisesSearch: String = "",
     val openFundraise: Fundraise? = null,
     val transactions: List<Tx> = emptyList(),
+    val transactionsNext: String? = null,
     val leaders: List<Leader> = emptyList(),
     val consents: List<Consent> = emptyList(),
     val demoMode: Boolean = false,
@@ -104,16 +125,40 @@ data class UiState(
     /** Сервер попросил код двухфакторной проверки: экран входа раскрывает поле. */
     val twoFactorRequired: Boolean = false,
 
+    // ---- Лента ----
+    /** following — свои и подписки, all — публичные всех. */
+    val feedScope: String = "following",
+    val feed: List<Post> = emptyList(),
+    val feedNext: String? = null,
+    val openPost: Post? = null,
+    val comments: List<PostComment> = emptyList(),
+    val commentsNext: String? = null,
+    val personPosts: List<Post> = emptyList(),
+    val personPostsNext: String? = null,
+
+    // ---- Кошелёк ----
+    val wallet: WalletInfo? = null,
+    val withdrawals: List<Withdrawal> = emptyList(),
+    val verification: VerificationInfo? = null,
+    /** Страница оплаты ЮKassa: MainActivity открывает её в браузере и сбрасывает. */
+    val openUrl: String? = null,
+
     // ---- Сообщество ----
     val interests: List<Interest> = emptyList(),
     val peopleFilter: PeopleFilter = PeopleFilter(),
     val people: List<Person> = emptyList(),
+    val peopleNext: String? = null,
     val openPerson: Person? = null,
     val socialProfile: SocialProfile? = null,
     val chats: List<ChatInfo> = emptyList(),
+    val chatsNext: String? = null,
     val openChat: ChatInfo? = null,
     val chatMessages: List<ChatMessage> = emptyList(),
+    /** В открытом чате есть сообщения старше загруженных. */
+    val chatHasOlder: Boolean = false,
     val groups: List<Community> = emptyList(),
+    val groupsNext: String? = null,
+    val groupsSearch: String = "",
     val groupsMineOnly: Boolean = false,
     val openGroup: Community? = null,
     /** Получатель, подставляемый в форму перевода из анкеты человека. */
@@ -130,7 +175,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow(
         UiState(
-            stack = listOf(if (prefs.signedIn) Screen.Dashboard else Screen.Login),
+            stack = listOf(if (prefs.signedIn) Screen.Feed else Screen.Login),
             demoMode = prefs.demoMode,
             baseUrl = prefs.baseUrl,
         )
@@ -225,11 +270,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadFor(screen: Screen) {
         when (screen) {
-            Screen.Dashboard -> refreshDashboard()
-            Screen.Fundraises -> loadFundraises("")
+            Screen.Feed -> loadFeed(_state.value.feedScope)
+            is Screen.PostDetail -> loadPost(screen.id)
+            Screen.Dashboard -> {
+                refreshDashboard()
+                loadWallet()
+            }
+            Screen.TopUp -> loadWallet()
+            Screen.Withdraw -> {
+                loadWallet()
+                loadWithdrawals()
+            }
+            Screen.Verification -> {
+                loadProfile()
+                loadVerification()
+            }
+            Screen.Fundraises -> loadFundraises(_state.value.fundraisesSearch)
             is Screen.FundraiseDetail -> loadFundraise(screen.id)
             Screen.History -> loadTransactions()
-            Screen.Profile -> loadProfile()
+            Screen.Profile -> {
+                loadProfile()
+                loadSocialProfile()
+            }
             Screen.Leaders -> loadLeaders()
             Screen.Consents -> loadConsents()
             Screen.People -> {
@@ -237,9 +299,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 searchPeople(_state.value.peopleFilter)
             }
             is Screen.PersonDetail -> loadPerson(screen.id)
-            Screen.Groups -> loadGroups("", _state.value.groupsMineOnly)
+            Screen.Groups -> loadGroups(_state.value.groupsSearch, _state.value.groupsMineOnly)
             is Screen.GroupDetail -> loadGroup(screen.id)
             Screen.NewGroup -> ensureInterests()
+            is Screen.GroupEdit -> {
+                ensureInterests()
+                if (_state.value.openGroup?.id != screen.id) loadGroup(screen.id)
+            }
             Screen.Chats -> loadChats()
             is Screen.Chat -> openChatThread(screen.id)
             Screen.BlockList -> loadBlocks()
@@ -319,7 +385,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             prefs.saveTokens(tokens)
             registerPush()
             if (prefs.username.isBlank()) prefs.username = username
-            goRoot(Screen.Dashboard)
+            goRoot(Screen.Feed)
         },
     ) { it.login(username, password, code) }
 
@@ -330,7 +396,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             prefs.saveTokens(tokens)
             registerPush()
             if (prefs.username.isBlank()) prefs.username = username
-            goRoot(Screen.Dashboard)
+            goRoot(Screen.Feed)
             say(
                 "Учётная запись создана. Проверьте почту — без подтверждения " +
                     "адреса недоступны вывод средств и публикация сбора.",
@@ -380,17 +446,44 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         onOk = { profile -> _state.value = _state.value.copy(profile = profile) },
     ) { it.me() }
 
-    fun loadFundraises(search: String) = run(
-        onOk = { list -> _state.value = _state.value.copy(fundraises = list) },
-    ) { it.fundraises(search) }
+    fun loadFundraises(search: String) {
+        _state.update { it.copy(fundraisesSearch = search) }
+        run(onOk = { page: Page<Fundraise> ->
+            _state.update { it.copy(fundraises = page.items, fundraisesNext = page.next) }
+        }) { it.fundraises(search) }
+    }
+
+    fun moreFundraises() {
+        val s = _state.value
+        val next = s.fundraisesNext ?: return
+        run(onOk = { page: Page<Fundraise> ->
+            _state.update {
+                it.copy(fundraises = it.fundraises.appendPage(page.items) { f -> f.id }, fundraisesNext = page.next)
+            }
+        }) { it.fundraises(s.fundraisesSearch, pageNumber(next)) }
+    }
 
     fun loadFundraise(id: Int) = run(
         onOk = { item -> _state.value = _state.value.copy(openFundraise = item) },
     ) { it.fundraise(id) }
 
     fun loadTransactions() = run(
-        onOk = { list -> _state.value = _state.value.copy(transactions = list) },
+        onOk = { page: Page<Tx> ->
+            _state.update { it.copy(transactions = page.items, transactionsNext = page.next) }
+        },
     ) { it.transactions() }
+
+    fun moreTransactions() {
+        val next = _state.value.transactionsNext ?: return
+        run(onOk = { page: Page<Tx> ->
+            _state.update {
+                it.copy(transactions = it.transactions.appendPage(page.items) { tx -> tx.id }, transactionsNext = page.next)
+            }
+        }) { it.transactions(pageNumber(next)) }
+    }
+
+    /** Номер следующей страницы из Page.next. */
+    private fun pageNumber(next: String): Int = next.toIntOrNull() ?: 1
 
     fun loadLeaders() = run(
         onOk = { list -> _state.value = _state.value.copy(leaders = list) },
@@ -416,22 +509,249 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         },
     ) { it.transfer(receiver, amount, comment) }
 
+    // ==================== КОШЕЛЁК ====================
+
+    fun loadWallet() = run(
+        onOk = { info: WalletInfo -> _state.update { it.copy(wallet = info) } },
+    ) { it.wallet() }
+
+    /**
+     * Пополнение. Обычный ответ — страница оплаты ЮKassa: она открывается
+     * в браузере, а деньги придут по вебхуку. Баланс перечитывается при
+     * возвращении в «Кошелёк». В тестовом режиме сервера зачисление сразу.
+     */
     fun topUp(amount: String, method: String) = run(
-        onOk = { text ->
-            say(text, isError = false)
-            refreshDashboard()
+        onOk = { result: TopUpResult ->
+            say(result.message, isError = false)
+            val url = result.confirmationUrl
+            if (url != null) {
+                _state.update { it.copy(openUrl = url) }
+            } else {
+                refreshDashboard()
+                loadWallet()
+            }
         },
     ) { it.topUp(amount, method) }
 
-    fun withdraw(amount: String, method: String, target: String) = run(
-        onOk = { text -> say(text, isError = false) },
-    ) { it.withdraw(amount, method, target) }
+    fun consumeOpenUrl() {
+        _state.update { it.copy(openUrl = null) }
+    }
+
+    fun loadWithdrawals() = run(
+        onOk = { list: List<Withdrawal> -> _state.update { it.copy(withdrawals = list) } },
+    ) { it.withdrawals() }
+
+    /** fields — как у формы сайта; правила и лимиты проверяет сервер. */
+    fun createWithdrawal(fields: Map<String, String>, onDone: () -> Unit = {}) = run(
+        onOk = { text: String ->
+            say(text, isError = false)
+            onDone()
+            loadWithdrawals()
+            loadWallet()
+        },
+    ) { it.createWithdrawal(fields) }
+
+    fun cancelWithdrawal(id: Int) = run(
+        onOk = { text: String ->
+            say(text, isError = false)
+            loadWithdrawals()
+            loadWallet()
+        },
+    ) { it.cancelWithdrawal(id) }
+
+    fun loadVerification() = run(
+        onOk = { info: VerificationInfo -> _state.update { it.copy(verification = info) } },
+    ) { it.verification() }
 
     fun submitVerification(fullName: String, birthDate: String, series: String, number: String) =
         run(
-            onOk = { text -> say(text, isError = false) },
+            onOk = { text: String ->
+                say(text, isError = false)
+                loadVerification()
+            },
         ) { it.submitVerification(fullName, birthDate, series, number) }
 
+    /** Скан документа: крупнее аватара, чтобы читались буквы. */
+    fun uploadDocument(type: String, uri: Uri) {
+        viewModelScope.launch {
+            val jpeg = readPhoto(uri, 2000)
+            if (jpeg == null) {
+                say("Не удалось прочитать фото", isError = true)
+                return@launch
+            }
+            run(onOk = { text: String ->
+                say(text, isError = false)
+                loadVerification()
+            }) { it.uploadDocument(type, jpeg) }
+        }
+    }
+
+    // ==================== ЛЕНТА ====================
+
+    fun loadFeed(scope: String) {
+        if (scope != _state.value.feedScope) {
+            _state.update { it.copy(feedScope = scope, feed = emptyList(), feedNext = null) }
+        }
+        run(onOk = { page: Page<Post> ->
+            // Пока шёл запрос, человек мог переключить вкладку
+            if (_state.value.feedScope == scope) {
+                _state.update { it.copy(feed = page.items, feedNext = page.next) }
+            }
+        }) { it.feed(scope) }
+    }
+
+    fun moreFeed() {
+        val s = _state.value
+        val next = s.feedNext ?: return
+        run(onOk = { page: Page<Post> ->
+            if (_state.value.feedScope == s.feedScope) {
+                _state.update { it.copy(feed = it.feed.appendPage(page.items) { p -> p.id }, feedNext = page.next) }
+            }
+        }) { it.feed(s.feedScope, next) }
+    }
+
+    fun morePersonPosts(userId: Int) {
+        val next = _state.value.personPostsNext ?: return
+        run(onOk = { page: Page<Post> ->
+            _state.update {
+                it.copy(personPosts = it.personPosts.appendPage(page.items) { p -> p.id }, personPostsNext = page.next)
+            }
+        }) { it.personPosts(userId, next) }
+    }
+
+    fun loadPost(id: Long) {
+        if (_state.value.openPost?.id != id) {
+            _state.update { it.copy(openPost = null, comments = emptyList(), commentsNext = null) }
+        }
+        run(onOk = { post: Post -> _state.update { it.copy(openPost = post) } }) { it.post(id) }
+        run(onOk = { page: Page<PostComment> ->
+            _state.update { it.copy(comments = page.items, commentsNext = page.next) }
+        }) { it.comments(id) }
+    }
+
+    fun moreComments(postId: Long) {
+        val next = _state.value.commentsNext ?: return
+        run(onOk = { page: Page<PostComment> ->
+            _state.update {
+                it.copy(comments = it.comments.appendPage(page.items) { c -> c.id }, commentsNext = page.next)
+            }
+        }) { it.comments(postId, next) }
+    }
+
+    /** Публикация поменялась: заменить её везде, где она показана. */
+    private fun replacePost(post: Post) {
+        _state.update { s ->
+            s.copy(
+                feed = s.feed.map { if (it.id == post.id) post else it },
+                personPosts = s.personPosts.map { if (it.id == post.id) post else it },
+                openPost = if (s.openPost?.id == post.id) post else s.openPost,
+            )
+        }
+    }
+
+    private fun dropPost(id: Long) {
+        _state.update { s ->
+            s.copy(
+                feed = s.feed.filterNot { it.id == id },
+                personPosts = s.personPosts.filterNot { it.id == id },
+                openPost = if (s.openPost?.id == id) null else s.openPost,
+            )
+        }
+    }
+
+    /**
+     * Отметка «нравится» сразу на экране, запрос — следом. Ждать ответа
+     * сервера ради сердечка значит дать человеку нажать дважды.
+     */
+    fun toggleLike(post: Post) {
+        val liked = !post.liked
+        replacePost(post.copy(liked = liked, likesCount = (post.likesCount + if (liked) 1 else -1).coerceAtLeast(0)))
+        viewModelScope.launch {
+            when (val outcome = api().likePost(post.id, liked)) {
+                is Outcome.Ok -> replacePost(outcome.value)
+                is Outcome.Fail -> {
+                    replacePost(post)
+                    handleFailure(outcome.message)
+                }
+            }
+        }
+    }
+
+    fun createPost(text: String, photo: Uri?, visibility: String) {
+        viewModelScope.launch {
+            var jpeg: ByteArray? = null
+            if (photo != null) {
+                jpeg = readPhoto(photo, 1600)
+                if (jpeg == null) {
+                    say("Не удалось прочитать фото", isError = true)
+                    return@launch
+                }
+            }
+            run(onOk = { result: PostResult ->
+                _state.update { s -> s.copy(feed = listOf(result.post) + s.feed.filterNot { it.id == result.post.id }) }
+                back()
+                say(result.notice.ifBlank { "Опубликовано" }, isError = false)
+            }) { it.createPost(text, jpeg, visibility) }
+        }
+    }
+
+    fun editPost(id: Long, text: String) = run(
+        onOk = { post: Post ->
+            replacePost(post)
+            say("Изменения сохранены", isError = false)
+        },
+    ) { it.editPost(id, text) }
+
+    fun deletePost(id: Long) = run(
+        onOk = { text: String ->
+            val onDetail = (_state.value.screen as? Screen.PostDetail)?.id == id
+            dropPost(id)
+            if (onDetail) back()
+            say(text, isError = false)
+        },
+    ) { it.deletePost(id) }
+
+    fun addComment(postId: Long, text: String) = run(
+        onOk = { comment: PostComment ->
+            _state.update { s -> s.copy(comments = listOf(comment) + s.comments.filterNot { it.id == comment.id }) }
+            _state.value.openPost?.takeIf { it.id == postId }?.let {
+                replacePost(it.copy(commentsCount = it.commentsCount + 1))
+            }
+        },
+    ) { it.addComment(postId, text) }
+
+    fun deleteComment(postId: Long, commentId: Long) = run(
+        onOk = { text: String ->
+            _state.update { s -> s.copy(comments = s.comments.filterNot { it.id == commentId }) }
+            _state.value.openPost?.takeIf { it.id == postId }?.let {
+                replacePost(it.copy(commentsCount = (it.commentsCount - 1).coerceAtLeast(0)))
+            }
+            say(text, isError = false)
+        },
+    ) { it.deleteComment(postId, commentId) }
+
+    fun reportPost(postId: Long, commentId: Long?, reason: String, comment: String, alsoBlock: Boolean) = run(
+        onOk = { text: String ->
+            say(text, isError = false)
+            if (alsoBlock) {
+                if (commentId == null) dropPost(postId)
+                reloadCurrent()
+            }
+        },
+    ) { it.reportPost(postId, commentId, reason, comment, alsoBlock) }
+
+    fun follow(userId: Int, follow: Boolean) = run(
+        onOk = { info: FollowInfo ->
+            _state.update { s ->
+                val person = s.openPerson
+                s.copy(openPerson = if (person?.id == userId) person.copy(follow = info) else person)
+            }
+            say(if (follow) "Вы подписались" else "Подписка отменена", isError = false)
+        },
+    ) { it.follow(userId, follow) }
+
+    suspend fun postImageBytes(postId: Long): ByteArray? =
+        (api().postImage(postId) as? Outcome.Ok)?.value
 
     // ==================== СООБЩЕСТВО: ЛЮДИ ====================
 
@@ -443,14 +763,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun searchPeople(filter: PeopleFilter) {
         _state.update { it.copy(peopleFilter = filter) }
-        run(onOk = { list -> _state.update { it.copy(people = list) } }) { it.people(filter) }
+        run(onOk = { page: Page<Person> ->
+            _state.update { it.copy(people = page.items, peopleNext = page.next) }
+        }) { it.people(filter) }
+    }
+
+    fun morePeople() {
+        val s = _state.value
+        val next = s.peopleNext ?: return
+        run(onOk = { page: Page<Person> ->
+            _state.update { it.copy(people = it.people.appendPage(page.items) { p -> p.id }, peopleNext = page.next) }
+        }) { it.people(s.peopleFilter, pageNumber(next)) }
     }
 
     fun loadPerson(id: Int) {
         // Прежняя анкета убирается сразу: иначе, открыв второго человека,
         // секунду видишь первого — и можно успеть нажать «Написать» не тому
-        if (_state.value.openPerson?.id != id) _state.update { it.copy(openPerson = null) }
+        if (_state.value.openPerson?.id != id) {
+            _state.update { it.copy(openPerson = null, personPosts = emptyList(), personPostsNext = null) }
+        }
         run(onOk = { person -> _state.update { it.copy(openPerson = person) } }) { it.person(id) }
+        run(onOk = { page: Page<Post> ->
+            _state.update { it.copy(personPosts = page.items, personPostsNext = page.next) }
+        }) { it.personPosts(id) }
     }
 
     fun loadSocialProfile() = run(
@@ -480,8 +815,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // ==================== СООБЩЕСТВО: ЧАТЫ ====================
 
     fun loadChats() = run(
-        onOk = { list -> _state.update { it.copy(chats = list) } },
+        onOk = { page: Page<ChatInfo> -> _state.update { it.copy(chats = page.items, chatsNext = page.next) } },
     ) { it.chats() }
+
+    fun moreChats() {
+        val next = _state.value.chatsNext ?: return
+        run(onOk = { page: Page<ChatInfo> ->
+            _state.update { it.copy(chats = it.chats.appendPage(page.items) { c -> c.id }, chatsNext = page.next) }
+        }) { it.chats(pageNumber(next)) }
+    }
 
     /** Личный чат с человеком: существующий или новый. */
     fun writeTo(username: String) = run(
@@ -504,11 +846,39 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun openChatThread(id: Int) {
         if (_state.value.openChat?.id != id) {
-            _state.update { it.copy(openChat = null, chatMessages = emptyList()) }
+            _state.update { it.copy(openChat = null, chatMessages = emptyList(), chatHasOlder = false) }
         }
+        chatSince = null
         run(onOk = { chat -> _state.update { it.copy(openChat = chat) } }) { it.chat(id) }
-        run(onOk = { list -> mergeMessages(id, list, replace = true) }) { it.messages(id, null) }
+        run(onOk = { update: MessagesUpdate ->
+            chatSince = id to update.serverTime
+            mergeMessages(id, update.items, replace = true)
+            _state.update { it.copy(chatHasOlder = update.hasMore) }
+        }) { it.messages(id, null) }
     }
+
+    /**
+     * Метка времени сервера для опроса правок: с ней сервер вернёт
+     * исправленные и удалённые после неё сообщения. Привязана к чату,
+     * чтобы ответ закрытого чата не сбил метку открытого.
+     */
+    private var chatSince: Pair<Int, String>? = null
+
+    fun loadOlderMessages(chatId: Int) {
+        val first = _state.value.chatMessages.firstOrNull() ?: return
+        run(onOk = { page: Page<ChatMessage> ->
+            mergeMessages(chatId, page.items)
+            _state.update { it.copy(chatHasOlder = page.next != null) }
+        }) { it.olderMessages(chatId, first.id) }
+    }
+
+    fun editMessage(chatId: Int, messageId: Long, text: String) = run(
+        onOk = { message: ChatMessage -> mergeMessages(chatId, listOf(message)) },
+    ) { it.editMessage(chatId, messageId, text) }
+
+    fun deleteMessage(chatId: Int, messageId: Long) = run(
+        onOk = { message: ChatMessage -> mergeMessages(chatId, listOf(message)) },
+    ) { it.deleteMessage(chatId, messageId) }
 
     /**
      * Сообщения добавляются с отбором по номеру: опрос и отправка могут
@@ -539,9 +909,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun pollChat(chatId: Int) {
         val after = _state.value.chatMessages.lastOrNull()?.id
         viewModelScope.launch {
-            val outcome = api().messages(chatId, after)
-            if (outcome is Outcome.Ok && outcome.value.isNotEmpty()) {
-                mergeMessages(chatId, outcome.value)
+            val since = chatSince?.takeIf { it.first == chatId }?.second
+            val outcome = api().messages(chatId, after, since)
+            if (outcome is Outcome.Ok) {
+                val update = outcome.value
+                if ((_state.value.screen as? Screen.Chat)?.id == chatId) {
+                    if (update.serverTime.isNotBlank()) chatSince = chatId to update.serverTime
+                    if (update.items.isNotEmpty() || update.changed.isNotEmpty()) {
+                        mergeMessages(chatId, update.items + update.changed)
+                    }
+                }
             } else if (outcome is Outcome.Fail && outcome.message == SESSION_EXPIRED) {
                 handleFailure(outcome.message)
             }
@@ -636,10 +1013,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // ==================== СООБЩЕСТВО: ГРУППЫ ====================
 
     fun loadGroups(search: String, mineOnly: Boolean) {
-        _state.update { it.copy(groupsMineOnly = mineOnly) }
-        run(onOk = { list -> _state.update { it.copy(groups = list) } }) {
-            it.communities(search, mineOnly)
-        }
+        _state.update { it.copy(groupsMineOnly = mineOnly, groupsSearch = search) }
+        run(onOk = { page: Page<Community> ->
+            _state.update { it.copy(groups = page.items, groupsNext = page.next) }
+        }) { it.communities(search, mineOnly) }
+    }
+
+    fun moreGroups() {
+        val s = _state.value
+        val next = s.groupsNext ?: return
+        run(onOk = { page: Page<Community> ->
+            _state.update { it.copy(groups = it.groups.appendPage(page.items) { g -> g.id }, groupsNext = page.next) }
+        }) { it.communities(s.groupsSearch, s.groupsMineOnly, pageNumber(next)) }
     }
 
     fun loadGroup(id: Int) {
@@ -654,13 +1039,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         },
     ) { it.createCommunity(name, description, topic, isPrivate) }
 
-    /** Вступить, выйти, принять или отклонить заявку. */
-    fun groupAction(id: Int, action: String, userId: Int? = null) = run(
+    /**
+     * Вступить, выйти, принять или отклонить заявку; для администраторов —
+     * назначить роль (role), передать владение (transfer), исключить (remove).
+     */
+    fun groupAction(id: Int, action: String, userId: Int? = null, role: String? = null) = run(
         onOk = { reply ->
             _state.update { it.copy(openGroup = reply.community) }
             say(reply.message, isError = false)
         },
-    ) { it.communityAction(id, action, userId) }
+    ) { it.communityAction(id, action, userId, role) }
+
+    fun updateGroup(id: Int, name: String, description: String, topic: String, isPrivate: Boolean) = run(
+        onOk = { group: Community ->
+            _state.update { it.copy(openGroup = group) }
+            say("Группа сохранена", isError = false)
+            back()
+        },
+    ) { it.updateCommunity(id, name, description, topic, isPrivate) }
+
+    fun deleteGroup(id: Int) = run(
+        onOk = { text: String ->
+            _state.update { s -> s.copy(openGroup = null, groups = s.groups.filterNot { it.id == id }) }
+            say(text, isError = false)
+            goRoot(Screen.Groups)
+        },
+    ) { it.deleteCommunity(id) }
 
     // ==================== НАСТРОЙКИ ====================
 

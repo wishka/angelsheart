@@ -36,7 +36,7 @@ import ru.angelhelper.app.ui.UiState
 
 @Composable
 fun FundraisesScreen(vm: AppViewModel, state: UiState) {
-    var search by rememberSaveable { mutableStateOf("") }
+    var search by rememberSaveable { mutableStateOf(state.fundraisesSearch) }
 
     Panel(title = "Поиск") {
         Field(search, { search = it }, "Название или описание")
@@ -54,6 +54,9 @@ fun FundraisesScreen(vm: AppViewModel, state: UiState) {
     } else {
         state.fundraises.forEach { fundraise ->
             FundraiseCard(fundraise) { vm.go(Screen.FundraiseDetail(fundraise.id)) }
+        }
+        if (state.fundraisesNext != null) {
+            SecondaryButton("Показать ещё", onClick = { vm.moreFundraises() })
         }
     }
 }

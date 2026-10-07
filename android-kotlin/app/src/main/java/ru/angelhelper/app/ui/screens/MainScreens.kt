@@ -22,11 +22,12 @@ import ru.angelhelper.app.ui.Panel
 import ru.angelhelper.app.ui.PrimaryButton
 import ru.angelhelper.app.ui.Screen
 import ru.angelhelper.app.ui.SecondaryButton
-import ru.angelhelper.app.ui.StubBanner
+import ru.angelhelper.app.ui.Notice
 import ru.angelhelper.app.ui.UiState
 
 /**
- * Главная: баланс, оборот и последние операции.
+ * Кошелёк: баланс, оборот и последние операции. Открывается из профиля —
+ * главное в приложении теперь лента и общение, а деньги — один из разделов.
  *
  * Список здесь обычным Column, а не LazyColumn: весь экран уже лежит
  * в прокручиваемом контейнере, и вложенная ленивая прокрутка в Compose
@@ -38,7 +39,7 @@ fun DashboardScreen(vm: AppViewModel, state: UiState) {
     val data = state.dashboard
 
     if (state.demoMode) {
-        StubBanner("Демо-режим: данные выдуманы, сеть не используется.")
+        Notice("Демо-режим: данные выдуманы, сеть не используется.")
     }
 
     Panel(title = "Ваш баланс") {
@@ -68,15 +69,13 @@ fun DashboardScreen(vm: AppViewModel, state: UiState) {
                 if (index != recent.lastIndex) HorizontalDivider()
             }
         }
-        // go, а не goRoot: истории больше нет на нижней панели, и из
-        // корневого экрана без вкладки не было бы пути «назад»
         SecondaryButton("Вся история", onClick = { vm.go(Screen.History) })
     }
 
     Panel(title = "Ещё") {
-        // Перевод ушёл с нижней панели, освободив место «Людям» и «Чатам»
         SecondaryButton("Перевести деньги", onClick = { vm.go(Screen.Transfer) })
-        SecondaryButton("Сборы средств", onClick = { vm.goRoot(Screen.Fundraises) })
+        SecondaryButton("Верификация", onClick = { vm.go(Screen.Verification) })
+        SecondaryButton("Сборы средств", onClick = { vm.go(Screen.Fundraises) })
         SecondaryButton("Лидеры", onClick = { vm.go(Screen.Leaders) })
         SecondaryButton("Обновить", onClick = { vm.refreshDashboard() })
     }
@@ -142,6 +141,9 @@ fun HistoryScreen(vm: AppViewModel, state: UiState) {
                 TxRow(tx, vm.currentUsername)
                 if (index != state.transactions.lastIndex) HorizontalDivider()
             }
+        }
+        if (state.transactionsNext != null) {
+            SecondaryButton("Показать ещё", onClick = { vm.moreTransactions() })
         }
         SecondaryButton("Обновить", onClick = { vm.loadTransactions() })
     }

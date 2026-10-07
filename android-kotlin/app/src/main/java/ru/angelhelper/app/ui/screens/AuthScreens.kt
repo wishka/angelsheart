@@ -22,7 +22,7 @@ import ru.angelhelper.app.ui.Panel
 import ru.angelhelper.app.ui.PrimaryButton
 import ru.angelhelper.app.ui.Screen
 import ru.angelhelper.app.ui.SecondaryButton
-import ru.angelhelper.app.ui.StubBanner
+import ru.angelhelper.app.ui.Notice
 import ru.angelhelper.app.ui.UiState
 
 /**
@@ -45,7 +45,7 @@ fun LoginScreen(vm: AppViewModel, state: UiState) {
     val needCode = manualCode || state.twoFactorRequired
 
     if (state.demoMode) {
-        StubBanner(
+        Notice(
             "Демо-режим включён: данные выдуманы, сеть не используется. " +
                 "Войти можно с любым именем и паролем."
         )
@@ -149,18 +149,19 @@ fun RegisterScreen(vm: AppViewModel, state: UiState) {
 fun PasswordResetScreen(vm: AppViewModel, state: UiState) {
     var email by rememberSaveable { mutableStateOf("") }
 
-    StubBanner(
-        "Восстановление пароля работает только на сайте: ссылка из письма " +
-            "открывается в браузере. Здесь экран показан целиком, но " +
-            "письмо приложение не отправляет."
-    )
-
     Panel(title = "Восстановление пароля") {
         Field(email, { email = it }, "Адрес почты", keyboardType = KeyboardType.Email)
         PrimaryButton(
             "Отправить ссылку",
             busy = state.busy,
+            enabled = email.contains('@'),
             onClick = { vm.resetPassword(email.trim()) },
+        )
+        Text(
+            "Если адрес зарегистрирован, придёт письмо со ссылкой. Новый пароль " +
+                "задаётся по ссылке в браузере, затем войдите с ним здесь.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         SecondaryButton("Вернуться ко входу", onClick = { vm.back() })
     }
