@@ -138,7 +138,7 @@ def message_payload(message, viewer, blocked=()):
     deleted = message.sender_id is None
     text = message.text
     hidden = False
-    if deleted and not text and not message.image:
+    if message.deleted_at is not None or (deleted and not text and not message.image):
         text = 'Сообщение удалено'
     elif message.is_hidden:
         text, hidden = HIDDEN_BY_MODERATOR, True
@@ -152,6 +152,9 @@ def message_payload(message, viewer, blocked=()):
         'is_hidden': hidden,
         # Скрытое сообщение не отдаёт и фото: сама выдача файла тоже это проверяет
         'has_image': bool(message.image) and not hidden,
+        'edited': message.edited_at is not None,
+        'deleted': message.deleted_at is not None,
+        'modified_at': message.modified_at.isoformat() if message.modified_at else None,
         'created_at': message.created_at.isoformat(),
         'is_mine': message.sender_id == viewer.pk,
     }
@@ -301,3 +304,44 @@ class CommunityCreateSerializer(serializers.Serializer):
     description = serializers.CharField(max_length=1000, required=False, allow_blank=True, default='')
     topic = serializers.SlugField(required=False, allow_blank=True, default='')
     is_private = serializers.BooleanField(required=False, default=False)
+
+
+# ==================== ЛЕНТА ====================
+
+def author_payload(user):
+    return {'id': user.pk, 'username': user.username, 'display_name': display_name(user),
+            **avatar_fields(user)}
+
+
+def post_payload(post, viewer):
+    """
+    Публикация. Ожидает аннотации из feed.annotate_for (likes_total,
+    comments_total, liked_by_me). Скрытая модератором видна только
+    автору — с пометкой.
+    """
+    return {
+        'id': post.pk,
+        'author': author_payload(post.author),
+        'text': post.text,
+        'has_image': bool(post.image),
+        'visibility': post.visibility,
+        'created_at': post.created_at.isoformat(),
+        'edited': post.edited_at is not None,
+        'is_mine': post.author_id == viewer.pk,
+        'is_hidden': post.is_hidden,
+        'likes_count': getattr(post, 'likes_total', 0),
+        'comments_count': getattr(post, 'comments_total', 0),
+        'liked': bool(getattr(post, 'liked_by_me', False)),
+    }
+
+
+def comment_payload(comment, viewer):
+    return {
+        'id': comment.pk,
+        'author': author_payload(comment.author),
+        'text': comment.text,
+        'created_at': comment.created_at.isoformat(),
+        'is_mine': comment.author_id == viewer.pk,
+        'can_delete': viewer.pk in (comment.author_id, comment.post.author_id),
+        'is_hidden': comment.is_hidden,
+    }

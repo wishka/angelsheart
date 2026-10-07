@@ -59,6 +59,12 @@ def block_user(user, target):
     if target.pk == user.pk:
         raise SocialError('Нельзя заблокировать самого себя')
     _, created = UserBlock.objects.get_or_create(blocker=user, blocked=target)
+    # Блокировка разрывает и подписки в обе стороны: иначе заблокированный
+    # продолжал бы получать публикации в ленту
+    from .models import Follow
+    Follow.objects.filter(
+        Q(follower=user, following=target) | Q(follower=target, following=user),
+    ).delete()
     if not created:
         return f'{target.username} уже в чёрном списке'
     return f'{target.username} добавлен в чёрный список'
@@ -332,6 +338,44 @@ def leave_chat(chat, user):
         chat.delete()
 
 
+def edit_message(chat, user, message_id, text):
+    membership(chat, user)
+    message = ChatMessage.objects.filter(chat=chat, pk=message_id, sender=user,
+                                         deleted_at__isnull=True).first()
+    if message is None:
+        raise SocialError('Изменить можно только своё сообщение', status=404)
+    if message.is_hidden:
+        raise SocialError('Сообщение скрыто модератором — изменить его нельзя')
+    text = (text or '').strip()
+    if not text and not message.image:
+        raise SocialError('Сообщение пустое')
+    if len(text) > ChatMessage.MAX_LENGTH:
+        raise SocialError(f'Сообщение длиннее {ChatMessage.MAX_LENGTH} символов')
+    message.text = text
+    message.edited_at = timezone.now()
+    message.save()
+    return message
+
+
+def delete_message(chat, user, message_id):
+    """
+    Удаление своего сообщения у всех: текст и фото стираются, в чате
+    остаётся «Сообщение удалено» — чтобы ответы на него не повисали
+    без контекста. Жалобы, поданные раньше, хранят свою копию текста.
+    """
+    membership(chat, user)
+    message = ChatMessage.objects.filter(chat=chat, pk=message_id, sender=user,
+                                         deleted_at__isnull=True).first()
+    if message is None:
+        raise SocialError('Удалить можно только своё сообщение', status=404)
+    if message.image:
+        message.image.delete(save=False)
+    message.text = ''
+    message.deleted_at = timezone.now()
+    message.save()
+    return message
+
+
 # ==================== ГРУППЫ ====================
 
 def community_membership(community, user):
@@ -428,6 +472,100 @@ def decline_request(community, manager, user_id):
     if not deleted:
         raise SocialError('Заявка не найдена', status=404)
     return 'Заявка отклонена'
+
+
+def _owner(community, user):
+    owner = community_membership(community, user)
+    if owner is None or owner.role != CommunityMembership.ROLE_OWNER:
+        raise SocialError('Это может только владелец группы', status=403)
+    return owner
+
+
+def _active_member(community, user_id):
+    member = CommunityMembership.objects.filter(
+        community=community, user_id=user_id, status=CommunityMembership.STATUS_ACTIVE,
+    ).select_related('user').first()
+    if member is None:
+        raise SocialError('Участник не найден', status=404)
+    return member
+
+
+@transaction.atomic
+def set_member_role(community, actor, user_id, role):
+    _owner(community, actor)
+    if role not in (CommunityMembership.ROLE_ADMIN, CommunityMembership.ROLE_MEMBER):
+        raise SocialError('Роль — admin или member')
+    member = _active_member(community, user_id)
+    if member.role == CommunityMembership.ROLE_OWNER:
+        raise SocialError('Роль владельца меняется передачей группы')
+    member.role = role
+    member.save(update_fields=['role'])
+    title = 'администратор' if role == CommunityMembership.ROLE_ADMIN else 'участник'
+    return f'{member.user.username} теперь {title}'
+
+
+@transaction.atomic
+def transfer_ownership(community, actor, user_id):
+    """Группа переходит другому участнику; прежний владелец остаётся администратором."""
+    current = _owner(community, actor)
+    heir = _active_member(community, user_id)
+    if heir.pk == current.pk:
+        raise SocialError('Вы и так владелец')
+    current.role = CommunityMembership.ROLE_ADMIN
+    current.save(update_fields=['role'])
+    heir.role = CommunityMembership.ROLE_OWNER
+    heir.save(update_fields=['role'])
+    community.owner = heir.user
+    community.save(update_fields=['owner'])
+    return f'Владелец группы теперь {heir.user.username}'
+
+
+@transaction.atomic
+def remove_member(community, actor, user_id):
+    """Исключить участника. Администратор исключает только рядовых участников."""
+    manager = community_membership(community, actor)
+    if manager is None or not manager.can_manage:
+        raise SocialError('Это может только администратор группы', status=403)
+    member = _active_member(community, user_id)
+    if member.role == CommunityMembership.ROLE_OWNER:
+        raise SocialError('Владельца исключить нельзя')
+    if member.role == CommunityMembership.ROLE_ADMIN and manager.role != CommunityMembership.ROLE_OWNER:
+        raise SocialError('Администратора может исключить только владелец', status=403)
+    member.delete()
+    _remove_from_chat(community, member.user)
+    return f'{member.user.username} исключён из группы'
+
+
+def update_community(community, actor, name=None, description=None, topic=None, is_private=None):
+    manager = community_membership(community, actor)
+    if manager is None or not manager.can_manage:
+        raise SocialError('Это может только администратор группы', status=403)
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise SocialError('Укажите название группы')
+        community.name = name[:80]
+        if community.chat_id:
+            Chat.objects.filter(pk=community.chat_id).update(title=community.name)
+    if description is not None:
+        community.description = description.strip()[:1000]
+    if topic is not None:
+        community.topic = Interest.objects.filter(slug=topic).first() if topic else None
+    if is_private is not None:
+        community.is_private = bool(is_private)
+    community.save()
+    return 'Группа обновлена'
+
+
+@transaction.atomic
+def delete_community(community, actor):
+    _owner(community, actor)
+    if community.chat_id:
+        for message in ChatMessage.objects.filter(chat_id=community.chat_id).exclude(image=''):
+            message.image.delete(save=False)
+        Chat.objects.filter(pk=community.chat_id).delete()
+    community.delete()
+    return 'Группа удалена'
 
 
 # ==================== ЖАЛОБЫ ====================
@@ -536,6 +674,8 @@ def erase_user_social_data(user):
     CommunityMembership.objects.filter(user=user).delete()
     ChatMember.objects.filter(user=user).delete()
     UserBlock.objects.filter(Q(blocker=user) | Q(blocked=user)).delete()
+    from .feed import erase_user_feed
+    erase_user_feed(user)
     from .models import DeviceToken
     DeviceToken.objects.filter(user=user).delete()
     # Жалобы — и поданные человеком, и на его сообщения — остаются:

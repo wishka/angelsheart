@@ -9,6 +9,8 @@ API сообщества: /api/profile/, /api/people/, /api/chats/, /api/groups/
 from django.contrib.auth.models import User
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -137,7 +139,37 @@ class PeopleViewSet(SocialMixin, viewsets.GenericViewSet):
         if user is None:
             return Response({'error': 'Пользователь не найден или скрыл анкету'},
                             status=status.HTTP_404_NOT_FOUND)
-        return Response(PersonSerializer(user, context={'request': request}).data)
+        data = PersonSerializer(user, context={'request': request}).data
+        from . import feed
+        data.update(feed.follow_counts(user))
+        data['is_following'] = feed.Follow.objects.filter(follower=request.user, following=user).exists()
+        data['can_follow'] = feed.can_follow(request.user, user)
+        return Response(data)
+
+    @action(detail=True, methods=['post'])
+    def follow(self, request, pk=None):
+        """{follow: true|false} — подписаться или отписаться."""
+        from . import feed
+        user = User.objects.filter(pk=_int(pk), is_active=True).first()
+        if user is None:
+            return Response({'error': 'Пользователь не найден'}, status=status.HTTP_404_NOT_FOUND)
+        wanted = str(request.data.get('follow', 'true')).lower() in ('1', 'true')
+        try:
+            text = feed.set_follow(request.user, user, wanted)
+        except services.SocialError as error:
+            return self.refuse(error)
+        return Response({'message': text, 'is_following': wanted, **feed.follow_counts(user)})
+
+    @action(detail=True, methods=['get'])
+    def posts(self, request, pk=None):
+        from . import feed
+        from .serializers import post_payload
+        user = User.objects.filter(pk=_int(pk), is_active=True).first()
+        if user is None:
+            return Response({'error': 'Пользователь не найден'}, status=status.HTTP_404_NOT_FOUND)
+        items, next_before = feed.posts_of(request.user, user, _int(request.query_params.get('before')))
+        return Response({'results': [post_payload(p, request.user) for p in items],
+                         'next_before': next_before})
 
     @action(detail=True, methods=['get'])
     def avatar(self, request, pk=None):
@@ -251,10 +283,38 @@ class ChatViewSet(SocialMixin, viewsets.GenericViewSet):
         if batch:
             services.mark_read(member, batch[-1].pk)
 
+        # Правки и удаления уже показанных сообщений: приложение передаёт
+        # время прошлого опроса и заменяет у себя изменённые сообщения
+        changed = []
+        since = parse_datetime(request.query_params.get('changed_since') or '')
+        if since is not None:
+            fresh = {m.pk for m in batch}
+            changed = [
+                message_payload(m, request.user, blocked)
+                for m in messages.filter(modified_at__gt=since).order_by('-id')[:100]
+                if m.pk not in fresh
+            ]
+
         return Response({
             'results': [message_payload(m, request.user, blocked) for m in batch],
+            'changed': changed,
             'has_more': has_more,
+            'server_time': timezone.now().isoformat(),
         })
+
+    @action(detail=True, methods=['put', 'delete'], url_path=r'messages/(?P<message_id>[0-9]+)')
+    def message(self, request, pk=None, message_id=None):
+        """PUT {text} — исправить своё сообщение; DELETE — удалить у всех."""
+        try:
+            chat = self._chat(pk)
+            if request.method == 'DELETE':
+                message = services.delete_message(chat, request.user, _int(message_id))
+            else:
+                message = services.edit_message(chat, request.user, _int(message_id),
+                                                request.data.get('text', ''))
+        except services.SocialError as error:
+            return self.refuse(error)
+        return Response(message_payload(message, request.user))
 
     @action(detail=True, methods=['get'], url_path=r'messages/(?P<message_id>[0-9]+)/image')
     def image(self, request, pk=None, message_id=None):
@@ -375,6 +435,40 @@ class CommunityViewSet(SocialMixin, viewsets.GenericViewSet):
     def decline(self, request, pk=None):
         return self._do(pk, services.decline_request, _int(request.data.get('user_id')))
 
+    @action(detail=True, methods=['post'])
+    def role(self, request, pk=None):
+        """{user_id, role: admin|member} — только владелец."""
+        return self._do(pk, services.set_member_role, _int(request.data.get('user_id')),
+                        request.data.get('role', ''))
+
+    @action(detail=True, methods=['post'])
+    def transfer(self, request, pk=None):
+        """{user_id} — передать группу участнику; только владелец."""
+        return self._do(pk, services.transfer_ownership, _int(request.data.get('user_id')))
+
+    @action(detail=True, methods=['post'])
+    def remove(self, request, pk=None):
+        """{user_id} — исключить участника; владелец или администратор."""
+        return self._do(pk, services.remove_member, _int(request.data.get('user_id')))
+
+    def update(self, request, pk=None):
+        """PUT {name, description, topic, is_private} — правка группы администратором."""
+        data = request.data
+        is_private = data.get('is_private')
+        return self._do(
+            pk, services.update_community,
+            data.get('name'), data.get('description'), data.get('topic'),
+            None if is_private is None else str(is_private).lower() in ('1', 'true'),
+        )
+
+    def destroy(self, request, pk=None):
+        community = get_object_or_404(Community, pk=_int(pk))
+        try:
+            text = services.delete_community(community, request.user)
+        except services.SocialError as error:
+            return self.refuse(error)
+        return Response({'message': text})
+
 
 # ==================== ЧЁРНЫЙ СПИСОК ====================
 
@@ -440,3 +534,130 @@ class DeviceView(SocialMixin, APIView):
         if not push.register(request.user, token):
             return Response({'error': 'Нет токена устройства'}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'message': 'Уведомления включены', 'push_enabled': push.is_enabled()})
+
+
+# ==================== ЛЕНТА ====================
+
+class FeedView(SocialMixin, APIView):
+    """
+    GET /api/feed/?scope=following|all&before=<id>
+    following — свои публикации и тех, на кого подписан; all — публичные
+    публикации всех, кого можно видеть. Страницы по курсору next_before.
+    """
+
+    def get(self, request):
+        from . import feed
+        from .serializers import post_payload
+        scope = 'all' if request.query_params.get('scope') == 'all' else 'following'
+        items, next_before = feed.feed(request.user, scope, _int(request.query_params.get('before')))
+        return Response({'results': [post_payload(p, request.user) for p in items],
+                         'next_before': next_before})
+
+
+class PostViewSet(SocialMixin, viewsets.GenericViewSet):
+    """
+    POST /api/posts/ (multipart: text, image, visibility) — опубликовать;
+    GET/PUT/DELETE /api/posts/<id>/ — посмотреть, изменить, удалить свою;
+    POST /api/posts/<id>/like/ {liked}; /comments/ GET и POST;
+    DELETE /api/posts/<id>/comments/<cid>/; POST /api/posts/<id>/report/.
+    """
+
+    def _payload(self, post):
+        from .serializers import post_payload
+        return post_payload(post, self.request.user)
+
+    def create(self, request):
+        from . import feed
+        try:
+            post, notice = feed.create_post(
+                request.user, request.data.get('text', ''), request.FILES.get('image'),
+                request.data.get('visibility', 'followers'),
+            )
+            data = self._payload(feed.get_post(request.user, post.pk))
+        except services.SocialError as error:
+            return self.refuse(error)
+        data['notice'] = notice
+        return Response(data, status=status.HTTP_201_CREATED)
+
+    def retrieve(self, request, pk=None):
+        from . import feed
+        try:
+            return Response(self._payload(feed.get_post(request.user, _int(pk))))
+        except services.SocialError as error:
+            return self.refuse(error)
+
+    def update(self, request, pk=None):
+        from . import feed
+        try:
+            feed.edit_post(request.user, _int(pk), request.data.get('text'), request.data.get('visibility'))
+            return Response(self._payload(feed.get_post(request.user, _int(pk))))
+        except services.SocialError as error:
+            return self.refuse(error)
+
+    def destroy(self, request, pk=None):
+        from . import feed
+        try:
+            feed.delete_post(request.user, _int(pk))
+        except services.SocialError as error:
+            return self.refuse(error)
+        return Response({'message': 'Публикация удалена'})
+
+    @action(detail=True, methods=['post'])
+    def like(self, request, pk=None):
+        from . import feed
+        liked = str(request.data.get('liked', 'true')).lower() in ('1', 'true')
+        try:
+            return Response(self._payload(feed.set_like(request.user, _int(pk), liked)))
+        except services.SocialError as error:
+            return self.refuse(error)
+
+    @action(detail=True, methods=['get', 'post'])
+    def comments(self, request, pk=None):
+        from . import feed
+        from .serializers import comment_payload
+        try:
+            if request.method == 'POST':
+                comment = feed.add_comment(request.user, _int(pk), request.data.get('text', ''))
+                return Response(comment_payload(comment, request.user), status=status.HTTP_201_CREATED)
+            items, next_before = feed.comments_of(
+                request.user, _int(pk), _int(request.query_params.get('before')),
+            )
+        except services.SocialError as error:
+            return self.refuse(error)
+        # Комментарии приходят новыми вперёд (по курсору), показываются по порядку
+        return Response({'results': [comment_payload(c, request.user) for c in reversed(items)],
+                         'next_before': next_before})
+
+    @action(detail=True, methods=['delete'], url_path=r'comments/(?P<comment_id>[0-9]+)')
+    def delete_comment(self, request, pk=None, comment_id=None):
+        from . import feed
+        try:
+            feed.delete_comment(request.user, _int(pk), _int(comment_id))
+        except services.SocialError as error:
+            return self.refuse(error)
+        return Response({'message': 'Комментарий удалён'})
+
+    @action(detail=True, methods=['post'])
+    def report(self, request, pk=None):
+        from . import feed
+        try:
+            text = feed.report(
+                request.user, _int(pk), request.data.get('reason', ''),
+                comment_id=_int(request.data.get('comment_id')),
+                text=request.data.get('comment', ''),
+                also_block=str(request.data.get('block', '')).lower() in ('1', 'true'),
+            )
+        except services.SocialError as error:
+            return self.refuse(error)
+        return Response({'message': text}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get'])
+    def image(self, request, pk=None):
+        from . import feed
+        try:
+            post = feed.get_post(request.user, _int(pk))
+        except services.SocialError as error:
+            return self.refuse(error)
+        if not post.image or (post.is_hidden and post.author_id != request.user.pk):
+            return Response({'error': 'Изображения нет'}, status=status.HTTP_404_NOT_FOUND)
+        return _file_response(post.image)
