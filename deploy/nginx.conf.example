@@ -1,0 +1,36 @@
+# Фрагмент server { } для nginx. Пути — как в deploy/README.md.
+
+server {
+    listen 443 ssl http2;
+    server_name angel-helper.ru;
+
+    # ssl_certificate ... (certbot)
+
+    client_max_body_size 10m;   # фото до 8 МБ + запас на multipart
+
+    location /static/ {
+        alias /srv/angelsheart/current/staticfiles/;
+        expires 30d;
+    }
+
+    # Публичные загрузки (если есть). private-media наружу НЕ отдаётся
+    # никогда: паспорта, фото анкет и чатов выдаёт только Django с
+    # проверкой прав.
+    location /media/ {
+        alias /srv/angelsheart/shared/media/;
+    }
+
+    # APK отдаёт nginx, решение «можно ли» принимает Django
+    # (ANDROID_APK_INTERNAL_LOCATION=/internal-apk/angelsheart.apk)
+    location /internal-apk/ {
+        internal;
+        alias /srv/angelsheart/shared/app-release/;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

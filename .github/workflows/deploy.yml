@@ -1,0 +1,116 @@
+# Выкладка сервера.
+#
+#   push в develop → проверки → тестовый сервер (окружение staging)
+#   push в main    → проверки → боевой сервер (окружение production,
+#                    ждёт подтверждения в GitHub: Actions → запуск →
+#                    Review deployments)
+#
+# Вручную (Actions → Deploy → Run workflow) можно перевыложить ветку
+# в выбранное окружение; production — только из main, это же правило
+# продублировано в настройках окружения.
+#
+# Как устроена выкладка на самом сервере — deploy/deploy.sh.
+
+name: Deploy
+
+on:
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Куда выкладывать
+        type: choice
+        options: [staging, production]
+        default: staging
+
+# Две выкладки в одно окружение одновременно не идут; прерывать начатую
+# нельзя — она могла остановиться посреди миграций
+concurrency:
+  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.environment || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: deploy (${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref_name == 'main' && 'production' || 'staging') }})
+    needs: ci
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref_name == 'main' && 'production' || 'staging') }}
+      url: ${{ vars.PUBLIC_URL }}
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER || 'deploy' }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      APP_DIR: ${{ vars.DEPLOY_PATH || '/srv/angelsheart' }}
+      SERVICE_NAME: ${{ vars.SERVICE_NAME || 'angelsheart' }}
+      HEALTH_URL: ${{ vars.HEALTH_URL || 'http://127.0.0.1:8000/health/' }}
+      HEALTH_HOST: ${{ vars.HEALTH_HOST }}
+      PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+    steps:
+      - name: Production — только из main
+        if: github.event_name == 'workflow_dispatch' && inputs.environment == 'production' && github.ref_name != 'main'
+        run: |
+          echo "::error::В production выкладывается только main (выбрана ветка ${{ github.ref_name }})"
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Номер релиза
+        id: release
+        run: echo "id=$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_SSH_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "::error::Окружение не настроено: нужны переменная DEPLOY_HOST и секреты DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS (docs/CICD.md)"
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Ключ сервера проверяется: без known_hosts подменённый сервер
+          # получил бы код и доступ к выкладке
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          echo "SSH=ssh -i $HOME/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -p $DEPLOY_PORT" >> "$GITHUB_ENV"
+
+      - name: Загрузка кода на сервер
+        env:
+          RELEASE: ${{ steps.release.outputs.id }}
+        run: |
+          $SSH "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$APP_DIR/releases/$RELEASE'"
+          rsync -az --delete --exclude-from=deploy/rsync-exclude.txt \
+            -e "$SSH" ./ "$DEPLOY_USER@$DEPLOY_HOST:$APP_DIR/releases/$RELEASE/"
+
+      - name: Выкладка
+        env:
+          RELEASE: ${{ steps.release.outputs.id }}
+        run: |
+          $SSH "$DEPLOY_USER@$DEPLOY_HOST" \
+            "APP_DIR='$APP_DIR' SERVICE_NAME='$SERVICE_NAME' HEALTH_URL='$HEALTH_URL' HEALTH_HOST='$HEALTH_HOST' \
+             bash '$APP_DIR/releases/$RELEASE/deploy/deploy.sh' '$RELEASE'"
+
+      # Проверка снаружи, через nginx и HTTPS: deploy.sh проверяет
+      # Gunicorn изнутри сервера, а сломаться может и то, что перед ним
+      - name: Проверка по публичному адресу
+        if: env.PUBLIC_URL != ''
+        env:
+          RELEASE: ${{ steps.release.outputs.id }}
+        run: |
+          for _ in $(seq 1 10); do
+            if curl -fsS "${PUBLIC_URL%/}/health/" | grep -q "\"revision\": *\"$RELEASE\""; then
+              echo "Сайт отвечает версией $RELEASE"; exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::${PUBLIC_URL%/}/health/ не отвечает версией $RELEASE"
+          exit 1

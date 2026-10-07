@@ -18,7 +18,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 
+from angelsheart.health import health
+
 urlpatterns = [
+    # Проверка живости для выкладки (deploy/deploy.sh)
+    path('health/', health, name='health'),
     path("admin/", admin.site.urls),
     # API сообщества: /api/profile/, /api/people/, /api/chats/, /api/groups/
     path('api/', include('social.urls')),
