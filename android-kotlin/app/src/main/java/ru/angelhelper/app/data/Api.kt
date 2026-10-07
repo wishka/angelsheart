@@ -62,6 +62,61 @@ interface Api {
 
     suspend fun consents(): Outcome<List<Consent>>
 
+    // ==================== СООБЩЕСТВО ====================
+
+    /** Справочник интересов для анкеты, фильтра и темы группы. */
+    suspend fun interests(): Outcome<List<Interest>>
+
+    suspend fun socialProfile(): Outcome<SocialProfile>
+
+    /**
+     * Сохранение анкеты. Включение isDiscoverable на сервере фиксирует
+     * согласие на распространение ПДн — экран предупреждает об этом.
+     */
+    suspend fun saveSocialProfile(profile: SocialProfile): Outcome<SocialProfile>
+
+    /** Поиск людей. Находятся только те, кто сам открыл анкету для поиска. */
+    suspend fun people(filter: PeopleFilter): Outcome<List<Person>>
+
+    suspend fun person(id: Int): Outcome<Person>
+
+    suspend fun chats(): Outcome<List<ChatInfo>>
+
+    suspend fun chat(id: Int): Outcome<ChatInfo>
+
+    /**
+     * Открыть чат. Один получатель без названия — личный чат (существующий
+     * возвращается тот же), несколько — групповой, название обязательно.
+     * Получатели — точные имена пользователей, как при переводе.
+     */
+    suspend fun openChat(usernames: List<String>, title: String): Outcome<ChatInfo>
+
+    /**
+     * Сообщения чата по возрастанию. afterId == null — последние 50;
+     * иначе только новые после него (так опрашивается открытый чат).
+     */
+    suspend fun messages(chatId: Int, afterId: Long?): Outcome<List<ChatMessage>>
+
+    suspend fun sendMessage(chatId: Int, text: String): Outcome<ChatMessage>
+
+    suspend fun leaveChat(chatId: Int): Outcome<String>
+
+    suspend fun communities(search: String, mineOnly: Boolean): Outcome<List<Community>>
+
+    suspend fun community(id: Int): Outcome<Community>
+
+    suspend fun createCommunity(
+        name: String,
+        description: String,
+        topic: String,
+        isPrivate: Boolean,
+    ): Outcome<Community>
+
+    /** action: join, leave, approve, decline; для двух последних нужен userId. */
+    suspend fun communityAction(id: Int, action: String, userId: Int? = null): Outcome<CommunityReply>
+
+    // ==================== ЗАГЛУШКИ ====================
+
     /** Заглушка: в серверном API пополнения нет. */
     suspend fun topUp(amount: String, method: String): Outcome<String>
 

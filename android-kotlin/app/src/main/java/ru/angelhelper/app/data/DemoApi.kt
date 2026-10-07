@@ -265,6 +265,83 @@ object DemoApi : Api {
         )
     }
 
+    // ==================== СООБЩЕСТВО ====================
+    // Логика — в DemoSocial: здесь только пауза, похожая на сеть.
+
+    override suspend fun interests(): Outcome<List<Interest>> = Outcome.Ok(DemoSocial.interests)
+
+    override suspend fun socialProfile(): Outcome<SocialProfile> {
+        delay(PAUSE_MS)
+        return DemoSocial.profile()
+    }
+
+    override suspend fun saveSocialProfile(profile: SocialProfile): Outcome<SocialProfile> {
+        delay(PAUSE_MS)
+        return DemoSocial.saveProfile(profile)
+    }
+
+    override suspend fun people(filter: PeopleFilter): Outcome<List<Person>> {
+        delay(PAUSE_MS)
+        return DemoSocial.people(filter)
+    }
+
+    override suspend fun person(id: Int): Outcome<Person> {
+        delay(PAUSE_MS)
+        return DemoSocial.person(id)
+    }
+
+    override suspend fun chats(): Outcome<List<ChatInfo>> {
+        delay(PAUSE_MS)
+        return DemoSocial.chats()
+    }
+
+    override suspend fun chat(id: Int): Outcome<ChatInfo> {
+        delay(PAUSE_MS)
+        return DemoSocial.chat(id)
+    }
+
+    override suspend fun openChat(usernames: List<String>, title: String): Outcome<ChatInfo> {
+        delay(PAUSE_MS)
+        return DemoSocial.openChat(usernames, title)
+    }
+
+    // Без паузы: открытый чат опрашивается каждые несколько секунд
+    override suspend fun messages(chatId: Int, afterId: Long?): Outcome<List<ChatMessage>> =
+        DemoSocial.messages(chatId, afterId)
+
+    override suspend fun sendMessage(chatId: Int, text: String): Outcome<ChatMessage> =
+        DemoSocial.send(chatId, text)
+
+    override suspend fun leaveChat(chatId: Int): Outcome<String> {
+        delay(PAUSE_MS)
+        return DemoSocial.leaveChat(chatId)
+    }
+
+    override suspend fun communities(search: String, mineOnly: Boolean): Outcome<List<Community>> {
+        delay(PAUSE_MS)
+        return DemoSocial.communities(search, mineOnly)
+    }
+
+    override suspend fun community(id: Int): Outcome<Community> {
+        delay(PAUSE_MS)
+        return DemoSocial.community(id)
+    }
+
+    override suspend fun createCommunity(
+        name: String,
+        description: String,
+        topic: String,
+        isPrivate: Boolean,
+    ): Outcome<Community> {
+        delay(PAUSE_MS)
+        return DemoSocial.create(name, description, topic, isPrivate)
+    }
+
+    override suspend fun communityAction(id: Int, action: String, userId: Int?): Outcome<CommunityReply> {
+        delay(PAUSE_MS)
+        return DemoSocial.action(id, action, userId)
+    }
+
     override suspend fun topUp(amount: String, method: String): Outcome<String> {
         delay(PAUSE_MS)
         val value = amount.replace(',', '.').toDoubleOrNull()

@@ -49,6 +49,9 @@ fun ProfileScreen(vm: AppViewModel, state: UiState) {
     }
 
     Panel(title = "Разделы") {
+        SecondaryButton("Анкета в сообществе", onClick = { vm.go(Screen.SocialProfileEdit) })
+        SecondaryButton("Группы", onClick = { vm.goRoot(Screen.Groups) })
+        SecondaryButton("История операций", onClick = { vm.go(Screen.History) })
         SecondaryButton("Верификация", onClick = { vm.go(Screen.Verification) })
         SecondaryButton("Мои согласия", onClick = { vm.go(Screen.Consents) })
         SecondaryButton("Лидеры", onClick = { vm.go(Screen.Leaders) })

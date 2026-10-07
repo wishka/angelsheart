@@ -7,7 +7,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.update
 import ru.angelhelper.app.data.Api
+import ru.angelhelper.app.data.ChatInfo
+import ru.angelhelper.app.data.ChatMessage
+import ru.angelhelper.app.data.Community
+import ru.angelhelper.app.data.Interest
+import ru.angelhelper.app.data.PeopleFilter
+import ru.angelhelper.app.data.Person
+import ru.angelhelper.app.data.SocialProfile
 import ru.angelhelper.app.data.AppPrefs
 import ru.angelhelper.app.data.Consent
 import ru.angelhelper.app.data.Dashboard
@@ -45,6 +53,17 @@ sealed interface Screen {
     data object Leaders : Screen
     data object Consents : Screen
     data object Settings : Screen
+
+    // Сообщество
+    data object People : Screen
+    data class PersonDetail(val id: Int) : Screen
+    data object Groups : Screen
+    data class GroupDetail(val id: Int) : Screen
+    data object NewGroup : Screen
+    data object Chats : Screen
+    data class Chat(val id: Int) : Screen
+    data object NewChat : Screen
+    data object SocialProfileEdit : Screen
 }
 
 /**
@@ -78,6 +97,21 @@ data class UiState(
     val baseUrl: String = AppPrefs.DEFAULT_BASE_URL,
     /** Сервер попросил код двухфакторной проверки: экран входа раскрывает поле. */
     val twoFactorRequired: Boolean = false,
+
+    // ---- Сообщество ----
+    val interests: List<Interest> = emptyList(),
+    val peopleFilter: PeopleFilter = PeopleFilter(),
+    val people: List<Person> = emptyList(),
+    val openPerson: Person? = null,
+    val socialProfile: SocialProfile? = null,
+    val chats: List<ChatInfo> = emptyList(),
+    val openChat: ChatInfo? = null,
+    val chatMessages: List<ChatMessage> = emptyList(),
+    val groups: List<Community> = emptyList(),
+    val groupsMineOnly: Boolean = false,
+    val openGroup: Community? = null,
+    /** Получатель, подставляемый в форму перевода из анкеты человека. */
+    val transferPrefill: String = "",
 ) {
     val screen: Screen get() = stack.last()
     val canGoBack: Boolean get() = stack.size > 1
@@ -160,6 +194,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             Screen.Profile -> loadProfile()
             Screen.Leaders -> loadLeaders()
             Screen.Consents -> loadConsents()
+            Screen.People -> {
+                ensureInterests()
+                searchPeople(_state.value.peopleFilter)
+            }
+            is Screen.PersonDetail -> loadPerson(screen.id)
+            Screen.Groups -> loadGroups("", _state.value.groupsMineOnly)
+            is Screen.GroupDetail -> loadGroup(screen.id)
+            Screen.NewGroup -> ensureInterests()
+            Screen.Chats -> loadChats()
+            is Screen.Chat -> openChatThread(screen.id)
+            Screen.SocialProfileEdit -> {
+                ensureInterests()
+                loadSocialProfile()
+            }
             else -> Unit
         }
     }
@@ -339,6 +387,158 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         run(
             onOk = { text -> say(text, isError = false) },
         ) { it.submitVerification(fullName, birthDate, series, number) }
+
+
+    // ==================== СООБЩЕСТВО: ЛЮДИ ====================
+
+    /** Справочник интересов грузится один раз: он не меняется на ходу. */
+    private fun ensureInterests() {
+        if (_state.value.interests.isNotEmpty()) return
+        run(onOk = { list -> _state.update { it.copy(interests = list) } }) { it.interests() }
+    }
+
+    fun searchPeople(filter: PeopleFilter) {
+        _state.update { it.copy(peopleFilter = filter) }
+        run(onOk = { list -> _state.update { it.copy(people = list) } }) { it.people(filter) }
+    }
+
+    fun loadPerson(id: Int) {
+        // Прежняя анкета убирается сразу: иначе, открыв второго человека,
+        // секунду видишь первого — и можно успеть нажать «Написать» не тому
+        if (_state.value.openPerson?.id != id) _state.update { it.copy(openPerson = null) }
+        run(onOk = { person -> _state.update { it.copy(openPerson = person) } }) { it.person(id) }
+    }
+
+    fun loadSocialProfile() = run(
+        onOk = { profile -> _state.update { it.copy(socialProfile = profile) } },
+    ) { it.socialProfile() }
+
+    fun saveSocialProfile(profile: SocialProfile) = run(
+        onOk = { saved ->
+            _state.update { it.copy(socialProfile = saved) }
+            say(
+                if (saved.isDiscoverable) "Анкета сохранена и видна в поиске" else "Анкета сохранена",
+                isError = false,
+            )
+        },
+    ) { it.saveSocialProfile(profile) }
+
+    /** Перевод человеку из его анкеты: имя получателя подставляется в форму. */
+    fun transferTo(username: String) {
+        _state.update { it.copy(transferPrefill = username) }
+        go(Screen.Transfer)
+    }
+
+    fun consumeTransferPrefill() {
+        _state.update { it.copy(transferPrefill = "") }
+    }
+
+    // ==================== СООБЩЕСТВО: ЧАТЫ ====================
+
+    fun loadChats() = run(
+        onOk = { list -> _state.update { it.copy(chats = list) } },
+    ) { it.chats() }
+
+    /** Личный чат с человеком: существующий или новый. */
+    fun writeTo(username: String) = run(
+        onOk = { chat -> go(Screen.Chat(chat.id)) },
+    ) { it.openChat(listOf(username), "") }
+
+    /**
+     * Новый чат с экрана «Новый чат». Сам этот экран из стека убирается:
+     * «назад» из созданного чата должно вести к списку чатов, а не
+     * обратно в форму, которую уже отправили.
+     */
+    fun createChat(usernames: List<String>, title: String) = run(
+        onOk = { chat -> replaceTop(Screen.Chat(chat.id)) },
+    ) { it.openChat(usernames, title) }
+
+    private fun replaceTop(screen: Screen) {
+        _state.update { it.copy(stack = it.stack.dropLast(1) + screen, message = null) }
+        loadFor(screen)
+    }
+
+    private fun openChatThread(id: Int) {
+        if (_state.value.openChat?.id != id) {
+            _state.update { it.copy(openChat = null, chatMessages = emptyList()) }
+        }
+        run(onOk = { chat -> _state.update { it.copy(openChat = chat) } }) { it.chat(id) }
+        run(onOk = { list -> mergeMessages(id, list, replace = true) }) { it.messages(id, null) }
+    }
+
+    /**
+     * Сообщения добавляются с отбором по номеру: опрос и отправка могут
+     * принести одно и то же сообщение, и без отбора оно показывалось бы
+     * дважды. Ответ для чата, который уже закрыт, отбрасывается.
+     */
+    private fun mergeMessages(chatId: Int, incoming: List<ChatMessage>, replace: Boolean = false) {
+        _state.update { current ->
+            if ((current.screen as? Screen.Chat)?.id != chatId) return@update current
+            val base = if (replace) emptyList() else current.chatMessages
+            val merged = (base + incoming).associateBy { it.id }.values.sortedBy { it.id }
+            current.copy(chatMessages = merged)
+        }
+    }
+
+    fun sendMessage(chatId: Int, text: String) = run(
+        onOk = { message -> mergeMessages(chatId, listOf(message)) },
+    ) { it.sendMessage(chatId, text) }
+
+    /**
+     * Опрос открытого чата.
+     *
+     * Без полосы ожидания и без сообщений об ошибке: он идёт каждые
+     * несколько секунд, и мигающая полоса или всплывающее «сервер не
+     * отвечает» раз в четыре секунды сделали бы экран непригодным.
+     * Исключение — просроченный вход: его нужно обработать как обычно.
+     */
+    fun pollChat(chatId: Int) {
+        val after = _state.value.chatMessages.lastOrNull()?.id
+        viewModelScope.launch {
+            val outcome = api().messages(chatId, after)
+            if (outcome is Outcome.Ok && outcome.value.isNotEmpty()) {
+                mergeMessages(chatId, outcome.value)
+            } else if (outcome is Outcome.Fail && outcome.message == SESSION_EXPIRED) {
+                handleFailure(outcome.message)
+            }
+        }
+    }
+
+    fun leaveChat(chatId: Int) = run(
+        onOk = { text ->
+            say(text, isError = false)
+            goRoot(Screen.Chats)
+        },
+    ) { it.leaveChat(chatId) }
+
+    // ==================== СООБЩЕСТВО: ГРУППЫ ====================
+
+    fun loadGroups(search: String, mineOnly: Boolean) {
+        _state.update { it.copy(groupsMineOnly = mineOnly) }
+        run(onOk = { list -> _state.update { it.copy(groups = list) } }) {
+            it.communities(search, mineOnly)
+        }
+    }
+
+    fun loadGroup(id: Int) {
+        if (_state.value.openGroup?.id != id) _state.update { it.copy(openGroup = null) }
+        run(onOk = { group -> _state.update { it.copy(openGroup = group) } }) { it.community(id) }
+    }
+
+    fun createGroup(name: String, description: String, topic: String, isPrivate: Boolean) = run(
+        onOk = { group ->
+            say("Группа «${group.name}» создана", isError = false)
+            replaceTop(Screen.GroupDetail(group.id))
+        },
+    ) { it.createCommunity(name, description, topic, isPrivate) }
+
+    /** Вступить, выйти, принять или отклонить заявку. */
+    fun groupAction(id: Int, action: String, userId: Int? = null) = run(
+        onOk = { reply ->
+            _state.update { it.copy(openGroup = reply.community) }
+            say(reply.message, isError = false)
+        },
+    ) { it.communityAction(id, action, userId) }
 
     // ==================== НАСТРОЙКИ ====================
 

@@ -1,0 +1,282 @@
+package ru.angelhelper.app.ui.screens
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material3.Badge
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import ru.angelhelper.app.data.ChatInfo
+import ru.angelhelper.app.data.ChatMessage
+import ru.angelhelper.app.data.asReadableDate
+import ru.angelhelper.app.ui.AppViewModel
+import ru.angelhelper.app.ui.EmptyNote
+import ru.angelhelper.app.ui.Field
+import ru.angelhelper.app.ui.Panel
+import ru.angelhelper.app.ui.PrimaryButton
+import ru.angelhelper.app.ui.Screen
+import ru.angelhelper.app.ui.SecondaryButton
+import ru.angelhelper.app.ui.UiState
+
+/** Как часто открытый чат спрашивает сервер о новых сообщениях. */
+private const val POLL_INTERVAL_MS = 4_000L
+
+// ==================== СПИСОК ЧАТОВ ====================
+
+@Composable
+fun ChatsScreen(vm: AppViewModel, state: UiState) {
+    Panel {
+        PrimaryButton("Новый чат", onClick = { vm.go(Screen.NewChat) })
+    }
+
+    Panel(title = "Переписки") {
+        if (state.chats.isEmpty()) {
+            EmptyNote(
+                "Переписок пока нет. Найдите человека в разделе «Люди» или " +
+                    "начните чат по логину кнопкой выше."
+            )
+        } else {
+            state.chats.forEachIndexed { index, chat ->
+                ChatRow(chat) { vm.go(Screen.Chat(chat.id)) }
+                if (index != state.chats.lastIndex) HorizontalDivider()
+            }
+        }
+        SecondaryButton("Обновить", onClick = { vm.loadChats() })
+    }
+}
+
+@Composable
+private fun ChatRow(chat: ChatInfo, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Initials(chat.title)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                chat.title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = if (chat.unreadCount > 0) FontWeight.Bold else FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val last = chat.lastMessage
+            val preview = when {
+                last == null -> chat.kindTitle
+                last.isMine -> "Вы: ${last.text}"
+                chat.isDirect -> last.text
+                else -> "${last.senderName}: ${last.text}"
+            }
+            Text(
+                preview,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            chat.lastMessage?.createdAt?.let {
+                Text(
+                    it.asReadableDate(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (chat.unreadCount > 0) Badge { Text("${chat.unreadCount}") }
+        }
+    }
+}
+
+// ==================== НОВЫЙ ЧАТ ====================
+
+@Composable
+fun NewChatScreen(vm: AppViewModel, state: UiState) {
+    var recipients by rememberSaveable { mutableStateOf("") }
+    var title by rememberSaveable { mutableStateOf("") }
+    val names = recipients.split(',', ' ', '\n').map { it.trim().removePrefix("@") }.filter { it.isNotEmpty() }
+    val isGroup = names.size > 1
+
+    Panel(title = "Кому") {
+        Field(
+            recipients, { recipients = it }, "Логины через запятую",
+            supporting = "Точный логин, как при переводе: написать можно и тому, кого нет в поиске",
+        )
+        if (isGroup) {
+            Field(title, { title = it.take(80) }, "Название группового чата")
+        }
+        PrimaryButton(
+            if (isGroup) "Создать групповой чат" else "Написать",
+            busy = state.busy,
+            enabled = names.isNotEmpty() && (!isGroup || title.isNotBlank()),
+            onClick = { vm.createChat(names, if (isGroup) title.trim() else "") },
+        )
+        Caption("Один логин — личный чат. Несколько — групповой, ему нужно название.")
+    }
+}
+
+// ==================== ПЕРЕПИСКА ====================
+
+/**
+ * Открытая переписка.
+ *
+ * Единственный экран, который не лежит в общей прокрутке AppRoot:
+ * сообщения листаются своим списком, а поле ввода стоит внизу на месте.
+ * Список перевёрнут (reverseLayout): новые сообщения сразу у поля ввода,
+ * и при открытии не нужно прокручивать до конца.
+ *
+ * Пока экран открыт, раз в несколько секунд запрашиваются новые
+ * сообщения. Цикл живёт в LaunchedEffect и останавливается сам, когда
+ * человек уходит с экрана.
+ */
+@Composable
+fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
+    var text by rememberSaveable(id) { mutableStateOf("") }
+    val chat = state.openChat?.takeIf { it.id == id }
+
+    LaunchedEffect(id) {
+        while (true) {
+            delay(POLL_INTERVAL_MS)
+            vm.pollChat(id)
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    chat?.title ?: "Загружаем…",
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (chat != null) Caption(chat.kindTitle)
+            }
+            when {
+                chat == null -> Unit
+                chat.isDirect && chat.peerUsername != null -> TextButton(
+                    onClick = { vm.transferTo(chat.peerUsername) },
+                ) { Text("Перевести") }
+                chat.kind == "community" && chat.communityId != null -> TextButton(
+                    onClick = { vm.go(Screen.GroupDetail(chat.communityId)) },
+                ) { Text("Группа") }
+                chat.kind == "group" -> TextButton(onClick = { vm.leaveChat(id) }) { Text("Выйти") }
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            reverseLayout = true,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            contentPadding = PaddingValues(vertical = 4.dp),
+        ) {
+            if (state.chatMessages.isEmpty()) {
+                item { EmptyNote(if (chat == null) "Загружаем сообщения…" else "Сообщений пока нет — напишите первым.") }
+            }
+            items(state.chatMessages.asReversed(), key = { it.id }) { message ->
+                Bubble(message, showSender = chat?.isDirect == false)
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it.take(2000) },
+                placeholder = { Text("Сообщение") },
+                maxLines = 4,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(
+                enabled = text.isNotBlank() && !state.busy,
+                onClick = {
+                    vm.sendMessage(id, text.trim())
+                    text = ""
+                },
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Отправить")
+            }
+        }
+    }
+}
+
+@Composable
+private fun Bubble(message: ChatMessage, showSender: Boolean) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (message.isMine) Arrangement.End else Arrangement.Start,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = if (message.isMine) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+            modifier = Modifier.widthIn(max = 300.dp),
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                if (showSender && !message.isMine) {
+                    Text(
+                        message.senderName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Text(message.text, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    message.createdAt.asReadableDate(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (message.isMine) {
+                        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f)
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.align(Alignment.End),
+                )
+            }
+        }
+    }
+}

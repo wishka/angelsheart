@@ -1,0 +1,276 @@
+"""
+Тесты сообщества: поиск людей, чаты, группы.
+
+Каждый тест проверяет правило, нарушение которого было бы заметно
+человеку или опасно для данных: чужой чат, анкета без согласия,
+владелец, бросивший группу.
+"""
+
+from django.contrib.auth.models import User
+from django.core.cache import cache
+from django.test import TestCase
+from django.utils import timezone
+from rest_framework.test import APIClient
+
+from main.models import UserConsent
+from social import services
+from social.models import (
+    Chat, ChatMember, ChatMessage, Community, CommunityMembership, Interest, SocialProfile,
+)
+
+
+def make_user(username, **profile):
+    user = User.objects.create_user(username=username, password='Sunrise-Harbor-42',
+                                    email=f'{username}@example.com')
+    interests = profile.pop('interests', [])
+    discoverable = profile.pop('discoverable', False)
+    social = SocialProfile.objects.create(user=user, is_discoverable=discoverable, **profile)
+    if interests:
+        social.interests.set(Interest.objects.filter(slug__in=interests))
+    if discoverable:
+        UserConsent.objects.create(user=user, consent_type='distribution',
+                                   version=UserConsent.current_version(), is_accepted=True)
+    return user
+
+
+class SocialTestCase(TestCase):
+    def setUp(self):
+        cache.clear()  # счётчики ограничения запросов
+        self.me = make_user('me')
+        self.client = APIClient()
+        self.client.force_authenticate(self.me)
+
+    def results(self, response):
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()['results']
+
+
+class PeopleSearchTests(SocialTestCase):
+    def setUp(self):
+        super().setUp()
+        year = timezone.localdate().year
+        self.anna = make_user('anna', display_name='Анна', city='Москва', gender='female',
+                              birth_year=year - 25, interests=['photo', 'volunteering'],
+                              discoverable=True)
+        self.ivan = make_user('ivan', display_name='Иван', city='Казань', gender='male',
+                              birth_year=year - 40, interests=['sport'], discoverable=True)
+        self.hidden = make_user('hidden', city='Москва')  # показ в поиске не включён
+
+    def search(self, **params):
+        return [p['username'] for p in self.results(self.client.get('/api/people/', params))]
+
+    def test_only_discoverable_people_are_found(self):
+        self.assertEqual(self.search(), ['anna', 'ivan'])
+
+    def test_revoked_consent_hides_profile_immediately(self):
+        UserConsent.objects.get(user=self.anna).revoke('отзыв')
+        self.assertEqual(self.search(), ['ivan'])
+
+    def test_filters(self):
+        self.assertEqual(self.search(q='анн'), ['anna'])
+        self.assertEqual(self.search(city='казань'), ['ivan'])
+        self.assertEqual(self.search(gender='female'), ['anna'])
+        self.assertEqual(self.search(age_min=30), ['ivan'])
+        self.assertEqual(self.search(age_max=30), ['anna'])
+        self.assertEqual(self.search(interests='sport,photo'), ['anna', 'ivan'])
+        self.assertEqual(self.search(interests='volunteering'), ['anna'])
+
+    def test_profile_does_not_leak_email(self):
+        data = self.client.get(f'/api/people/{self.anna.pk}/').json()
+        self.assertEqual(data['display_name'], 'Анна')
+        self.assertNotIn('email', data)
+
+    def test_hidden_profile_is_404(self):
+        self.assertEqual(self.client.get(f'/api/people/{self.hidden.pk}/').status_code, 404)
+
+    def test_enabling_discoverability_records_consent(self):
+        response = self.client.patch('/api/profile/', {
+            'city': 'Сочи', 'is_discoverable': True, 'interests': ['music'],
+        }, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()['distribution_consent'])
+        self.assertTrue(UserConsent.has_active_consent(self.me, 'distribution'))
+        other = APIClient()
+        other.force_authenticate(self.anna)
+        found = [p['username'] for p in other.get('/api/people/', {'city': 'Сочи'}).json()['results']]
+        self.assertEqual(found, ['me'])
+
+    def test_birth_year_is_validated(self):
+        response = self.client.patch('/api/profile/', {'birth_year': timezone.localdate().year},
+                                      format='json')
+        self.assertEqual(response.status_code, 400)
+
+
+class ChatTests(SocialTestCase):
+    def setUp(self):
+        super().setUp()
+        self.anna = make_user('anna')
+        self.ivan = make_user('ivan')
+
+    def test_direct_chat_is_created_once(self):
+        first = self.client.post('/api/chats/', {'usernames': ['anna']}, format='json')
+        second = self.client.post('/api/chats/', {'usernames': ['@anna']}, format='json')
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json()['id'], second.json()['id'])
+        self.assertEqual(first.json()['title'], 'anna')
+        self.assertEqual(Chat.objects.count(), 1)
+
+    def test_cannot_write_to_self_or_unknown(self):
+        self.assertEqual(self.client.post('/api/chats/', {'usernames': ['me']}, format='json').status_code, 400)
+        response = self.client.post('/api/chats/', {'usernames': ['nobody']}, format='json')
+        self.assertIn('nobody', response.json()['error'])
+
+    def test_group_chat_requires_title(self):
+        response = self.client.post('/api/chats/', {'usernames': ['anna', 'ivan']}, format='json')
+        self.assertEqual(response.status_code, 400)
+        response = self.client.post('/api/chats/', {'usernames': ['anna', 'ivan'], 'title': 'Друзья'},
+                                    format='json')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['members_count'], 3)
+
+    def test_messages_unread_and_polling(self):
+        chat_id = self.client.post('/api/chats/', {'usernames': ['anna']}, format='json').json()['id']
+        sent = self.client.post(f'/api/chats/{chat_id}/messages/', {'text': '  Привет  '}, format='json')
+        self.assertEqual(sent.status_code, 201)
+        self.assertEqual(sent.json()['text'], 'Привет')
+
+        anna = APIClient()
+        anna.force_authenticate(self.anna)
+        chats = anna.get('/api/chats/').json()['results']
+        self.assertEqual(chats[0]['unread_count'], 1)
+        self.assertEqual(chats[0]['last_message']['text'], 'Привет')
+
+        thread = anna.get(f'/api/chats/{chat_id}/messages/').json()
+        self.assertEqual([m['text'] for m in thread['results']], ['Привет'])
+        self.assertFalse(thread['results'][0]['is_mine'])
+        self.assertEqual(anna.get('/api/chats/').json()['results'][0]['unread_count'], 0)
+
+        last_id = thread['results'][-1]['id']
+        anna.post(f'/api/chats/{chat_id}/messages/', {'text': 'Ответ'}, format='json')
+        fresh = self.client.get(f'/api/chats/{chat_id}/messages/', {'after': last_id}).json()
+        self.assertEqual([m['text'] for m in fresh['results']], ['Ответ'])
+
+    def test_outsider_cannot_read_or_write(self):
+        chat_id = self.client.post('/api/chats/', {'usernames': ['anna']}, format='json').json()['id']
+        ivan = APIClient()
+        ivan.force_authenticate(self.ivan)
+        self.assertEqual(ivan.get(f'/api/chats/{chat_id}/messages/').status_code, 404)
+        self.assertEqual(ivan.post(f'/api/chats/{chat_id}/messages/', {'text': 'x'},
+                                   format='json').status_code, 404)
+        self.assertEqual(ivan.get('/api/chats/').json()['results'], [])
+
+    def test_empty_message_rejected(self):
+        chat_id = self.client.post('/api/chats/', {'usernames': ['anna']}, format='json').json()['id']
+        response = self.client.post(f'/api/chats/{chat_id}/messages/', {'text': '   '}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(ChatMessage.objects.count(), 0)
+
+    def test_leave_group_chat_but_not_direct(self):
+        direct = self.client.post('/api/chats/', {'usernames': ['anna']}, format='json').json()['id']
+        self.assertEqual(self.client.post(f'/api/chats/{direct}/leave/').status_code, 400)
+        group = self.client.post('/api/chats/', {'usernames': ['anna', 'ivan'], 'title': 'Т'},
+                                 format='json').json()['id']
+        self.assertEqual(self.client.post(f'/api/chats/{group}/leave/').status_code, 200)
+        self.assertFalse(ChatMember.objects.filter(chat_id=group, user=self.me).exists())
+
+
+class CommunityTests(SocialTestCase):
+    def setUp(self):
+        super().setUp()
+        self.anna = make_user('anna')
+        self.anna_client = APIClient()
+        self.anna_client.force_authenticate(self.anna)
+
+    def create(self, **data):
+        payload = {'name': 'Волонтёры', 'topic': 'volunteering', **data}
+        response = self.client.post('/api/groups/', payload, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        return response.json()
+
+    def test_create_open_group_and_join(self):
+        group = self.create()
+        self.assertEqual(group['my_status'], 'owner')
+        self.assertEqual(group['topic']['title'], 'Волонтёрство')
+        self.assertIsNotNone(group['chat_id'])
+
+        # До вступления — ни участников, ни обсуждения
+        before = self.anna_client.get(f"/api/groups/{group['id']}/").json()
+        self.assertEqual(before['members'], [])
+        self.assertIsNone(before['chat_id'])
+
+        joined = self.anna_client.post(f"/api/groups/{group['id']}/join/").json()
+        self.assertEqual(joined['my_status'], 'member')
+        self.assertEqual(joined['members_count'], 2)
+        # Обсуждение группы появилось в списке чатов
+        chats = self.anna_client.get('/api/chats/').json()['results']
+        self.assertEqual(chats[0]['community_id'], group['id'])
+
+        left = self.anna_client.post(f"/api/groups/{group['id']}/leave/").json()
+        self.assertEqual(left['my_status'], 'none')
+        self.assertEqual(self.anna_client.get('/api/chats/').json()['results'], [])
+
+    def test_private_group_needs_approval(self):
+        group = self.create(is_private=True)
+        pending = self.anna_client.post(f"/api/groups/{group['id']}/join/").json()
+        self.assertEqual(pending['my_status'], 'pending')
+        self.assertIsNone(pending['chat_id'])
+
+        # Участник без прав принять заявку не может
+        response = self.anna_client.post(f"/api/groups/{group['id']}/approve/", {'user_id': self.anna.pk})
+        self.assertEqual(response.status_code, 403)
+
+        detail = self.client.get(f"/api/groups/{group['id']}/").json()
+        self.assertEqual([r['username'] for r in detail['pending_requests']], ['anna'])
+        approved = self.client.post(f"/api/groups/{group['id']}/approve/", {'user_id': self.anna.pk}).json()
+        self.assertEqual(approved['members_count'], 2)
+        self.assertEqual(self.anna_client.get(f"/api/groups/{group['id']}/").json()['my_status'], 'member')
+
+    def test_owner_cannot_leave(self):
+        group = self.create()
+        self.assertEqual(self.client.post(f"/api/groups/{group['id']}/leave/").status_code, 400)
+
+    def test_search_and_mine(self):
+        self.create(name='Бег по утрам', topic='sport')
+        self.create(name='Кошки', topic='animals')
+        names = [g['name'] for g in self.results(self.anna_client.get('/api/groups/', {'search': 'бег'}))]
+        self.assertEqual(names, ['Бег по утрам'])
+        names = [g['name'] for g in self.results(self.anna_client.get('/api/groups/', {'topic': 'animals'}))]
+        self.assertEqual(names, ['Кошки'])
+        self.assertEqual(self.results(self.anna_client.get('/api/groups/', {'mine': '1'})), [])
+
+
+class AccountErasureTests(SocialTestCase):
+    def test_erasure_keeps_conversation_but_removes_data(self):
+        anna = make_user('anna', city='Москва', discoverable=True)
+        chat, _ = services.get_or_create_direct_chat(self.me, anna)
+        services.send_message(chat, anna, 'Секрет')
+        group = services.create_community(anna, 'Группа Анны')
+        services.join_community(group, self.me)
+
+        services.erase_user_social_data(anna)
+
+        self.assertFalse(SocialProfile.objects.filter(user=anna).exists())
+        thread = self.client.get(f'/api/chats/{chat.pk}/messages/').json()['results']
+        self.assertEqual(thread[0]['text'], 'Сообщение удалено')
+        self.assertEqual(thread[0]['sender_name'], 'Удалённый пользователь')
+        group.refresh_from_db()
+        self.assertEqual(group.owner, self.me)
+        self.assertEqual(
+            CommunityMembership.objects.get(community=group, user=self.me).role, 'owner',
+        )
+
+    def test_lonely_group_is_deleted(self):
+        anna = make_user('anna')
+        services.create_community(anna, 'Пусто')
+        services.erase_user_social_data(anna)
+        self.assertFalse(Community.objects.exists())
+        self.assertFalse(Chat.objects.exists())
+
+
+class ProfilePutTests(SocialTestCase):
+    def test_put_is_partial_update(self):
+        self.client.put('/api/profile/', {'city': 'Тверь', 'about': 'Привет'}, format='json')
+        response = self.client.put('/api/profile/', {'about': 'Новое'}, format='json')
+        self.assertEqual(response.json()['city'], 'Тверь')
+        self.assertEqual(response.json()['about'], 'Новое')
