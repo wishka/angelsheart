@@ -1,0 +1,62 @@
+# Проверка на каждый push и pull request:
+#   server  — тесты Django (main и social);
+#   android — сборка отладочного APK; готовый файл лежит в артефактах
+#             запуска (Actions → запуск → Artifacts → angelsheart-debug-apk).
+#
+# Push-уведомления в собранном APK работают, только если в настройках
+# репозитория задан секрет GOOGLE_SERVICES_JSON (содержимое файла
+# google-services.json из консоли Firebase). Без него APK собирается
+# и работает, но без уведомлений.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    env:
+      # Заглушки секретов допускаются только в DEBUG — для тестов это и нужно
+      DEBUG: 'True'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      # Каталог журналов не хранится в репозитории, а настройки логирования пишут туда
+      - run: mkdir -p logs
+      - run: python manage.py makemigrations --check --dry-run
+      - run: python manage.py test main social --noinput
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-kotlin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Firebase config (если задан секрет)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+            echo "google-services.json записан — push будет включён"
+          else
+            echo "Секрета GOOGLE_SERVICES_JSON нет — сборка без push"
+          fi
+      # Android SDK на раннерах GitHub уже установлен (ANDROID_HOME)
+      - run: chmod +x gradlew && ./gradlew assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: angelsheart-debug-apk
+          path: android-kotlin/app/build/outputs/apk/debug/*.apk
