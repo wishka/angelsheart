@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Тему рисует Compose. Здесь только то, что нужно до первого кадра:
+        цвет фона окна, чтобы при запуске не мигало белым, и отсутствие
+        системной панели заголовка.
+    -->
+    <style name="Theme.AngelsHeart" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/app_background</item>
+        <item name="android:statusBarColor">@color/app_primary</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

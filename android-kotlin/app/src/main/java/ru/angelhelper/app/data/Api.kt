@@ -1,0 +1,99 @@
+package ru.angelhelper.app.data
+
+/**
+ * Всё, что приложение просит у сервера.
+ *
+ * Интерфейс один, реализаций две: [HttpApi] ходит на настоящий Django,
+ * [DemoApi] отдаёт выдуманные данные из памяти. Экраны не знают, с какой
+ * из них работают, — поэтому демо-режим не требует ни одной особой ветки
+ * в разметке и не может разойтись с боевым поведением.
+ *
+ * Часть методов помечена как заглушка: в серверном API этих точек нет
+ * вовсе. Они отвечают выдуманным успехом и честно пишут об этом на
+ * экране — приложение делается для тестирования, и притворяться, будто
+ * деньги пополнились, оно не должно.
+ */
+interface Api {
+
+    suspend fun login(username: String, password: String, code: String = ""): Outcome<Tokens>
+
+    /**
+     * Выход с отзывом refresh-токена на сервере.
+     *
+     * Только стереть токены на телефоне мало: refresh остаётся
+     * действительным ещё неделю, и с потерянного телефона по нему
+     * по-прежнему можно войти.
+     */
+    suspend fun logout(): Outcome<Unit>
+
+    /**
+     * Регистрация сразу возвращает токены: сервер их выдаёт, и заставлять
+     * человека набирать тот же пароль второй раз на экране входа незачем
+     * — тем более что вход ограничен десятью попытками в час.
+     */
+    suspend fun register(
+        username: String,
+        email: String,
+        password: String,
+        acceptTerms: Boolean,
+        consentDataProcessing: Boolean,
+    ): Outcome<Tokens>
+
+    suspend fun me(): Outcome<Profile>
+
+    suspend fun dashboard(): Outcome<Dashboard>
+
+    suspend fun fundraises(search: String = ""): Outcome<List<Fundraise>>
+
+    suspend fun fundraise(id: Int): Outcome<Fundraise>
+
+    suspend fun donate(
+        id: Int,
+        amount: String,
+        message: String,
+        anonymous: Boolean,
+    ): Outcome<String>
+
+    suspend fun transfer(receiver: String, amount: String, comment: String): Outcome<String>
+
+    suspend fun transactions(): Outcome<List<Tx>>
+
+    suspend fun leaders(): Outcome<List<Leader>>
+
+    suspend fun consents(): Outcome<List<Consent>>
+
+    /** Заглушка: в серверном API пополнения нет. */
+    suspend fun topUp(amount: String, method: String): Outcome<String>
+
+    /** Заглушка: в серверном API вывода средств нет. */
+    suspend fun withdraw(amount: String, method: String, target: String): Outcome<String>
+
+    /** Заглушка: подача паспортных данных есть только на сайте. */
+    suspend fun submitVerification(
+        fullName: String,
+        birthDate: String,
+        series: String,
+        number: String,
+    ): Outcome<String>
+
+    /** Заглушка: восстановление пароля есть только на сайте. */
+    suspend fun resetPassword(email: String): Outcome<String>
+}
+
+/**
+ * Признак того, что вход больше не действует.
+ *
+ * Передаётся текстом сообщения, а не отдельным типом: экранам он не
+ * нужен, его узнаёт только модель — и сразу возвращает человека на
+ * экран входа. Иначе приложение считает его вошедшим и показывает 401
+ * на каждом экране, а уйти оттуда некуда.
+ */
+const val SESSION_EXPIRED: String = "__session_expired__"
+
+/** Сервер требует код двухфакторной проверки (отвечает 403). */
+const val TWO_FACTOR_REQUIRED: String = "__two_factor_required__"
+
+/** Текст, который экраны показывают под формами-заглушками. */
+const val STUB_NOTE: String =
+    "Это заглушка. В серверном API такой операции пока нет — приложение " +
+        "покажет ответ, но на сервере ничего не изменится."

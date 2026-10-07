@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Адаптивная иконка для Android 8 и новее: система сама обрезает её
+    под маску прошивки (круг, квадрат со скруглением, каплю). Без этого
+    файла PNG вписывается в маску целиком и выглядит как наклейка.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/app_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

@@ -1,0 +1,212 @@
+/*
+ * Шрифты Quicksand и Playfair Display, раздаются с этого же сервера.
+ *
+ * Раньше они подключались с внешнего CDN, и каждый показ любой страницы —
+ * включая саму Политику конфиденциальности — отправлял IP-адрес и
+ * User-Agent посетителя за рубеж. Это трансграничная передача
+ * персональных данных (ст. 12 152-ФЗ).
+ *
+ * Файл собран командой `python manage.py vendor_static` из пакетов
+ * @fontsource/* (лицензия SIL OFL 1.1, текст лежит рядом).
+ *
+ * Подключены только нужные сайту наборы символов. У Quicksand кириллицы
+ * нет: русский текст показывается запасным шрифтом.
+ */
+
+/* quicksand-latin-300-normal */
+@font-face {
+  font-family: 'Quicksand';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300;
+  src: url(quicksand-latin-300-normal.woff2) format('woff2');
+}
+
+/* quicksand-latin-400-normal */
+@font-face {
+  font-family: 'Quicksand';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(quicksand-latin-400-normal.woff2) format('woff2');
+}
+
+/* quicksand-latin-500-normal */
+@font-face {
+  font-family: 'Quicksand';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(quicksand-latin-500-normal.woff2) format('woff2');
+}
+
+/* quicksand-latin-600-normal */
+@font-face {
+  font-family: 'Quicksand';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(quicksand-latin-600-normal.woff2) format('woff2');
+}
+
+/* quicksand-latin-700-normal */
+@font-face {
+  font-family: 'Quicksand';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url(quicksand-latin-700-normal.woff2) format('woff2');
+}
+
+/* quicksand-latin-ext-300-normal */
+@font-face {
+  font-family: 'Quicksand';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300;
+  src: url(quicksand-latin-ext-300-normal.woff2) format('woff2');
+}
+
+/* quicksand-latin-ext-400-normal */
+@font-face {
+  font-family: 'Quicksand';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(quicksand-latin-ext-400-normal.woff2) format('woff2');
+}
+
+/* quicksand-latin-ext-500-normal */
+@font-face {
+  font-family: 'Quicksand';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(quicksand-latin-ext-500-normal.woff2) format('woff2');
+}
+
+/* quicksand-latin-ext-600-normal */
+@font-face {
+  font-family: 'Quicksand';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(quicksand-latin-ext-600-normal.woff2) format('woff2');
+}
+
+/* quicksand-latin-ext-700-normal */
+@font-face {
+  font-family: 'Quicksand';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url(quicksand-latin-ext-700-normal.woff2) format('woff2');
+}
+
+/* playfair-display-latin-400-normal */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(playfair-display-latin-400-normal.woff2) format('woff2');
+}
+
+/* playfair-display-latin-500-normal */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(playfair-display-latin-500-normal.woff2) format('woff2');
+}
+
+/* playfair-display-latin-600-normal */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(playfair-display-latin-600-normal.woff2) format('woff2');
+}
+
+/* playfair-display-latin-700-normal */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url(playfair-display-latin-700-normal.woff2) format('woff2');
+}
+
+/* playfair-display-latin-ext-400-normal */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(playfair-display-latin-ext-400-normal.woff2) format('woff2');
+}
+
+/* playfair-display-latin-ext-500-normal */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(playfair-display-latin-ext-500-normal.woff2) format('woff2');
+}
+
+/* playfair-display-latin-ext-600-normal */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(playfair-display-latin-ext-600-normal.woff2) format('woff2');
+}
+
+/* playfair-display-latin-ext-700-normal */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url(playfair-display-latin-ext-700-normal.woff2) format('woff2');
+}
+
+/* playfair-display-cyrillic-400-normal */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(playfair-display-cyrillic-400-normal.woff2) format('woff2');
+}
+
+/* playfair-display-cyrillic-500-normal */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(playfair-display-cyrillic-500-normal.woff2) format('woff2');
+}
+
+/* playfair-display-cyrillic-600-normal */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(playfair-display-cyrillic-600-normal.woff2) format('woff2');
+}
+
+/* playfair-display-cyrillic-700-normal */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url(playfair-display-cyrillic-700-normal.woff2) format('woff2');
+}

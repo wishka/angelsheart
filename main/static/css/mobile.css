@@ -1,0 +1,586 @@
+/* ==================== ДЛИННЫЕ СЛОВА ==================== */
+/*
+ * Не в медиазапросе намеренно: название сбора из 74 символов без
+ * пробелов раздувало раскладку и на телефоне (811 пикселей при экране
+ * 320), и на большом экране (1977 при 1280). Данные одни и те же,
+ * значит и правило одно.
+ *
+ * Два режима переноса, и разница между ними важна:
+ *
+ *   anywhere    — слово перестаёт считаться неделимым при подсчёте
+ *                 минимальной ширины. Только так блок, ширина которого
+ *                 зависит от содержимого (ячейка, элемент flex или
+ *                 grid), соглашается сжаться. Отсюда — заголовки,
+ *                 ссылки, ячейки.
+ *
+ *   break-word  — слово переносится, только если иначе вылезет за край,
+ *                 а на ширину блока не влияет. Для всего остального:
+ *                 с anywhere карточка сжималась по самому узкому месту
+ *                 и разрывала сумму посередине — «1234568 ₽» вставало
+ *                 двумя строками «123456» и «8 ₽», то есть читалось как
+ *                 два разных числа. На странице про деньги это хуже,
+ *                 чем длинная строка.
+ */
+
+h1, h2, h3, h4, h5, h6,
+p, li, a, code, th, td,
+.stat-value, .balance-value {
+    overflow-wrap: anywhere;
+}
+
+.card, span, strong, em, b, label, small, dd, dt, figcaption {
+    overflow-wrap: break-word;
+}
+
+/* Подпись кнопки не переносим никогда: «Отозвать» превращалось
+   в «Отозват» и «ь» на отдельной строке — свойство наследуемое,
+   и кнопке внутри ячейки доставалось anywhere от неё. */
+button, .btn, .bottom-nav a {
+    overflow-wrap: normal;
+}
+
+/* Ключ двухфакторной проверки — 32 символа без пробелов в строчном
+   элементе с отступами: плашка вылезала за карточку до края экрана,
+   а её фон накрывал строку сверху, потому что вертикальные отступы
+   строчного элемента не раздвигают строку. */
+code, kbd, samp {
+    display: inline-block;
+    max-width: 100%;
+}
+
+/*
+ * Мобильный слой: телефон и режим установленного приложения.
+ *
+ * Вёрстка страниц написана инлайн-стилями прямо в шаблонах — двадцать
+ * пять файлов с `style="grid-template-columns: 1fr 400px"` и подобным.
+ * Инлайн-стиль обычным правилом не перекрыть, поэтому здесь местами
+ * стоит !important: это не небрежность, а единственный способ починить
+ * вёрстку, не переписывая все шаблоны разом и не рискуя сломать то,
+ * что работает на большом экране.
+ *
+ * Порядок подключения важен: файл идёт последним, после стилей base.html.
+ */
+
+/* ==================== ТЕЛЕФОН ==================== */
+
+@media (max-width: 760px) {
+
+    /* Крупные и фиксированные колонки — в одну. Колонка в 300–400
+       пикселей на экране шириной 360 вызывает горизонтальную прокрутку
+       всей страницы: самый заметный признак «сайта в телефоне». */
+    main [style*="1fr 400px"],
+    main [style*="1fr 1fr"],
+    main [style*="minmax(400px"],
+    main [style*="minmax(350px"],
+    main [style*="minmax(300px"],
+    main [style*="minmax(280px"],
+    main [style*="minmax(250px"],
+    main .stats-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* Карточки статистики и наборы мелких кнопок остаются по два-три
+       в ряд: одна колонка растягивает «0 ₽» на всю ширину экрана */
+    main [style*="minmax(200px"],
+    main [style*="minmax(150px"],
+    main [style*="repeat(2, 1fr)"] {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    main [style*="repeat(3, 1fr)"] {
+        grid-template-columns: repeat(3, 1fr) !important;
+    }
+
+    /* Элемент сетки или flex по умолчанию не сжимается меньше своего
+       содержимого: даже с переносом длинного слова карточка оставалась
+       шире колонки и вылезала за край экрана. min-width: 0 снимает этот
+       порог — только после него перенос действительно решает дело. */
+    main [style*="grid-template-columns"] > *,
+    main [style*="display: flex"] > *,
+    main [style*="display:flex"] > *,
+    .card {
+        min-width: 0;
+    }
+
+    .container {
+        padding: 1rem 0.85rem 5.5rem !important;
+    }
+
+    .card {
+        padding: 1.15rem !important;
+        border-radius: 18px !important;
+    }
+
+    h1 {
+        font-size: 1.45rem !important;
+        line-height: 1.25;
+    }
+
+    h2 {
+        font-size: 1.2rem !important;
+    }
+
+    h3 {
+        font-size: 1.05rem !important;
+    }
+
+    /* Таблицы, которым не досталось подписей (нет строки заголовков),
+       прокручиваются по горизонтали. Без nowrap: он запрещал перенос
+       и превращал таблицу из двух колонок в ленту, у которой видно
+       первую колонку и половину второй. */
+    .table:not(.has-labels),
+    table:not(.has-labels) {
+        display: block;
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Кнопки под палец: 44 пикселя — минимальная цель нажатия */
+    .btn,
+    button[type="submit"] {
+        min-height: 44px;
+        padding: 11px 18px;
+    }
+
+    /* Форма и её кнопка на всю ширину: на телефоне кнопка в середине
+       строки означает промах мимо неё */
+    form .btn,
+    form button[type="submit"] {
+        width: 100%;
+        justify-content: center;
+    }
+
+    /* Поля ввода: 16 пикселей, иначе браузер приближает страницу при фокусе.
+       Переключатели и флажки исключены: min-height растягивал кружок
+       радиокнопки до 44 пикселей, и он повисал на 28 пикселей выше
+       своей подписи. */
+    .form-control,
+    input:not([type="radio"]):not([type="checkbox"]),
+    select,
+    textarea {
+        font-size: 16px !important;
+        min-height: 44px;
+    }
+
+    /* Подсказка в поле часто длиннее самого поля: на 16 пикселях
+       «Введите имя пользователя...» не помещалось и обрывалось на
+       полуслове. Многоточие честнее обрыва, а целиком текст всё равно
+       виден в подписи над полем. */
+    input::placeholder,
+    textarea::placeholder {
+        text-overflow: ellipsis;
+    }
+
+    textarea.form-control {
+        min-height: 96px;
+    }
+
+    /* Ряды кнопок переносятся, а не выезжают за край.
+       Исключение — строки вида «аватар · имя · сумма»: там перенос
+       срывал сумму на вторую строку и ставил её под аватар, вместо
+       того чтобы просто сжать имя. Таким рядам нужен не перенос,
+       а разрешение сжиматься (min-width: 0 ниже). */
+    main [style*="display: flex"]:not(.row-line) {
+        flex-wrap: wrap;
+    }
+
+    /* Ряд, который обязан остаться одной строкой: длинный текст в нём
+       сжимается и переносится внутри своей ячейки. Без min-width: 0
+       элемент flex не сжимается меньше своего содержимого — отсюда и
+       брались съехавшие суммы. */
+    .row-line {
+        flex-wrap: nowrap !important;
+        gap: 0.6rem !important;
+    }
+
+    .row-line > * {
+        min-width: 0;
+    }
+
+    /* Длинные суммы и адреса не растягивают страницу */
+    .stat-value,
+    .balance-value {
+        font-size: 1.5rem !important;
+        overflow-wrap: anywhere;
+    }
+
+    /* Декоративные голуби и облака: на телефоне они только мешают
+       прокрутке и тратят батарею на анимацию */
+    .dove,
+    .cloud-bg,
+    .angel-wings {
+        display: none !important;
+    }
+
+    footer {
+        padding-bottom: 5.5rem !important;
+        font-size: 0.85rem;
+    }
+}
+
+/* ==================== НИЖНЯЯ НАВИГАЦИЯ ==================== */
+/* Основные разделы под большим пальцем — то, чем приложение отличается
+   от сайта в браузере. На широком экране скрыта: там есть верхнее меню. */
+
+/* Контейнер низа экрана: полоса «нет соединения» и навигация лежат
+   в нём столбиком, поэтому перекрыть друг друга не могут. Сам он
+   прозрачен для нажатий — иначе невидимая полоса поверх страницы
+   съедала бы касания по нижним кнопкам. */
+.app-bottom {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 900;
+    pointer-events: none;
+    /* Вырез и жестовая полоса снизу: без этого подпись под значком
+       оказывается под системной полосой */
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+.app-bottom > * {
+    pointer-events: auto;
+}
+
+.bottom-nav {
+    display: none;
+}
+
+@media (max-width: 760px) {
+    .bottom-nav {
+        display: flex;
+        background: rgba(255, 255, 255, 0.97);
+        backdrop-filter: blur(10px);
+        border-top: 1px solid #f0e0e0;
+        padding: 6px 4px;
+        box-shadow: 0 -2px 16px rgba(212, 115, 122, 0.08);
+    }
+
+    .bottom-nav a {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+        padding: 6px 2px;
+        color: #b89a9a;
+        text-decoration: none;
+        font-size: 0.68rem;
+        line-height: 1.2;
+        text-align: center;
+        min-height: 48px;
+        justify-content: center;
+    }
+
+    .bottom-nav a i {
+        font-size: 1.15rem;
+    }
+
+    .bottom-nav a.active {
+        color: #d4737a;
+    }
+
+    .bottom-nav a:active {
+        background: #fdf4f0;
+        border-radius: 12px;
+    }
+
+    /* Верхнее меню на телефоне занимало половину экрана: остаётся
+       логотип, баланс и профиль, а разделы уходят в нижнюю навигацию.
+       !important — потому что базовое правило .nav-links a задаёт
+       display: flex с той же специфичностью.
+
+       Только у авторизованного: у гостя нижней навигации нет, и эти две
+       ссылки — единственные кнопки «Вход» и «Регистрация» на странице.
+       Раздел «Лидеры» продублирован в меню профиля: в нижней навигации
+       его нет, и иначе он стал бы недостижим. */
+    .nav-links-auth > a {
+        display: none !important;
+    }
+
+    .balance-card-mini {
+        font-size: 0.9rem;
+        padding: 6px 12px !important;
+    }
+
+    .navbar {
+        padding: 0.5rem 0 !important;
+    }
+
+    .navbar-container {
+        flex-direction: row !important;
+        justify-content: space-between;
+        gap: 0.5rem !important;
+    }
+
+    .navbar {
+        padding-top: env(safe-area-inset-top);
+    }
+
+    .logo span {
+        font-size: 1rem;
+    }
+}
+
+/* ==================== РЕЖИМ УСТАНОВЛЕННОГО ПРИЛОЖЕНИЯ ==================== */
+
+@media (display-mode: standalone) {
+    /* Приложение уже установлено: рассказывать, как его установить,
+       незачем. Класс стоит на карточке «Способ первый» страницы /app/. */
+    .install-hint {
+        display: none !important;
+    }
+
+    body {
+        /* Прокрутка «за край» в установленном приложении выглядит
+           как подвисание, а не как страница */
+        overscroll-behavior-y: none;
+    }
+}
+
+/* ==================== ОФФЛАЙН ==================== */
+
+.offline-banner {
+    display: none;
+    background: #4a3f3f;
+    color: white;
+    text-align: center;
+    padding: 10px 12px;
+    font-size: 0.9rem;
+}
+
+body.is-offline .offline-banner {
+    display: block;
+}
+
+/* Пока сети нет, действия с деньгами не должны выглядеть доступными:
+   нажатие всё равно ничего не отправит, а человек решит, что перевод ушёл.
+
+   Это подсказка человеку, а не защита. Защита — на сервере: без сети
+   запрос до него просто не доходит. Здесь важно перечислить все три
+   вида кнопок: button[type=submit], button без атрибута type (по
+   умолчанию он submit — именно так написана половина форм) и кнопка
+   подтверждения общего модального окна, которая лежит ВНЕ формы и
+   отправляет её из обработчика. Пожертвование идёт как раз через неё. */
+body.is-offline form button[type="submit"],
+body.is-offline form button:not([type]),
+body.is-offline .confirm-modal:not(.is-alert) #confirmOkBtn {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
+/* ==================== ОКНА ПОДТВЕРЖДЕНИЯ И ПРЕДУПРЕЖДЕНИЯ ==================== */
+/* Этими окнами заменены браузерные alert() и confirm(): системная
+   плашка показывает адрес сайта в заголовке, замораживает страницу
+   целиком и в установленном приложении выглядит как чужая ошибка. */
+
+/* Пары «подпись — значение» в подробностях окна: на телефоне строка
+   «Способ: Банковская карта» не помещалась в одну строку и значение
+   уезжало за край. */
+.confirm-details > div {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.3rem 0;
+}
+
+.confirm-details > div + div {
+    border-top: 1px solid #f6e6e2;
+}
+
+.confirm-details > div > span {
+    color: #a68c8c;
+}
+
+.confirm-details > div > strong {
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+    .confirm-modal-content {
+        width: calc(100% - 1.5rem) !important;
+        max-width: 460px !important;
+        max-height: 85vh;
+        overflow-y: auto;
+    }
+
+    .confirm-modal-body {
+        overflow-wrap: anywhere;
+    }
+
+    /* Кнопки окна — в столбик и во всю ширину: два узких прямоугольника
+       рядом на экране 320 промахиваются мимо пальца, а «Подтвердить»
+       не помещается в свою кнопку. */
+    .confirm-modal-footer {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .confirm-modal-footer .btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* ==================== СОГЛАСИЕ НА COOKIE ==================== */
+/* Плашка уже внизу экрана, но на телефоне занимает половину его высоты:
+   человек видит юридический текст вместо сервиса. Текст тот же, только
+   компактнее и с прокруткой, если не поместился. */
+
+@media (max-width: 760px) {
+    .cookie-modal {
+        left: 8px !important;
+        right: 8px !important;
+        bottom: calc(8px + env(safe-area-inset-bottom)) !important;
+    }
+
+    .cookie-modal-content {
+        max-height: 60vh;
+        overflow-y: auto;
+    }
+
+    .cookie-modal-header {
+        padding: 0.75rem 1rem !important;
+    }
+
+    .cookie-modal-header h2 {
+        font-size: 1rem !important;
+    }
+
+    .cookie-modal-body {
+        padding: 0.75rem 1rem !important;
+        font-size: 0.88rem;
+        line-height: 1.5;
+    }
+
+    .cookie-modal-body p {
+        margin: 0 0 0.5rem !important;
+    }
+
+    .cookie-modal-footer {
+        padding: 0.6rem 1rem 0.9rem !important;
+    }
+}
+
+/* ==================== ТАБЛИЦЫ НА ТЕЛЕФОНЕ ==================== */
+/*
+ * Таблица из семи колонок на экране шириной 320 показывает две:
+ * «История операций» не показывала ни суммы, ни даты. Прокрутка вбок
+ * есть, но полосы прокрутки на телефоне не видно — человек видит просто
+ * обрезанный текст и считает страницу сломанной.
+ *
+ * Поэтому на телефоне каждая строка становится карточкой: слева подпись
+ * колонки, справа значение. Подписи проставляет скрипт в base.html —
+ * он берёт их из строки заголовков и ставит классы. Так работает любая
+ * таблица, в том числе та, которую добавят завтра, и шаблоны править
+ * не нужно.
+ */
+
+@media (max-width: 760px) {
+    table.has-labels {
+        display: block;
+        width: 100%;
+        border-collapse: separate;
+    }
+
+    table.has-labels thead {
+        /* Заголовки переехали в подписи строк */
+        display: none;
+    }
+
+    table.has-labels tbody,
+    table.has-labels tr,
+    table.has-labels td {
+        display: block;
+        width: auto;
+    }
+
+    table.has-labels tr {
+        margin-bottom: 0.75rem;
+        padding: 0.35rem 0.75rem;
+        border: 1px solid #f3e3e3;
+        border-radius: 14px;
+        background: #fffdfc;
+    }
+
+    table.has-labels tr:last-child {
+        margin-bottom: 0;
+    }
+
+    table.has-labels td {
+        display: flex;
+        align-items: baseline;
+        gap: 0.75rem;
+        padding: 0.4rem 0 !important;
+        border: none !important;
+        text-align: left !important;
+    }
+
+    table.has-labels tr td + td {
+        border-top: 1px solid #faf0ee !important;
+    }
+
+    table.has-labels td::before {
+        content: attr(data-label);
+        flex: 0 0 42%;
+        color: #b08f8f;
+        font-size: 0.8rem;
+        line-height: 1.35;
+    }
+
+    table.has-labels td > * {
+        min-width: 0;
+    }
+
+    /* Пустая строка на всю ширину («Пока ничего нет») — ей подпись
+       не нужна и делить её пополам незачем */
+    table.has-labels td[colspan]::before {
+        display: none;
+    }
+
+    table.has-labels td[colspan] {
+        display: block;
+        text-align: center !important;
+    }
+
+    /* Пустая ячейка не должна оставлять подпись висеть в одиночестве */
+    table.has-labels td:empty {
+        display: none;
+    }
+}
+
+/* ==================== ЛЕНТА ФИЛЬТРОВ ==================== */
+/* Фильтры категорий переносились по одному на строку и занимали пол-экрана.
+   Горизонтальная лента — привычный для телефона способ: видно, что список
+   продолжается, и он не съедает страницу. */
+
+@media (max-width: 760px) {
+    .filter-strip {
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        /* Центрирование выталкивало переполнение в обе стороны: первые
+           фильтры уезжали влево за край и до них нельзя было долистать —
+           прокрутка уже стояла в нуле. */
+        justify-content: flex-start !important;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        gap: 0.5rem;
+        padding-bottom: 0.35rem;
+        scrollbar-width: none;
+    }
+
+    .filter-strip::-webkit-scrollbar {
+        display: none;
+    }
+
+    .filter-strip .btn {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        padding: 9px 14px;
+        font-size: 0.88rem;
+        min-height: 40px;
+    }
+}

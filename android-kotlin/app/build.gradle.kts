@@ -1,0 +1,85 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+android {
+    namespace = "ru.angelhelper.app"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "ru.angelhelper.app"
+        minSdk = 24
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.0.0"
+    }
+
+    buildTypes {
+        debug {
+            // Отдельный суффикс, чтобы тестовая сборка и будущая рабочая
+            // могли стоять на одном телефоне одновременно
+            applicationIdSuffix = ".debug"
+            isMinifyEnabled = false
+        }
+        release {
+            // Для тестового приложения сжатие выключено намеренно:
+            // оно удлиняет сборку и запутывает стек вызовов в отчётах
+            isMinifyEnabled = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildFeatures {
+        compose = true
+    }
+
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+// Зависимостей намеренно мало.
+//
+// Ни Retrofit, ни Moshi, ни kotlinx.serialization, ни Navigation здесь
+// нет: HTTP делается на HttpURLConnection, разбор ответов — на org.json,
+// переходы между экранами — своим стеком в модели. Всё перечисленное
+// входит в саму платформу Android, то есть не может разойтись по версиям
+// и не требует ничего скачивать. Для приложения, которое собирают на
+// чужой машине и раз в неделю, это важнее удобства.
+dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    // viewModelScope и AndroidViewModel живут здесь. Приходят они и
+    // транзитивно, но объявлены явно: подтянувшаяся «сама собой»
+    // зависимость исчезает при обновлении соседней, и сборка ломается
+    // в месте, которое никто не менял.
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("androidx.activity:activity-compose:1.9.3")
+
+    implementation(platform("androidx.compose:compose-bom:2024.10.01"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    // Значки приходят к material3 транзитивно, но в Compose 1.4 эту
+    // зависимость убирают. Объявляем явно по тому же доводу, что и
+    // lifecycle-viewmodel-ktx выше.
+    implementation("androidx.compose.material:material-icons-core")
+
+    debugImplementation("androidx.compose.ui:ui-tooling")
+}
