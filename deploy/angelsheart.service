@@ -1,0 +1,29 @@
+# /etc/systemd/system/angelsheart.service
+# Для тестового сервера — копия с именем angelsheart-staging.service и
+# своими путями/портом (см. deploy/README.md).
+
+[Unit]
+Description=Ангел-Хранитель (Gunicorn)
+After=network.target postgresql.service redis-server.service
+
+[Service]
+User=deploy
+Group=www-data
+# current — ссылка на действующий релиз; её переключает deploy.sh
+WorkingDirectory=/srv/angelsheart/current
+EnvironmentFile=/srv/angelsheart/shared/.env
+ExecStart=/srv/angelsheart/current/.venv/bin/gunicorn angelsheart.wsgi:application \
+    --bind 127.0.0.1:8000 \
+    --workers 3 \
+    --timeout 30 \
+    --access-logfile - \
+    --error-logfile -
+Restart=on-failure
+RestartSec=3
+# Ничего, кроме своих каталогов, процессу сайта писать не нужно
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

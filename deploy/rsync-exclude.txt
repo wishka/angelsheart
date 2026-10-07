@@ -1,0 +1,22 @@
+# Что не уезжает на сервер при выкладке (rsync --exclude-from).
+# Ведущая косая черта — только в корне проекта: без неё «media/»
+# исключила бы и каталоги media внутри статики приложений.
+/.git/
+/.github/
+/.idea/
+/android/
+/android-kotlin/
+/Claude outputs/
+/*.tar.gz
+/.env
+/.env.*
+/db.sqlite3*
+/media/
+/private-media/
+/logs/
+/staticfiles/
+/app-release/
+/.angelsheart-settings-git-backup/
+.DS_Store
+__pycache__/
+*.pyc

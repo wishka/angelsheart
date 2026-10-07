@@ -2,6 +2,7 @@ package ru.angelhelper.app.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import ru.angelhelper.app.BuildConfig
 
 /**
  * Настройки приложения и токены доступа.
@@ -105,7 +106,12 @@ class AppPrefs(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_BASE_URL = "http://127.0.0.1:8000/"
+        /**
+         * Адрес по умолчанию задаёт сборка: отладочная — 127.0.0.1 под
+         * adb reverse, боевая — рабочий сервер по HTTPS (app/build.gradle.kts).
+         */
+        val DEFAULT_BASE_URL: String = BuildConfig.DEFAULT_BASE_URL
+        const val LOCAL_BASE_URL = "http://127.0.0.1:8000/"
         const val EMULATOR_BASE_URL = "http://10.0.2.2:8000/"
 
         private const val KEY_BASE_URL = "base_url"

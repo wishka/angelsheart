@@ -12,6 +12,16 @@ if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
 
+// Версия и подпись приходят из окружения: их задаёт workflow выпуска
+// (.github/workflows/release.yml) по тегу vX.Y.Z. Локальная сборка без
+// переменных получает версию 1.0.0 (код 1) и не подписывается ключом
+// выпуска — release-сборку тогда можно собрать, но не установить.
+fun env(name: String): String? = System.getenv(name)?.takeIf { it.isNotBlank() }
+
+// Адрес боевого сервера для release-сборки. Отладочная по-прежнему
+// смотрит на 127.0.0.1 — под adb reverse, как описано в README.
+val productionApiUrl = env("PRODUCTION_API_URL") ?: "https://angel-helper.ru/"
+
 android {
     namespace = "ru.angelhelper.app"
     compileSdk = 35
@@ -20,8 +30,25 @@ android {
         applicationId = "ru.angelhelper.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        // Код версии растёт с каждым выпуском: RuStore и Google Play не
+        // принимают сборку с кодом не больше уже опубликованного
+        versionCode = env("VERSION_CODE")?.toInt() ?: 1
+        versionName = env("VERSION_NAME") ?: "1.0.0"
+    }
+
+    signingConfigs {
+        // Ключ выпуска: файл и пароли — из секретов GitHub. Ключ один на
+        // всю жизнь приложения: потерянный ключ означает, что обновления
+        // больше не поставятся поверх установленной версии.
+        val keystore = env("ANDROID_KEYSTORE_PATH")
+        if (keystore != null) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = env("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = env("ANDROID_KEY_ALIAS")
+                keyPassword = env("ANDROID_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -30,8 +57,11 @@ android {
             // могли стоять на одном телефоне одновременно
             applicationIdSuffix = ".debug"
             isMinifyEnabled = false
+            buildConfigField("String", "DEFAULT_BASE_URL", "\"http://127.0.0.1:8000/\"")
         }
         release {
+            signingConfig = signingConfigs.findByName("release")
+            buildConfigField("String", "DEFAULT_BASE_URL", "\"$productionApiUrl\"")
             // Для тестового приложения сжатие выключено намеренно:
             // оно удлиняет сборку и запутывает стек вызовов в отчётах
             isMinifyEnabled = false
@@ -50,6 +80,8 @@ android {
 
     buildFeatures {
         compose = true
+        // BuildConfig.DEFAULT_BASE_URL и BuildConfig.DEBUG
+        buildConfig = true
     }
 
     packaging {

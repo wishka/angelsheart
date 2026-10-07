@@ -1,0 +1,23 @@
+# Обновления зависимостей — раз в неделю, пул-реквестами в develop.
+# Каждый такой PR проходит те же проверки, что и обычный.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    target-branch: develop
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    labels: [dependencies, server]
+
+  - package-ecosystem: gradle
+    directory: /android-kotlin
+    target-branch: develop
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    labels: [dependencies, android]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule: { interval: monthly }
+    labels: [dependencies, ci]
