@@ -100,7 +100,7 @@ android {
 // и не требует ничего скачивать. Для приложения, которое собирают на
 // чужой машине и раз в неделю, это важнее удобства.
 dependencies {
-    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     // viewModelScope и AndroidViewModel живут здесь. Приходят они и
