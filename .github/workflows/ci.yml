@@ -100,13 +100,13 @@ jobs:
       - name: Android lint
         run: ./gradlew lintDebug
         continue-on-error: true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: android-lint-report
           path: android-kotlin/app/build/reports/lint-results-debug.html
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: angelsheart-debug-apk
           path: android-kotlin/app/build/outputs/apk/debug/*.apk
