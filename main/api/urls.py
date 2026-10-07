@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from rest_framework import permissions
-from . import views
+from . import views, wallet_views
 
 # Swagger схема
 # permission_classes нужен явно: public=True описывает только состав схемы,
@@ -45,6 +45,19 @@ urlpatterns = [
     path('auth/email/resend/', views.ResendEmailConfirmationView.as_view(),
          name='api_resend_email_confirmation'),
     
+    # Восстановление пароля: письмо со ссылкой, новый пароль — на сайте
+    path('auth/password-reset/', wallet_views.PasswordResetView.as_view(), name='api_password_reset'),
+
+    # Кошелёк и верификация (правила — main/wallet.py, общие с сайтом)
+    path('wallet/', wallet_views.WalletView.as_view(), name='api_wallet'),
+    path('wallet/topup/', wallet_views.TopUpView.as_view(), name='api_topup'),
+    path('wallet/withdrawals/', wallet_views.WithdrawalsView.as_view(), name='api_withdrawals'),
+    path('wallet/withdrawals/<int:pk>/cancel/', wallet_views.WithdrawalCancelView.as_view(),
+         name='api_withdrawal_cancel'),
+    path('verification/', wallet_views.VerificationView.as_view(), name='api_verification'),
+    path('verification/documents/', wallet_views.VerificationDocumentView.as_view(),
+         name='api_verification_documents'),
+
     # Статистика
     path('dashboard/', views.dashboard_stats, name='api_dashboard'),
     path('leaders/', views.leaders_board, name='api_leaders'),

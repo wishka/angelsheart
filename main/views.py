@@ -27,7 +27,7 @@ from main.payments.verification import KYCService
 from main.payments.webhooks import WebhookRejected, verify_yookassa_notification
 from main.models import (PaymentTransaction, TwoFactorAuth, SecurityLog,
                          UserVerification, KYCDocument)
-from main import email_confirmation, moderation, services
+from main import email_confirmation, moderation, services, wallet
 from main import restrictions as restrictions_service
 from main.services import InsufficientFunds, OperationRejected
 from main.utils.encryption import mask_card_number, mask_phone
@@ -463,43 +463,11 @@ def top_up_balance(request):
 
         try:
             amount = parse_amount(request.POST.get('amount'), 'Сумма пополнения')
+            # Проверки и потолок тестового режима — в main/wallet.py, общие с API
+            wallet.simulated_topup(request.user, amount)
         except OperationRejected as exc:
             messages.error(request, str(exc))
             return redirect('main:topup')
-
-        if amount < settings.MIN_TOPUP_AMOUNT:
-            messages.error(request, f'Минимальная сумма пополнения — {settings.MIN_TOPUP_AMOUNT} ₽')
-            return redirect('main:topup')
-
-        if amount > settings.MAX_TOPUP_AMOUNT:
-            messages.error(request, f'Максимальная сумма пополнения — {settings.MAX_TOPUP_AMOUNT} ₽')
-            return redirect('main:topup')
-
-        simulated_total = Transaction.objects.filter(
-            sender=request.user, kind='topup', status='completed',
-        ).aggregate(Sum('amount'))['amount__sum'] or Decimal('0')
-
-        if simulated_total + amount > settings.SIMULATED_TOPUP_TOTAL_LIMIT:
-            messages.error(
-                request,
-                f'В тестовом режиме суммарное пополнение ограничено '
-                f'{settings.SIMULATED_TOPUP_TOTAL_LIMIT} ₽ (уже пополнено {simulated_total} ₽)',
-            )
-            return redirect('main:topup')
-
-        with db_transaction.atomic():
-            balance = Balance.objects.select_for_update().get(user=request.user)
-            balance.amount += amount
-            balance.save(update_fields=['amount'])
-
-            Transaction.objects.create(
-                sender=request.user,
-                receiver=request.user,
-                amount=amount,
-                comment='Пополнение баланса (тестовый режим)',
-                status='completed',
-                kind='topup',
-            )
 
         messages.success(request, f'💰 Баланс пополнен на {amount} ₽ (тестовый режим)')
         return redirect('main:dashboard')
@@ -1306,81 +1274,20 @@ def create_withdrawal_request(request):
     неверифицированный пользователь спокойно выводил 100 000 ₽ при
     заявленном лимите 500 ₽. Теперь проверка одна и она обязательна.
     """
-    from main.payments.withdrawals import WithdrawalValidator
-
     if request.method == 'POST':
         form = WithdrawalForm(request.POST)
+        # Невалидная форма показывается заново с ошибками у полей
         if form.is_valid():
-            amount = services.quantize(form.cleaned_data['amount'])
-            payment_method = form.cleaned_data['payment_method']
-
-            if payment_method == 'card':
-                payment_details = {
-                    'card_number': form.cleaned_data.get('card_number'),
-                    'card_holder': form.cleaned_data.get('card_holder'),
-                    'expiry_date': form.cleaned_data.get('expiry_date'),
-                }
-                masked = mask_card_number(payment_details['card_number'])
-            elif payment_method == 'sbp':
-                # bank_id обязателен: без него ЮKassa не знает, в какой банк
-                # переводить, и выплата не проходит
-                payment_details = {
-                    'phone_number': form.cleaned_data.get('phone_number'),
-                    'bank_id': form.cleaned_data.get('bank_id'),
-                }
-                masked = mask_phone(payment_details['phone_number'])
-            else:
-                payment_details = {'wallet_number': form.cleaned_data.get('wallet_number')}
-                wallet = str(payment_details['wallet_number'] or '')
-                masked = '***' + wallet[-4:] if len(wallet) >= 4 else '***'
-
-            is_valid, error = WithdrawalValidator.validate_withdrawal_request(
-                user=request.user,
-                amount=amount,
-                payment_details=payment_details,
-                payment_method=payment_method,
-            )
-            if not is_valid:
-                messages.error(request, error)
-                return redirect('main:withdrawal')
-
-            risk_level, risks = AntiFraudService(request.user).check_withdrawal(
-                amount, get_client_ip(request),
-            )
-
             try:
-                withdrawal = services.hold_for_withdrawal(
-                    user=request.user,
-                    amount=amount,
-                    payment_method=payment_method,
-                    payment_details=payment_details,
-                    masked=masked,
-                )
+                # Лимиты, антифрод и удержание — в main/wallet.py, общие с API
+                withdrawal = wallet.create_withdrawal(request.user, request.POST, request)
             except (InsufficientFunds, OperationRejected) as exc:
                 messages.error(request, str(exc))
                 return redirect('main:withdrawal')
-            except Exception:
-                logger.exception('Ошибка создания заявки на вывод')
-                messages.error(request, 'Не удалось создать заявку, попробуйте позже')
-                return redirect('main:withdrawal')
-
-            logger.info(
-                'Создана заявка #%s на вывод %s ₽ от %s (риск: %s)',
-                withdrawal.id, amount, request.user.username, risk_level,
-            )
-            AntiFraudService(request.user).log_security_event(
-                'withdrawal', request,
-                details={
-                    'withdrawal_id': withdrawal.id,
-                    'amount': str(amount),
-                    'risk_level': risk_level,
-                    'risks': risks,
-                },
-            )
-
             messages.success(
                 request,
-                f'Заявка на вывод {amount} ₽ создана. Статус: {withdrawal.get_status_display()}',
+                f'Заявка на вывод {withdrawal.amount} ₽ создана. '
+                f'Статус: {withdrawal.get_status_display()}',
             )
             return redirect('main:my_withdrawals')
     else:
@@ -1492,65 +1399,14 @@ def create_payment(request):
     """
     try:
         amount = parse_amount(request.POST.get('amount'), 'Сумма пополнения')
+        # Лимиты, ЮKassa и журнал — в main/wallet.py, общие с API
+        confirmation_url = wallet.create_topup_payment(
+            request.user, amount, request.POST.get('payment_method', 'card'), request,
+        )
     except OperationRejected as exc:
         messages.error(request, str(exc))
         return redirect('main:topup')
-
-    payment_method = request.POST.get('payment_method', 'card')
-    allowed_methods = {choice[0] for choice in PaymentTransaction.METHOD_CHOICES}
-
-    if amount < settings.MIN_TOPUP_AMOUNT:
-        messages.error(request, f'Минимальная сумма пополнения — {settings.MIN_TOPUP_AMOUNT} ₽')
-        return redirect('main:topup')
-
-    if amount > settings.MAX_TOPUP_AMOUNT:
-        messages.error(request, f'Максимальная сумма пополнения — {settings.MAX_TOPUP_AMOUNT} ₽')
-        return redirect('main:topup')
-
-    if payment_method not in allowed_methods:
-        messages.error(request, 'Выбранный способ оплаты не поддерживается')
-        return redirect('main:topup')
-
-    # Дневной лимит пополнения по уровню верификации (115-ФЗ, ст. 10 161-ФЗ)
-    allowed, limit_error = KYCService.check_payment_limit(request.user, amount)
-    if not allowed:
-        messages.error(request, limit_error)
-        return redirect('main:topup')
-
-    try:
-        provider = YooKassaProvider()
-        result = provider.create_payment(
-            amount=amount,
-            user_id=request.user.id,
-            metadata={'payment_method': payment_method},
-        )
-    except Exception:
-        # Детали исключения уходят в лог, пользователю — нейтральный текст:
-        # раньше str(e) показывался прямо на странице
-        logger.exception('Ошибка обращения к платёжной системе')
-        messages.error(request, 'Платёжная система временно недоступна, попробуйте позже')
-        return redirect('main:topup')
-
-    if not result.get('success'):
-        logger.warning('ЮKassa отказала в создании платежа: %s', result.get('error'))
-        messages.error(request, 'Не удалось создать платёж. Попробуйте ещё раз.')
-        return redirect('main:topup')
-
-    PaymentTransaction.objects.create(
-        user=request.user,
-        amount=amount,
-        payment_method=payment_method,
-        payment_id=result['payment_id'],
-        status='pending',
-        metadata={'confirmation_url': result['confirmation_url']},
-    )
-
-    AntiFraudService(request.user).log_security_event(
-        'payment', request,
-        details={'amount': str(amount), 'payment_method': payment_method},
-    )
-
-    return redirect(result['confirmation_url'])
+    return redirect(confirmation_url)
 
 
 @csrf_exempt
@@ -1773,66 +1629,18 @@ def verification_page(request):
     limits = KYCService.get_verification_limits(verification.level)
     
     if request.method == 'POST':
-        # Обработка данных верификации
-        full_name = request.POST.get('full_name')
-        birth_date = request.POST.get('birth_date')
-        passport_series = request.POST.get('passport_series')
-        passport_number = request.POST.get('passport_number')
-        
-        # Валидация
-        name_error = KYCService.validate_name(full_name)
-        if name_error:
-            messages.error(request, name_error)
-            return redirect('main:verification')
-        
-        passport_errors = KYCService.validate_passport({
-            'passport_series': passport_series,
-            'passport_number': passport_number
-        })
-        
-        if passport_errors:
-            for error in passport_errors.values():
-                messages.error(request, error)
-            return redirect('main:verification')
-
-        # Дата рождения раньше присваивалась как есть: пустая строка роняла
-        # страницу с 500 (ValidationError на уровне поля модели). Заодно
-        # проверяется возраст: оферта (п. 3.1) и Политика ограничивают
-        # сервис совершеннолетними, но нигде это не проверялось.
-        parsed_birth_date = parse_birth_date(birth_date)
-        if parsed_birth_date is None:
-            messages.error(request, 'Укажите дату рождения в формате ДД.ММ.ГГГГ')
-            return redirect('main:verification')
-
-        age = years_since(parsed_birth_date)
-        if age < 18:
-            messages.error(
+        # Проверки (ФИО, паспорт, возраст 18+) — в main/wallet.py, общие с API
+        try:
+            wallet.submit_verification(
+                request.user,
+                request.POST.get('full_name'), request.POST.get('birth_date'),
+                request.POST.get('passport_series'), request.POST.get('passport_number'),
                 request,
-                'Сервис доступен только совершеннолетним: по указанной дате '
-                'рождения вам меньше 18 лет.',
             )
+        except OperationRejected as exc:
+            for line in str(exc).split('\n'):
+                messages.error(request, line)
             return redirect('main:verification')
-        if age > 120:
-            messages.error(request, 'Проверьте дату рождения — она указана неверно.')
-            return redirect('main:verification')
-
-        verification.full_name = full_name
-        verification.birth_date = parsed_birth_date
-        verification.passport_series = passport_series
-        verification.passport_number = passport_number
-        # Уровень верификации больше НЕ повышается самим фактом ввода данных.
-        # Раньше строка `verification.level = 'basic'` давала уровень за
-        # произвольные «1234/567890», прошедшие regex, — это была имитация
-        # идентификации, а не идентификация.
-        verification.submitted_at = timezone.now()
-        verification.save(update_fields=[
-            'full_name', 'birth_date', 'passport_series',
-            'passport_number', 'submitted_at',
-        ])
-
-        AntiFraudService(request.user).log_security_event(
-            'verification', request, details={'stage': 'data_submitted'},
-        )
 
         messages.success(
             request,
@@ -1854,34 +1662,14 @@ def verification_page(request):
 @require_POST
 def upload_document(request):
     """Загрузка документа для верификации."""
-    document_type = request.POST.get('document_type')
-    document_image = request.FILES.get('document_image')
-
-    valid_types = {choice[0] for choice in KYCDocument.DOCUMENT_TYPES}
-    if document_type not in valid_types:
-        messages.error(request, 'Выберите тип документа')
+    try:
+        wallet.upload_kyc_document(
+            request.user, request.POST.get('document_type'), request.FILES.get('document_image'),
+            request.POST.get('document_number', ''), request,
+        )
+    except OperationRejected as exc:
+        messages.error(request, str(exc))
         return redirect('main:verification')
-
-    if not document_image:
-        messages.error(request, 'Выберите файл')
-        return redirect('main:verification')
-
-    error = validate_uploaded_document(document_image)
-    if error:
-        messages.error(request, error)
-        return redirect('main:verification')
-
-    KYCDocument.objects.create(
-        user=request.user,
-        document_type=document_type,
-        document_number=request.POST.get('document_number', ''),
-        document_image=document_image,
-        status='pending',
-    )
-
-    AntiFraudService(request.user).log_security_event(
-        'verification', request, details={'stage': 'document_uploaded', 'type': document_type},
-    )
 
     messages.success(request, 'Документ загружен на проверку')
     return redirect('main:verification')
