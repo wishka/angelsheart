@@ -75,6 +75,20 @@ class AppPrefs(context: Context) {
         get() = prefs.getString(KEY_USERNAME, "") ?: ""
         set(value) = prefs.edit().putString(KEY_USERNAME, value).apply()
 
+    /**
+     * Последний токен push этого телефона. Нужен при выходе — сказать
+     * серверу «больше сюда не слать» — и чтобы зарегистрировать токен,
+     * выданный, пока человек не был вошедшим.
+     */
+    var pushToken: String
+        get() = prefs.getString(KEY_PUSH_TOKEN, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_PUSH_TOKEN, value).apply()
+
+    /** Спрашивали ли уже разрешение на уведомления — чтобы не спрашивать при каждом входе. */
+    var notificationsAsked: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFICATIONS_ASKED, false)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFICATIONS_ASKED, value).apply()
+
     // Демо-режим сам по себе входом не считается: иначе приложение при
     // следующем запуске открывало бы «Главную» мимо экрана входа сразу
     // после того, как переключатель вернул человека на этот экран.
@@ -99,6 +113,8 @@ class AppPrefs(context: Context) {
         private const val KEY_ACCESS = "access"
         private const val KEY_REFRESH = "refresh"
         private const val KEY_USERNAME = "username"
+        private const val KEY_PUSH_TOKEN = "push_token"
+        private const val KEY_NOTIFICATIONS_ASKED = "notifications_asked"
 
         /**
          * Приводит адрес к виду, от которого потом строятся все пути.

@@ -347,3 +347,23 @@ class MessageReport(models.Model):
 
     def __str__(self):
         return f'Жалоба #{self.pk}: {self.get_reason_display()}'
+
+
+class DeviceToken(models.Model):
+    """
+    Адрес телефона для push-уведомлений (токен Firebase Cloud Messaging).
+
+    Токен принадлежит установке приложения, а не человеку: при входе
+    под другой учётной записью на том же телефоне он переходит к ней,
+    иначе уведомления одного человека приходили бы другому.
+    """
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='device_tokens')
+    token = models.CharField(max_length=255, unique=True)
+    platform = models.CharField(max_length=10, default='android')
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Устройство для уведомлений'
+        verbose_name_plural = 'Устройства для уведомлений'

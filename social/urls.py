@@ -15,5 +15,8 @@ urlpatterns = [
     path('profile/', views.MyProfileView.as_view(), name='social_profile'),
     path('profile/avatar/', views.MyAvatarView.as_view(), name='social_avatar'),
     path('interests/', views.InterestListView.as_view(), name='social_interests'),
+    path('devices/', views.DeviceView.as_view(), name='social_devices'),
+    path('devices/unregister/', views.DeviceView.as_view(), {'unregister': True},
+         name='social_devices_unregister'),
     path('', include(router.urls)),
 ]

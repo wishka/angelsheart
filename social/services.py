@@ -302,6 +302,9 @@ def send_message(chat, user, text, image=None):
         # Своё сообщение прочитано по определению
         member.last_read_message_id = message.pk
         member.save(update_fields=['last_read_message_id'])
+
+    from . import push
+    push.notify_new_message(message)
     return message
 
 
@@ -533,6 +536,8 @@ def erase_user_social_data(user):
     CommunityMembership.objects.filter(user=user).delete()
     ChatMember.objects.filter(user=user).delete()
     UserBlock.objects.filter(Q(blocker=user) | Q(blocked=user)).delete()
+    from .models import DeviceToken
+    DeviceToken.objects.filter(user=user).delete()
     # Жалобы — и поданные человеком, и на его сообщения — остаются:
     # это сведения о возможном нарушении, и модератор должен довести
     # разбор до конца. Учётная запись при удалении обезличивается, так

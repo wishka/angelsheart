@@ -10,6 +10,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.window.Dialog
 import ru.angelhelper.app.ui.RemoteImage
+import ru.angelhelper.app.push.AppVisibility
+import ru.angelhelper.app.push.Push
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.remember
@@ -202,6 +206,15 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
         }
     }
     val chat = state.openChat?.takeIf { it.id == id }
+
+    // Пока чат открыт, уведомления о нём не показываются, а уже
+    // показанное убирается — сообщения и так на экране
+    val context = LocalContext.current
+    DisposableEffect(id) {
+        AppVisibility.openChatId = id
+        Push.cancel(context, id)
+        onDispose { if (AppVisibility.openChatId == id) AppVisibility.openChatId = null }
+    }
 
     LaunchedEffect(id) {
         while (true) {

@@ -11,6 +11,8 @@ pyotp>=2.9
 qrcode[pil]>=7.4
 requests>=2.31
 yookassa>=3.5
+# Push-уведомления: OAuth-токен сервисного аккаунта Firebase
+google-auth>=2.29
 
 # Прод
 whitenoise>=6.6

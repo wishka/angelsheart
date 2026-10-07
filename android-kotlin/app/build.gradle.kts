@@ -4,6 +4,14 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Push-уведомления требуют google-services.json из консоли Firebase.
+// Файл личный для проекта и в репозиторий не кладётся; без него плагин
+// не подключается, приложение собирается и работает — просто без push
+// (Push.isAvailable вернёт false, и регистрация телефона не начнётся).
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "ru.angelhelper.app"
     compileSdk = 35
@@ -82,4 +90,11 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // Push-уведомления. Единственная зависимость не из AndroidX: доставку
+    // на Android без собственного постоянного соединения делает только
+    // Firebase Cloud Messaging. Текст сообщений через него не идёт —
+    // только номер чата (см. push/PushService.kt).
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-messaging")
 }

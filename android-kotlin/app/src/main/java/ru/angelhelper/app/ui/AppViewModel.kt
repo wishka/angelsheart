@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.update
 import ru.angelhelper.app.data.Api
+import ru.angelhelper.app.push.Push
 import ru.angelhelper.app.data.BlockedUser
 import ru.angelhelper.app.data.ChatInfo
 import ru.angelhelper.app.data.ChatMessage
@@ -141,6 +142,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         // сохранённым токеном открывалось на «Главной» с пустым балансом
         // и надписью «операций нет», пока человек не нажмёт «Обновить».
         loadFor(_state.value.screen)
+        // Токен push мог смениться, пока приложение было закрыто
+        if (prefs.signedIn) registerPush()
+    }
+
+    // ==================== УВЕДОМЛЕНИЯ ====================
+
+    /**
+     * Сообщить серверу токен этого телефона. Без Firebase в сборке и в
+     * демо-режиме ничего не делает. Ошибки молча пропускаются: без push
+     * приложение работает, и всплывающее «не удалось включить
+     * уведомления» при каждом запуске только мешало бы.
+     */
+    private fun registerPush() {
+        if (prefs.demoMode) return
+        Push.fetchToken(getApplication<Application>()) { token ->
+            prefs.pushToken = token
+            viewModelScope.launch { api().registerDevice(token) }
+        }
+    }
+
+    /** Нажатие на уведомление: открыть чат поверх списка чатов. */
+    fun openChatFromNotification(chatId: Int) {
+        if (!prefs.signedIn) return
+        _state.update { it.copy(stack = listOf(Screen.Chats), message = null) }
+        go(Screen.Chat(chatId))
+    }
+
+    val notificationsAsked: Boolean get() = prefs.notificationsAsked
+
+    fun markNotificationsAsked() {
+        prefs.notificationsAsked = true
     }
 
     /**
@@ -285,6 +317,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun login(username: String, password: String, code: String) = run(
         onOk = { tokens ->
             prefs.saveTokens(tokens)
+            registerPush()
             if (prefs.username.isBlank()) prefs.username = username
             goRoot(Screen.Dashboard)
         },
@@ -295,6 +328,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             // Сервер выдал токены при регистрации — входим сразу, не
             // отправляя человека набирать тот же пароль второй раз
             prefs.saveTokens(tokens)
+            registerPush()
             if (prefs.username.isBlank()) prefs.username = username
             goRoot(Screen.Dashboard)
             say(
@@ -320,6 +354,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val api = api()
             try {
+                // Сначала отвязать телефон: после выхода чужие уведомления
+                // сюда приходить не должны, а без токена этого уже не сделать
+                prefs.pushToken.takeIf { it.isNotBlank() }?.let { api.unregisterDevice(it) }
                 api.logout()
             } catch (_: Exception) {
                 // отзыв не удался — выходим всё равно

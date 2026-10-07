@@ -418,3 +418,25 @@ class BlockViewSet(SocialMixin, viewsets.GenericViewSet):
         except services.SocialError as error:
             return self.refuse(error)
         return Response({'message': text})
+
+
+# ==================== УВЕДОМЛЕНИЯ ====================
+
+class DeviceView(SocialMixin, APIView):
+    """
+    POST /api/devices/ {token} — телефон получает уведомления.
+    POST /api/devices/unregister/ {token} — перестаёт (при выходе).
+    Отдельный адрес вместо DELETE с телом: HttpURLConnection на части
+    версий Android не умеет отправлять тело с DELETE.
+    """
+
+    def post(self, request, unregister=False):
+        from . import push
+
+        token = request.data.get('token', '')
+        if unregister:
+            push.unregister(request.user, token)
+            return Response({'message': 'Уведомления отключены'})
+        if not push.register(request.user, token):
+            return Response({'error': 'Нет токена устройства'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'message': 'Уведомления включены', 'push_enabled': push.is_enabled()})

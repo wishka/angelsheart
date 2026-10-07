@@ -788,6 +788,16 @@ class HttpApi(private val prefs: AppPrefs) : Api {
             }
         }
 
+    // ==================== УВЕДОМЛЕНИЯ ====================
+
+    override suspend fun registerDevice(token: String): Outcome<Unit> = request {
+        getOne("api/devices/", "POST", JSONObject().put("token", token).put("platform", "android")) { }
+    }
+
+    override suspend fun unregisterDevice(token: String): Outcome<Unit> = request {
+        getOne("api/devices/unregister/", "POST", JSONObject().put("token", token)) { }
+    }
+
     // ==================== ФОТО ====================
 
     private fun photo(bytes: ByteArray) = Part("image", "photo.jpg", "image/jpeg", bytes)

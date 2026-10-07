@@ -115,6 +115,14 @@ interface Api {
     /** action: join, leave, approve, decline; для двух последних нужен userId. */
     suspend fun communityAction(id: Int, action: String, userId: Int? = null): Outcome<CommunityReply>
 
+    // ==================== УВЕДОМЛЕНИЯ ====================
+
+    /** Телефон начинает получать push для этой учётной записи. */
+    suspend fun registerDevice(token: String): Outcome<Unit>
+
+    /** При выходе: уведомления этой учётной записи сюда больше не идут. */
+    suspend fun unregisterDevice(token: String): Outcome<Unit>
+
     // ==================== ФОТО ====================
 
     /**

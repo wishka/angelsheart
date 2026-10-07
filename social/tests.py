@@ -535,3 +535,67 @@ class ImageTests(SocialTestCase):
         thread = self.client.get(f'/api/chats/{chat.pk}/messages/').json()['results']
         self.assertEqual(thread[0]['text'], 'Сообщение удалено')
         self.assertFalse(thread[0]['has_image'])
+
+
+from django.test import override_settings  # noqa: E402
+
+from social import push  # noqa: E402
+from social.models import DeviceToken  # noqa: E402
+
+
+@override_settings(FCM_PROJECT_ID='test-project', FCM_CREDENTIALS_FILE='/nonexistent.json')
+class PushTests(SocialTestCase):
+    def setUp(self):
+        super().setUp()
+        self.anna = make_user('anna')
+        self.ivan = make_user('ivan')
+        self.anna_client = APIClient()
+        self.anna_client.force_authenticate(self.anna)
+        self.anna_client.post('/api/devices/', {'token': 'anna-phone'}, format='json')
+        DeviceToken.objects.create(user=self.ivan, token='ivan-phone')
+
+    def deliveries(self, send, prepare=lambda: None):
+        """Сообщение в групповой чат; возвращает, на какие токены ушли уведомления."""
+        sent = []
+
+        def fake_send(token, data, collapse_key):
+            sent.append((token, data))
+            return token != 'ivan-phone'  # токен Ивана «устарел»
+
+        chat = services.create_group_chat(self.me, 'Т', [self.anna, self.ivan])
+        prepare()
+        with mock.patch.object(push, 'send_to_token', side_effect=fake_send), \
+                mock.patch.object(push.threading, 'Thread') as thread:
+            thread.side_effect = lambda target, args, daemon: mock.Mock(start=lambda: target(*args))
+            with self.captureOnCommitCallbacks(execute=True):
+                send(chat)
+        return chat, sent
+
+    def test_only_chat_id_leaves_the_server(self):
+        chat, sent = self.deliveries(lambda chat: services.send_message(chat, self.me, 'Секретный текст'))
+        self.assertEqual(sorted(token for token, _ in sent), ['anna-phone', 'ivan-phone'])
+        for _, data in sent:
+            self.assertEqual(data, {'type': 'message', 'chat_id': chat.pk})
+        # Недействительный токен забыт
+        self.assertFalse(DeviceToken.objects.filter(token='ivan-phone').exists())
+
+    def test_blockers_and_sender_not_notified(self):
+        _, sent = self.deliveries(
+            lambda chat: services.send_message(chat, self.me, 'Привет'),
+            prepare=lambda: services.block_user(self.ivan, self.me),
+        )
+        self.assertEqual([token for token, _ in sent], ['anna-phone'])
+
+    @override_settings(FCM_PROJECT_ID='')
+    def test_disabled_without_settings(self):
+        _, sent = self.deliveries(lambda chat: services.send_message(chat, self.me, 'Привет'))
+        self.assertEqual(sent, [])
+
+    def test_token_moves_to_new_account_and_unregisters(self):
+        self.client.post('/api/devices/', {'token': 'anna-phone'}, format='json')
+        self.assertEqual(DeviceToken.objects.get(token='anna-phone').user, self.me)
+        self.client.post('/api/devices/unregister/', {'token': 'anna-phone'}, format='json')
+        self.assertFalse(DeviceToken.objects.filter(token='anna-phone').exists())
+
+    def test_empty_token_rejected(self):
+        self.assertEqual(self.client.post('/api/devices/', {'token': ''}, format='json').status_code, 400)

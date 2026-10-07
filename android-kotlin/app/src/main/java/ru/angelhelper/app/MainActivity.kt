@@ -1,6 +1,12 @@
 package ru.angelhelper.app
 
+import android.Manifest
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import ru.angelhelper.app.push.PushRouter
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -79,11 +85,20 @@ import ru.angelhelper.app.ui.screens.WithdrawScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Запуск из уведомления о сообщении: откроется нужный чат
+        PushRouter.handle(intent)
         setContent {
             AngelsHeartTheme {
                 AppRoot()
             }
         }
+    }
+
+    // launchMode=singleTop: нажатие на уведомление при открытом приложении
+    // приходит сюда, а не создаёт вторую копию экрана
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        PushRouter.handle(intent)
     }
 }
 
@@ -120,6 +135,31 @@ fun AppRoot(vm: AppViewModel = viewModel()) {
         if (message != null) {
             snackbar.showSnackbar(message.text)
             vm.dismissMessage()
+        }
+    }
+
+    // Переход из уведомления о сообщении
+    val pendingChat by PushRouter.pendingChat.collectAsState()
+    LaunchedEffect(pendingChat) {
+        pendingChat?.let {
+            vm.openChatFromNotification(it)
+            PushRouter.consume()
+        }
+    }
+
+    // Разрешение на уведомления (Android 13+) спрашивается один раз, уже
+    // после входа: на экране входа вопрос «разрешить уведомления?» не
+    // объясняет сам себя, а отказ потом не переспросить
+    val askNotifications = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { vm.markNotificationsAsked() }
+    val signedInScreen = state.screen == Screen.Dashboard
+    LaunchedEffect(signedInScreen) {
+        if (signedInScreen && !vm.notificationsAsked &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        ) {
+            vm.markNotificationsAsked()
+            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 

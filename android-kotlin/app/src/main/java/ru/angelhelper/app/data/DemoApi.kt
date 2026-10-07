@@ -342,6 +342,11 @@ object DemoApi : Api {
         return DemoSocial.action(id, action, userId)
     }
 
+    // В демо-режиме сервера нет — и уведомлять некому
+    override suspend fun registerDevice(token: String): Outcome<Unit> = Outcome.Ok(Unit)
+
+    override suspend fun unregisterDevice(token: String): Outcome<Unit> = Outcome.Ok(Unit)
+
     override suspend fun uploadAvatar(jpeg: ByteArray): Outcome<SocialProfile> {
         delay(PAUSE_MS)
         return DemoSocial.uploadAvatar(jpeg)
