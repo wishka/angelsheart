@@ -1,0 +1,54 @@
+# Откат сервера на предыдущий (или указанный) релиз — без пересборки,
+# за несколько секунд. Миграции не откатываются (docs/CICD.md).
+
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Где откатывать
+        type: choice
+        options: [staging, production]
+      release:
+        description: Номер релиза (пусто — предыдущий). Список — в журнале выкладок или ls releases/ на сервере
+        required: false
+
+concurrency:
+  group: deploy-${{ inputs.environment == 'production' && 'main' || 'develop' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ vars.PUBLIC_URL }}
+    steps:
+      - name: Откат
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'deploy' }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+          APP_DIR: ${{ vars.DEPLOY_PATH || '/srv/angelsheart' }}
+          SERVICE_NAME: ${{ vars.SERVICE_NAME || 'angelsheart' }}
+          HEALTH_URL: ${{ vars.HEALTH_URL || 'http://127.0.0.1:8000/health/' }}
+          HEALTH_HOST: ${{ vars.HEALTH_HOST }}
+          TARGET: ${{ inputs.release }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # Номер релиза проверяется до передачи в команду на сервере
+          if [ -n "$TARGET" ] && ! printf '%s' "$TARGET" | grep -Eq '^[0-9]{8}-[0-9]{6}-[0-9a-f]{7}$'; then
+            echo "::error::Номер релиза выглядит как 20261007-104500-abc1234"; exit 1
+          fi
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "APP_DIR='$APP_DIR' SERVICE_NAME='$SERVICE_NAME' HEALTH_URL='$HEALTH_URL' HEALTH_HOST='$HEALTH_HOST' \
+             bash '$APP_DIR/current/deploy/rollback.sh' $TARGET"

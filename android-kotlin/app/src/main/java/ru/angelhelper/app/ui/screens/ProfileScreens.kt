@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import ru.angelhelper.app.BuildConfig
 import ru.angelhelper.app.data.AppPrefs
 import ru.angelhelper.app.data.STUB_NOTE
 import ru.angelhelper.app.data.asReadableDate
@@ -165,14 +166,24 @@ fun SettingsScreen(vm: AppViewModel, state: UiState) {
         )
         PrimaryButton("Сохранить", onClick = { vm.setBaseUrl(url) })
 
-        SecondaryButton("Телефон по кабелю — 127.0.0.1:8000", onClick = {
-            url = AppPrefs.DEFAULT_BASE_URL
-            vm.setBaseUrl(AppPrefs.DEFAULT_BASE_URL)
-        })
-        SecondaryButton("Эмулятор — 10.0.2.2:8000", onClick = {
-            url = AppPrefs.EMULATOR_BASE_URL
-            vm.setBaseUrl(AppPrefs.EMULATOR_BASE_URL)
-        })
+        if (AppPrefs.DEFAULT_BASE_URL != AppPrefs.LOCAL_BASE_URL) {
+            SecondaryButton("Рабочий сервер — ${AppPrefs.DEFAULT_BASE_URL}", onClick = {
+                url = AppPrefs.DEFAULT_BASE_URL
+                vm.setBaseUrl(AppPrefs.DEFAULT_BASE_URL)
+            })
+        }
+        // Локальные адреса — только в отладочной сборке: в боевой HTTP
+        // запрещён (network_security_config), и кнопки вели бы в никуда
+        if (BuildConfig.DEBUG) {
+            SecondaryButton("Телефон по кабелю — 127.0.0.1:8000", onClick = {
+                url = AppPrefs.LOCAL_BASE_URL
+                vm.setBaseUrl(AppPrefs.LOCAL_BASE_URL)
+            })
+            SecondaryButton("Эмулятор — 10.0.2.2:8000", onClick = {
+                url = AppPrefs.EMULATOR_BASE_URL
+                vm.setBaseUrl(AppPrefs.EMULATOR_BASE_URL)
+            })
+        }
 
         Text(
             "На телефоне localhost — это сам телефон, а не компьютер. " +

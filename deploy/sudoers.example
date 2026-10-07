@@ -1,0 +1,6 @@
+# /etc/sudoers.d/angelsheart-deploy  (visudo -f /etc/sudoers.d/angelsheart-deploy)
+#
+# Пользователь выкладки может перезапустить ТОЛЬКО сервис сайта и больше
+# ничего: ключ от него лежит в секретах GitHub, и если он утечёт, root
+# с ним получить нельзя.
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart angelsheart, /usr/bin/systemctl restart angelsheart-staging

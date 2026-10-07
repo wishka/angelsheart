@@ -1,24 +1,36 @@
-# Проверка на каждый push и pull request:
-#   server  — тесты Django (main и social);
-#   android — сборка отладочного APK; готовый файл лежит в артефактах
-#             запуска (Actions → запуск → Artifacts → angelsheart-debug-apk).
+# Проверки. Запускаются:
+#   • на каждый pull request — их результат обязателен для слияния
+#     в develop и main (см. scripts/setup-github.sh);
+#   • на push в рабочие ветки (feature/*, fix/* и т. п.);
+#   • из deploy.yml и release.yml перед выкладкой (workflow_call) —
+#     поэтому на push в develop/main отдельно не запускаются.
 #
-# Push-уведомления в собранном APK работают, только если в настройках
-# репозитория задан секрет GOOGLE_SERVICES_JSON (содержимое файла
-# google-services.json из консоли Firebase). Без него APK собирается
-# и работает, но без уведомлений.
+# Имена заданий («server (sqlite)» и т. д.) — это имена обязательных
+# проверок в правилах защиты веток. Переименовали задание — обновите
+# правила, иначе слияние будет ждать проверку, которой больше нет.
 
 name: CI
 
 on:
-  push:
   pull_request:
+  push:
+    branches-ignore: [main, develop]
+    tags-ignore: ['**']
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_call' }}
+
+permissions:
+  contents: read
 
 jobs:
-  server:
+  server-sqlite:
+    name: server (sqlite)
     runs-on: ubuntu-latest
     env:
-      # Заглушки секретов допускаются только в DEBUG — для тестов это и нужно
+      # Заглушки секретов допускаются только при DEBUG — для тестов это и нужно
       DEBUG: 'True'
     steps:
       - uses: actions/checkout@v4
@@ -27,12 +39,46 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: pip install -r requirements.txt
-      # Каталог журналов не хранится в репозитории, а настройки логирования пишут туда
       - run: mkdir -p logs
-      - run: python manage.py makemigrations --check --dry-run
-      - run: python manage.py test main social --noinput
+      - name: Миграции соответствуют моделям
+        run: python manage.py makemigrations --check --dry-run
+      - run: python manage.py test main social angelsheart --noinput
+
+  # Боевая база — PostgreSQL. На ней по-другому работают блокировки
+  # строк (select_for_update), сравнение строк и транзакции; тест,
+  # прошедший только на SQLite, ничего не говорит о денежных операциях.
+  server-postgres:
+    name: server (postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: angelsheart
+          POSTGRES_USER: angelsheart
+          POSTGRES_PASSWORD: angelsheart
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U angelsheart"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DEBUG: 'True'
+      POSTGRES_DB: angelsheart
+      POSTGRES_USER: angelsheart
+      POSTGRES_PASSWORD: angelsheart
+      POSTGRES_HOST: localhost
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: mkdir -p logs
+      - run: python manage.py test main social angelsheart --noinput
 
   android:
+    name: android (debug)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -44,18 +90,20 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Firebase config (если задан секрет)
-        env:
-          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-        run: |
-          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
-            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
-            echo "google-services.json записан — push будет включён"
-          else
-            echo "Секрета GOOGLE_SERVICES_JSON нет — сборка без push"
-          fi
       # Android SDK на раннерах GitHub уже установлен (ANDROID_HOME)
       - run: chmod +x gradlew && ./gradlew assembleDebug --stacktrace
+      # Lint пока не блокирует: у существующего кода могут быть замечания,
+      # которые никто не разбирал. Отчёт — в артефактах запуска; когда он
+      # станет чистым, уберите continue-on-error.
+      - name: Android lint
+        run: ./gradlew lintDebug
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-lint-report
+          path: android-kotlin/app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: angelsheart-debug-apk

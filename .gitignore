@@ -37,3 +37,7 @@ htmlcov/
 
 # Резервная копия бывшего вложенного репозитория настроек (angelsheart/.git)
 /.angelsheart-settings-git-backup/
+
+# Ключи подписи Android — только в менеджере паролей и секретах GitHub
+*.jks
+*.keystore

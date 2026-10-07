@@ -103,6 +103,9 @@ else:
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_SECURE = True
     SECURE_SSL_REDIRECT = True
+    # Проверку живости скрипт выкладки опрашивает напрямую у Gunicorn по
+    # HTTP, минуя nginx; перенаправление на HTTPS её бы сломало
+    SECURE_REDIRECT_EXEMPT = [r'^health/$']
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True

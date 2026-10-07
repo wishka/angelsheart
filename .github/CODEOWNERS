@@ -1,0 +1,6 @@
+# Ревью этих путей обязательно для слияния в main (если включено
+# «Require review from Code Owners» в защите ветки)
+*                      @wishka
+/.github/              @wishka
+/deploy/               @wishka
+/angelsheart/settings.py @wishka
