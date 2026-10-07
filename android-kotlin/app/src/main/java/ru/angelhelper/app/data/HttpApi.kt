@@ -73,16 +73,21 @@ class HttpApi(private val prefs: AppPrefs) : Api {
     private fun authorized(path: String, method: String, payload: JSONObject?): Reply {
         val first = call(path, method, payload, prefs.accessToken)
         if (first.code != 401) return first
+        val access = refreshAccess() ?: return first
+        return call(path, method, payload, access)
+    }
 
-        val refresh = prefs.refreshToken ?: return first
+    /** Новый токен доступа по refresh или null, если вход больше не действует. */
+    private fun refreshAccess(): String? {
+        val refresh = prefs.refreshToken ?: return null
         val refreshed = call(
             "api/auth/refresh/", "POST", JSONObject().put("refresh", refresh), null,
         )
-        if (refreshed.code !in 200..299) return first
+        if (refreshed.code !in 200..299) return null
 
         val json = JSONObject(refreshed.body)
         val access = json.optString("access", "")
-        if (access.isEmpty()) return first
+        if (access.isEmpty()) return null
         prefs.accessToken = access
 
         // На сервере включены ROTATE_REFRESH_TOKENS и
@@ -94,8 +99,77 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         val refreshedToken = json.optString("refresh", "")
         if (refreshedToken.isNotEmpty()) prefs.refreshToken = refreshedToken
 
-        return call(path, method, payload, access)
+        return access
     }
+
+    // ---- Двоичные запросы: фото ----
+
+    private class Part(val field: String, val fileName: String, val mime: String, val bytes: ByteArray)
+
+    /**
+     * Запрос с телом multipart/form-data или без тела, ответ — байты.
+     *
+     * Отдельно от call(): там тело — JSON и ответ читается строкой, а фото
+     * в строку превращать нельзя — байты исказятся при перекодировке.
+     */
+    private fun callBinary(
+        path: String,
+        method: String,
+        token: String?,
+        fields: Map<String, String>,
+        part: Part?,
+    ): Pair<Int, ByteArray> {
+        val connection = urlFor(path).openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = method
+            connection.connectTimeout = 10_000
+            connection.readTimeout = 60_000
+            if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
+            if (part != null || fields.isNotEmpty()) {
+                val boundary = "----angelsheart" + System.nanoTime()
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+                connection.outputStream.use { out ->
+                    fun line(text: String) = out.write((text + "\r\n").toByteArray(Charsets.UTF_8))
+                    fields.forEach { (name, value) ->
+                        line("--$boundary")
+                        line("Content-Disposition: form-data; name=\"$name\"")
+                        line("")
+                        line(value)
+                    }
+                    if (part != null) {
+                        line("--$boundary")
+                        line("Content-Disposition: form-data; name=\"${part.field}\"; filename=\"${part.fileName}\"")
+                        line("Content-Type: ${part.mime}")
+                        line("")
+                        out.write(part.bytes)
+                        line("")
+                    }
+                    line("--$boundary--")
+                }
+            }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            return code to (stream?.use { it.readBytes() } ?: ByteArray(0))
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun authorizedBinary(
+        path: String,
+        method: String,
+        fields: Map<String, String> = emptyMap(),
+        part: Part? = null,
+    ): Pair<Int, ByteArray> {
+        val first = callBinary(path, method, prefs.accessToken, fields, part)
+        if (first.first != 401) return first
+        val access = refreshAccess() ?: return first
+        return callBinary(path, method, access, fields, part)
+    }
+
+    /** Ответ на двоичный запрос в виде Reply — чтобы разбирать ошибки как обычно. */
+    private fun Pair<Int, ByteArray>.asReply() = Reply(first, String(second, Charsets.UTF_8))
 
     /**
      * Человеческое сообщение об отказе.
@@ -473,6 +547,326 @@ class HttpApi(private val prefs: AppPrefs) : Api {
             )
         }
         Outcome.Ok(list)
+    }
+
+    // ==================== СООБЩЕСТВО ====================
+    // Сервер: приложение social в Django, пути /api/profile/, /api/people/,
+    // /api/chats/, /api/groups/.
+
+    private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8")
+
+    /** Путь с параметрами; пустые значения пропускаются. */
+    private fun withQuery(path: String, params: List<Pair<String, String>>): String {
+        val query = params.filter { it.second.isNotBlank() }
+            .joinToString("&") { (key, value) -> "$key=${encode(value)}" }
+        return if (query.isEmpty()) path else "$path?$query"
+    }
+
+    /**
+     * Строка или пусто. optString отдаёт для JSON-null строку «null» —
+     * без этой проверки на экране появлялся бы город «null».
+     */
+    private fun JSONObject.text(key: String): String =
+        if (isNull(key)) "" else optString(key, "")
+
+    private fun JSONObject.intOrNull(key: String): Int? =
+        if (!has(key) || isNull(key)) null else optInt(key)
+
+    private fun <T> parseList(array: JSONArray?, parse: (JSONObject) -> T): List<T> {
+        if (array == null) return emptyList()
+        val list = ArrayList<T>(array.length())
+        for (index in 0 until array.length()) list.add(parse(array.getJSONObject(index)))
+        return list
+    }
+
+    private fun interestOf(json: JSONObject) = Interest(
+        slug = json.text("slug"),
+        title = json.text("title"),
+    )
+
+    private fun personOf(json: JSONObject) = Person(
+        isBlocked = json.optBoolean("is_blocked", false),
+        hasAvatar = json.optBoolean("has_avatar", false),
+        avatarVersion = json.text("avatar_version"),
+        id = json.optInt("id"),
+        username = json.text("username"),
+        displayName = json.text("display_name").ifBlank { json.text("username") },
+        city = json.text("city"),
+        age = json.intOrNull("age"),
+        gender = json.text("gender"),
+        about = json.text("about"),
+        interests = parseList(json.optJSONArray("interests"), ::interestOf),
+    )
+
+    private fun socialProfileOf(json: JSONObject) = SocialProfile(
+        username = json.text("username"),
+        displayName = json.text("display_name"),
+        city = json.text("city"),
+        birthYear = json.intOrNull("birth_year"),
+        gender = json.text("gender"),
+        about = json.text("about"),
+        interests = parseList(json.optJSONArray("interests"), ::interestOf),
+        isDiscoverable = json.optBoolean("is_discoverable", false),
+        distributionConsent = json.optBoolean("distribution_consent", false),
+        userId = json.optInt("user_id"),
+        hasAvatar = json.optBoolean("has_avatar", false),
+        avatarVersion = json.text("avatar_version"),
+    )
+
+    private fun messageOf(json: JSONObject) = ChatMessage(
+        id = json.optLong("id"),
+        senderName = json.text("sender_name"),
+        text = json.text("text"),
+        createdAt = json.text("created_at"),
+        isMine = json.optBoolean("is_mine", false),
+        senderId = json.intOrNull("sender_id"),
+        isHidden = json.optBoolean("is_hidden", false),
+        hasImage = json.optBoolean("has_image", false),
+    )
+
+    private fun memberOf(json: JSONObject) = ChatMember(
+        id = json.optInt("id"),
+        username = json.text("username"),
+        displayName = json.text("display_name").ifBlank { json.text("username") },
+    )
+
+    private fun chatOf(json: JSONObject) = ChatInfo(
+        id = json.optInt("id"),
+        kind = json.text("kind"),
+        title = json.text("title"),
+        membersCount = json.optInt("members_count"),
+        peerUsername = json.optJSONObject("peer")?.text("username"),
+        communityId = json.intOrNull("community_id"),
+        lastMessage = json.optJSONObject("last_message")?.let(::messageOf),
+        unreadCount = json.optInt("unread_count"),
+        lastActivityAt = json.text("last_activity_at"),
+        members = parseList(json.optJSONArray("members"), ::memberOf),
+        peerId = json.optJSONObject("peer")?.intOrNull("id"),
+        blockStatus = json.text("block_status").ifBlank { "none" },
+        peerHasAvatar = json.optJSONObject("peer")?.optBoolean("has_avatar", false) ?: false,
+        peerAvatarVersion = json.optJSONObject("peer")?.text("avatar_version") ?: "",
+    )
+
+    private fun communityOf(json: JSONObject) = Community(
+        id = json.optInt("id"),
+        name = json.text("name"),
+        description = json.text("description"),
+        topic = json.optJSONObject("topic")?.let(::interestOf),
+        isPrivate = json.optBoolean("is_private", false),
+        membersCount = json.optInt("members_count"),
+        ownerUsername = json.text("owner_username"),
+        myStatus = json.text("my_status").ifBlank { "none" },
+        chatId = json.intOrNull("chat_id"),
+        members = parseList(json.optJSONArray("members")) { item ->
+            CommunityMember(
+                id = item.optInt("id"),
+                username = item.text("username"),
+                displayName = item.text("display_name").ifBlank { item.text("username") },
+                role = item.text("role"),
+            )
+        },
+        pendingRequests = parseList(json.optJSONArray("pending_requests"), ::memberOf),
+    )
+
+    /** GET со списком: массив или страница {results} — itemsOf понимает оба. */
+    private fun <T> getList(path: String, parse: (JSONObject) -> T): Outcome<List<T>> {
+        val reply = authorized(path, "GET", null)
+        if (reply.code !in 200..299) return failure(reply)
+        return Outcome.Ok(parseList(itemsOf(reply.body), parse))
+    }
+
+    private fun <T> getOne(path: String, method: String, payload: JSONObject?, parse: (JSONObject) -> T): Outcome<T> {
+        val reply = authorized(path, method, payload)
+        if (reply.code !in 200..299) return failure(reply)
+        return Outcome.Ok(parse(JSONObject(reply.body)))
+    }
+
+    override suspend fun interests(): Outcome<List<Interest>> = request {
+        getList("api/interests/", ::interestOf)
+    }
+
+    override suspend fun socialProfile(): Outcome<SocialProfile> = request {
+        getOne("api/profile/", "GET", null, ::socialProfileOf)
+    }
+
+    override suspend fun saveSocialProfile(profile: SocialProfile): Outcome<SocialProfile> = request {
+        val interests = JSONArray()
+        profile.interests.forEach { interests.put(it.slug) }
+        val payload = JSONObject()
+            .put("display_name", profile.displayName)
+            .put("city", profile.city)
+            .put("birth_year", profile.birthYear ?: JSONObject.NULL)
+            .put("gender", profile.gender)
+            .put("about", profile.about)
+            .put("interests", interests)
+            .put("is_discoverable", profile.isDiscoverable)
+        // PUT, а не PATCH: HttpURLConnection не знает метода PATCH и бросает
+        // ProtocolException. Сервер принимает PUT как частичное обновление.
+        getOne("api/profile/", "PUT", payload, ::socialProfileOf)
+    }
+
+    override suspend fun people(filter: PeopleFilter): Outcome<List<Person>> = request {
+        val path = withQuery(
+            "api/people/",
+            listOf(
+                "q" to filter.query.trim(),
+                "city" to filter.city.trim(),
+                "gender" to filter.gender,
+                "age_min" to (filter.ageMin?.toString() ?: ""),
+                "age_max" to (filter.ageMax?.toString() ?: ""),
+                "interests" to filter.interests.joinToString(","),
+            ),
+        )
+        getList(path, ::personOf)
+    }
+
+    override suspend fun person(id: Int): Outcome<Person> = request {
+        getOne("api/people/$id/", "GET", null, ::personOf)
+    }
+
+    override suspend fun chats(): Outcome<List<ChatInfo>> = request {
+        getList("api/chats/", ::chatOf)
+    }
+
+    override suspend fun chat(id: Int): Outcome<ChatInfo> = request {
+        getOne("api/chats/$id/", "GET", null, ::chatOf)
+    }
+
+    override suspend fun openChat(usernames: List<String>, title: String): Outcome<ChatInfo> = request {
+        val names = JSONArray()
+        usernames.forEach { names.put(it) }
+        getOne("api/chats/", "POST", JSONObject().put("usernames", names).put("title", title), ::chatOf)
+    }
+
+    override suspend fun messages(chatId: Int, afterId: Long?): Outcome<List<ChatMessage>> = request {
+        val path = withQuery("api/chats/$chatId/messages/", listOf("after" to (afterId?.toString() ?: "")))
+        val reply = authorized(path, "GET", null)
+        if (reply.code !in 200..299) return@request failure(reply)
+        Outcome.Ok(parseList(JSONObject(reply.body).optJSONArray("results"), ::messageOf))
+    }
+
+    override suspend fun sendMessage(chatId: Int, text: String): Outcome<ChatMessage> = request {
+        getOne("api/chats/$chatId/messages/", "POST", JSONObject().put("text", text), ::messageOf)
+    }
+
+    override suspend fun leaveChat(chatId: Int): Outcome<String> = request {
+        getOne("api/chats/$chatId/leave/", "POST", JSONObject()) { it.text("message") }
+    }
+
+    override suspend fun communities(search: String, mineOnly: Boolean): Outcome<List<Community>> = request {
+        val path = withQuery(
+            "api/groups/",
+            listOf("search" to search.trim(), "mine" to if (mineOnly) "1" else ""),
+        )
+        getList(path, ::communityOf)
+    }
+
+    override suspend fun community(id: Int): Outcome<Community> = request {
+        getOne("api/groups/$id/", "GET", null, ::communityOf)
+    }
+
+    override suspend fun createCommunity(
+        name: String,
+        description: String,
+        topic: String,
+        isPrivate: Boolean,
+    ): Outcome<Community> = request {
+        val payload = JSONObject()
+            .put("name", name)
+            .put("description", description)
+            .put("topic", topic)
+            .put("is_private", isPrivate)
+        getOne("api/groups/", "POST", payload, ::communityOf)
+    }
+
+    override suspend fun communityAction(id: Int, action: String, userId: Int?): Outcome<CommunityReply> =
+        request {
+            val payload = JSONObject()
+            if (userId != null) payload.put("user_id", userId)
+            getOne("api/groups/$id/$action/", "POST", payload) { json ->
+                CommunityReply(communityOf(json), json.text("message"))
+            }
+        }
+
+    // ==================== УВЕДОМЛЕНИЯ ====================
+
+    override suspend fun registerDevice(token: String): Outcome<Unit> = request {
+        getOne("api/devices/", "POST", JSONObject().put("token", token).put("platform", "android")) { }
+    }
+
+    override suspend fun unregisterDevice(token: String): Outcome<Unit> = request {
+        getOne("api/devices/unregister/", "POST", JSONObject().put("token", token)) { }
+    }
+
+    // ==================== ФОТО ====================
+
+    private fun photo(bytes: ByteArray) = Part("image", "photo.jpg", "image/jpeg", bytes)
+
+    /** Байты при 2xx, иначе разбор ошибки как у JSON-ответов. */
+    private fun bytesOrFailure(reply: Pair<Int, ByteArray>): Outcome<ByteArray> =
+        if (reply.first in 200..299) Outcome.Ok(reply.second) else failure(reply.asReply())
+
+    override suspend fun uploadAvatar(jpeg: ByteArray): Outcome<SocialProfile> = request {
+        val reply = authorizedBinary("api/profile/avatar/", "POST", part = photo(jpeg)).asReply()
+        if (reply.code !in 200..299) return@request failure(reply)
+        Outcome.Ok(socialProfileOf(JSONObject(reply.body)))
+    }
+
+    override suspend fun removeAvatar(): Outcome<SocialProfile> = request {
+        getOne("api/profile/avatar/", "DELETE", null, ::socialProfileOf)
+    }
+
+    override suspend fun avatar(userId: Int): Outcome<ByteArray> = request {
+        bytesOrFailure(authorizedBinary("api/people/$userId/avatar/", "GET"))
+    }
+
+    override suspend fun sendImage(chatId: Int, text: String, jpeg: ByteArray): Outcome<ChatMessage> = request {
+        val reply = authorizedBinary(
+            "api/chats/$chatId/messages/", "POST",
+            fields = if (text.isBlank()) emptyMap() else mapOf("text" to text),
+            part = photo(jpeg),
+        ).asReply()
+        if (reply.code !in 200..299) return@request failure(reply)
+        Outcome.Ok(messageOf(JSONObject(reply.body)))
+    }
+
+    override suspend fun messageImage(chatId: Int, messageId: Long): Outcome<ByteArray> = request {
+        bytesOrFailure(authorizedBinary("api/chats/$chatId/messages/$messageId/image/", "GET"))
+    }
+
+    // ==================== ЧЁРНЫЙ СПИСОК И ЖАЛОБЫ ====================
+
+    override suspend fun blocks(): Outcome<List<BlockedUser>> = request {
+        getList("api/blocks/") { json ->
+            BlockedUser(
+                id = json.optInt("id"),
+                username = json.text("username"),
+                displayName = json.text("display_name").ifBlank { json.text("username") },
+                createdAt = json.text("created_at"),
+            )
+        }
+    }
+
+    override suspend fun block(username: String): Outcome<String> = request {
+        getOne("api/blocks/", "POST", JSONObject().put("username", username)) { it.text("message") }
+    }
+
+    override suspend fun unblock(userId: Int): Outcome<String> = request {
+        getOne("api/blocks/$userId/", "DELETE", null) { it.text("message") }
+    }
+
+    override suspend fun reportMessage(
+        chatId: Int,
+        messageId: Long,
+        reason: String,
+        comment: String,
+        alsoBlock: Boolean,
+    ): Outcome<String> = request {
+        val payload = JSONObject()
+            .put("reason", reason)
+            .put("comment", comment)
+            .put("block", alsoBlock)
+        getOne("api/chats/$chatId/messages/$messageId/report/", "POST", payload) { it.text("message") }
     }
 
     // ==================== ЗАГЛУШКИ ====================

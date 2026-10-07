@@ -34,3 +34,6 @@ env/
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Резервная копия бывшего вложенного репозитория настроек (angelsheart/.git)
+/.angelsheart-settings-git-backup/

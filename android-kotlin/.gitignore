@@ -6,3 +6,5 @@ local.properties
 .DS_Store
 app/release/
 app/build/
+# Конфигурация Firebase — своя у каждого проекта, в репозиторий не кладётся
+app/google-services.json

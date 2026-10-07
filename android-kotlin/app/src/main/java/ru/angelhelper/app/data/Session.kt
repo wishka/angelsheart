@@ -9,10 +9,9 @@ import android.content.SharedPreferences
  * SharedPreferences, а не DataStore: одна зависимость меньше, а
  * требований к скорости здесь нет — пишутся два десятка байт при входе.
  *
- * Токены лежат в обычном файле настроек и НЕ зашифрованы. Для тестового
- * приложения это допустимо и сказано вслух; для боевого понадобится
- * EncryptedSharedPreferences или хранилище ключей Android, иначе токен
- * читается с устройства с разблокированным загрузчиком.
+ * Токены хранятся зашифрованными ключом из AndroidKeyStore (TokenCipher):
+ * в файле настроек лежит только шифротекст. Токены, сохранённые прежней
+ * версией открытым текстом, при первом чтении перешифровываются.
  */
 class AppPrefs(context: Context) {
 
@@ -39,16 +38,56 @@ class AppPrefs(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_DEMO, value).apply()
 
     var accessToken: String?
-        get() = prefs.getString(KEY_ACCESS, null)
-        set(value) = prefs.edit().putString(KEY_ACCESS, value).apply()
+        get() = readSecret(KEY_ACCESS)
+        set(value) = writeSecret(KEY_ACCESS, value)
 
     var refreshToken: String?
-        get() = prefs.getString(KEY_REFRESH, null)
-        set(value) = prefs.edit().putString(KEY_REFRESH, value).apply()
+        get() = readSecret(KEY_REFRESH)
+        set(value) = writeSecret(KEY_REFRESH, value)
+
+    /**
+     * Чтение токена. Открытый текст от прежней версии приложения сразу
+     * перешифровывается — иначе он так и лежал бы открытым до следующего
+     * входа. Шифротекст, который не расшифровать, стирается: держать его
+     * бессмысленно, а без токена человек увидит экран входа.
+     */
+    private fun readSecret(key: String): String? {
+        val stored = prefs.getString(key, null) ?: return null
+        if (!TokenCipher.isEncrypted(stored)) {
+            writeSecret(key, stored)
+            return stored
+        }
+        val plain = TokenCipher.decrypt(stored)
+        if (plain == null) prefs.edit().remove(key).apply()
+        return plain
+    }
+
+    private fun writeSecret(key: String, value: String?) {
+        val sealed = value?.let(TokenCipher::encrypt)
+        if (sealed == null) {
+            prefs.edit().remove(key).apply()
+        } else {
+            prefs.edit().putString(key, sealed).apply()
+        }
+    }
 
     var username: String
         get() = prefs.getString(KEY_USERNAME, "") ?: ""
         set(value) = prefs.edit().putString(KEY_USERNAME, value).apply()
+
+    /**
+     * Последний токен push этого телефона. Нужен при выходе — сказать
+     * серверу «больше сюда не слать» — и чтобы зарегистрировать токен,
+     * выданный, пока человек не был вошедшим.
+     */
+    var pushToken: String
+        get() = prefs.getString(KEY_PUSH_TOKEN, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_PUSH_TOKEN, value).apply()
+
+    /** Спрашивали ли уже разрешение на уведомления — чтобы не спрашивать при каждом входе. */
+    var notificationsAsked: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFICATIONS_ASKED, false)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFICATIONS_ASKED, value).apply()
 
     // Демо-режим сам по себе входом не считается: иначе приложение при
     // следующем запуске открывало бы «Главную» мимо экрана входа сразу
@@ -57,10 +96,8 @@ class AppPrefs(context: Context) {
         get() = !accessToken.isNullOrBlank()
 
     fun saveTokens(tokens: Tokens) {
-        prefs.edit()
-            .putString(KEY_ACCESS, tokens.access)
-            .putString(KEY_REFRESH, tokens.refresh)
-            .apply()
+        writeSecret(KEY_ACCESS, tokens.access)
+        writeSecret(KEY_REFRESH, tokens.refresh)
     }
 
     fun clearTokens() {
@@ -76,6 +113,8 @@ class AppPrefs(context: Context) {
         private const val KEY_ACCESS = "access"
         private const val KEY_REFRESH = "refresh"
         private const val KEY_USERNAME = "username"
+        private const val KEY_PUSH_TOKEN = "push_token"
+        private const val KEY_NOTIFICATIONS_ASKED = "notifications_asked"
 
         /**
          * Приводит адрес к виду, от которого потом строятся все пути.

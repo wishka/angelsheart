@@ -68,10 +68,14 @@ fun DashboardScreen(vm: AppViewModel, state: UiState) {
                 if (index != recent.lastIndex) HorizontalDivider()
             }
         }
-        SecondaryButton("Вся история", onClick = { vm.goRoot(Screen.History) })
+        // go, а не goRoot: истории больше нет на нижней панели, и из
+        // корневого экрана без вкладки не было бы пути «назад»
+        SecondaryButton("Вся история", onClick = { vm.go(Screen.History) })
     }
 
     Panel(title = "Ещё") {
+        // Перевод ушёл с нижней панели, освободив место «Людям» и «Чатам»
+        SecondaryButton("Перевести деньги", onClick = { vm.go(Screen.Transfer) })
         SecondaryButton("Сборы средств", onClick = { vm.goRoot(Screen.Fundraises) })
         SecondaryButton("Лидеры", onClick = { vm.go(Screen.Leaders) })
         SecondaryButton("Обновить", onClick = { vm.refreshDashboard() })

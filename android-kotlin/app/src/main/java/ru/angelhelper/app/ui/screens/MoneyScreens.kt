@@ -9,6 +9,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -36,7 +37,11 @@ import ru.angelhelper.app.ui.UiState
  */
 @Composable
 fun TransferScreen(vm: AppViewModel, state: UiState) {
-    var receiver by rememberSaveable { mutableStateOf("") }
+    // Получатель подставляется из анкеты или чата («Перевести деньги»)
+    var receiver by rememberSaveable { mutableStateOf(state.transferPrefill) }
+    LaunchedEffect(Unit) {
+        if (state.transferPrefill.isNotEmpty()) vm.consumeTransferPrefill()
+    }
     var amount by rememberSaveable { mutableStateOf("") }
     var comment by rememberSaveable { mutableStateOf("") }
 

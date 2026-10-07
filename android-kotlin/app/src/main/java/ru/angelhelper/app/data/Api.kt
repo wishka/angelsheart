@@ -62,6 +62,113 @@ interface Api {
 
     suspend fun consents(): Outcome<List<Consent>>
 
+    // ==================== СООБЩЕСТВО ====================
+
+    /** Справочник интересов для анкеты, фильтра и темы группы. */
+    suspend fun interests(): Outcome<List<Interest>>
+
+    suspend fun socialProfile(): Outcome<SocialProfile>
+
+    /**
+     * Сохранение анкеты. Включение isDiscoverable на сервере фиксирует
+     * согласие на распространение ПДн — экран предупреждает об этом.
+     */
+    suspend fun saveSocialProfile(profile: SocialProfile): Outcome<SocialProfile>
+
+    /** Поиск людей. Находятся только те, кто сам открыл анкету для поиска. */
+    suspend fun people(filter: PeopleFilter): Outcome<List<Person>>
+
+    suspend fun person(id: Int): Outcome<Person>
+
+    suspend fun chats(): Outcome<List<ChatInfo>>
+
+    suspend fun chat(id: Int): Outcome<ChatInfo>
+
+    /**
+     * Открыть чат. Один получатель без названия — личный чат (существующий
+     * возвращается тот же), несколько — групповой, название обязательно.
+     * Получатели — точные имена пользователей, как при переводе.
+     */
+    suspend fun openChat(usernames: List<String>, title: String): Outcome<ChatInfo>
+
+    /**
+     * Сообщения чата по возрастанию. afterId == null — последние 50;
+     * иначе только новые после него (так опрашивается открытый чат).
+     */
+    suspend fun messages(chatId: Int, afterId: Long?): Outcome<List<ChatMessage>>
+
+    suspend fun sendMessage(chatId: Int, text: String): Outcome<ChatMessage>
+
+    suspend fun leaveChat(chatId: Int): Outcome<String>
+
+    suspend fun communities(search: String, mineOnly: Boolean): Outcome<List<Community>>
+
+    suspend fun community(id: Int): Outcome<Community>
+
+    suspend fun createCommunity(
+        name: String,
+        description: String,
+        topic: String,
+        isPrivate: Boolean,
+    ): Outcome<Community>
+
+    /** action: join, leave, approve, decline; для двух последних нужен userId. */
+    suspend fun communityAction(id: Int, action: String, userId: Int? = null): Outcome<CommunityReply>
+
+    // ==================== УВЕДОМЛЕНИЯ ====================
+
+    /** Телефон начинает получать push для этой учётной записи. */
+    suspend fun registerDevice(token: String): Outcome<Unit>
+
+    /** При выходе: уведомления этой учётной записи сюда больше не идут. */
+    suspend fun unregisterDevice(token: String): Outcome<Unit>
+
+    // ==================== ФОТО ====================
+
+    /**
+     * Фото анкеты. jpeg — уже уменьшенный на телефоне снимок
+     * (ImageTools.prepareJpeg); сервер всё равно пересохраняет его и
+     * срезает метаданные.
+     */
+    suspend fun uploadAvatar(jpeg: ByteArray): Outcome<SocialProfile>
+
+    suspend fun removeAvatar(): Outcome<SocialProfile>
+
+    /** Фото человека; сервер отдаёт его только тем, кому оно видно. */
+    suspend fun avatar(userId: Int): Outcome<ByteArray>
+
+    /** Сообщение с фото; text может быть пустым. */
+    suspend fun sendImage(chatId: Int, text: String, jpeg: ByteArray): Outcome<ChatMessage>
+
+    suspend fun messageImage(chatId: Int, messageId: Long): Outcome<ByteArray>
+
+    // ==================== ЧЁРНЫЙ СПИСОК И ЖАЛОБЫ ====================
+
+    suspend fun blocks(): Outcome<List<BlockedUser>>
+
+    /**
+     * В чёрный список. Действует в обе стороны: личная переписка
+     * закрывается для обоих, в поиске друг друга не видно, в общих
+     * чатах сообщения заблокированного скрыты.
+     */
+    suspend fun block(username: String): Outcome<String>
+
+    suspend fun unblock(userId: Int): Outcome<String>
+
+    /**
+     * Жалоба на сообщение модератору. reason — ключ из REPORT_REASONS;
+     * alsoBlock сразу добавляет автора в чёрный список.
+     */
+    suspend fun reportMessage(
+        chatId: Int,
+        messageId: Long,
+        reason: String,
+        comment: String,
+        alsoBlock: Boolean,
+    ): Outcome<String>
+
+    // ==================== ЗАГЛУШКИ ====================
+
     /** Заглушка: в серверном API пополнения нет. */
     suspend fun topUp(amount: String, method: String): Outcome<String>
 

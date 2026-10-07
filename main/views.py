@@ -2230,6 +2230,10 @@ def delete_account(request):
         TwoFactorAuth.objects.filter(user=user).delete()
         PaymentTransaction.objects.filter(user=user).update(metadata={})
 
+        # Анкета, участие в чатах и группах; тексты сообщений стираются
+        from social.services import erase_user_social_data
+        erase_user_social_data(user)
+
         # В журналах не остаётся ни связи с пользователем, ни его IP
         SecurityLog.objects.filter(user=user).update(
             user=None, user_agent='', ip_address=None, details={}, username_attempted='',
