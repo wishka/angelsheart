@@ -89,7 +89,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       # Android SDK на раннерах GitHub уже установлен (ANDROID_HOME)
       - run: chmod +x gradlew && ./gradlew assembleDebug --stacktrace
       - name: Unit tests
