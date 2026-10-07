@@ -43,7 +43,8 @@ interface Api {
 
     suspend fun dashboard(): Outcome<Dashboard>
 
-    suspend fun fundraises(search: String = ""): Outcome<List<Fundraise>>
+    /** Страницы по номеру: page = 1, 2, … ; Page.next — номер следующей. */
+    suspend fun fundraises(search: String = "", page: Int = 1): Outcome<Page<Fundraise>>
 
     suspend fun fundraise(id: Int): Outcome<Fundraise>
 
@@ -56,7 +57,7 @@ interface Api {
 
     suspend fun transfer(receiver: String, amount: String, comment: String): Outcome<String>
 
-    suspend fun transactions(): Outcome<List<Tx>>
+    suspend fun transactions(page: Int = 1): Outcome<Page<Tx>>
 
     suspend fun leaders(): Outcome<List<Leader>>
 
@@ -76,11 +77,12 @@ interface Api {
     suspend fun saveSocialProfile(profile: SocialProfile): Outcome<SocialProfile>
 
     /** Поиск людей. Находятся только те, кто сам открыл анкету для поиска. */
-    suspend fun people(filter: PeopleFilter): Outcome<List<Person>>
+    suspend fun people(filter: PeopleFilter, page: Int = 1): Outcome<Page<Person>>
 
+    /** Карточка с подписками (Person.follow). */
     suspend fun person(id: Int): Outcome<Person>
 
-    suspend fun chats(): Outcome<List<ChatInfo>>
+    suspend fun chats(page: Int = 1): Outcome<Page<ChatInfo>>
 
     suspend fun chat(id: Int): Outcome<ChatInfo>
 
@@ -95,13 +97,22 @@ interface Api {
      * Сообщения чата по возрастанию. afterId == null — последние 50;
      * иначе только новые после него (так опрашивается открытый чат).
      */
-    suspend fun messages(chatId: Int, afterId: Long?): Outcome<List<ChatMessage>>
+    suspend fun messages(chatId: Int, afterId: Long?, changedSince: String? = null): Outcome<MessagesUpdate>
+
+    /** Более ранние сообщения — до beforeId; Page.next — курсор для следующих. */
+    suspend fun olderMessages(chatId: Int, beforeId: Long): Outcome<Page<ChatMessage>>
+
+    /** Исправить своё сообщение. */
+    suspend fun editMessage(chatId: Int, messageId: Long, text: String): Outcome<ChatMessage>
+
+    /** Удалить своё сообщение у всех: в чате останется «Сообщение удалено». */
+    suspend fun deleteMessage(chatId: Int, messageId: Long): Outcome<ChatMessage>
 
     suspend fun sendMessage(chatId: Int, text: String): Outcome<ChatMessage>
 
     suspend fun leaveChat(chatId: Int): Outcome<String>
 
-    suspend fun communities(search: String, mineOnly: Boolean): Outcome<List<Community>>
+    suspend fun communities(search: String, mineOnly: Boolean, page: Int = 1): Outcome<Page<Community>>
 
     suspend fun community(id: Int): Outcome<Community>
 
@@ -112,8 +123,64 @@ interface Api {
         isPrivate: Boolean,
     ): Outcome<Community>
 
-    /** action: join, leave, approve, decline; для двух последних нужен userId. */
-    suspend fun communityAction(id: Int, action: String, userId: Int? = null): Outcome<CommunityReply>
+    /**
+     * action: join, leave, approve, decline, role (с role = admin|member),
+     * transfer (передать владение), remove (исключить). Кроме join и
+     * leave нужен userId.
+     */
+    suspend fun communityAction(
+        id: Int,
+        action: String,
+        userId: Int? = null,
+        role: String? = null,
+    ): Outcome<CommunityReply>
+
+    suspend fun updateCommunity(
+        id: Int,
+        name: String,
+        description: String,
+        topic: String,
+        isPrivate: Boolean,
+    ): Outcome<Community>
+
+    suspend fun deleteCommunity(id: Int): Outcome<String>
+
+    // ==================== ЛЕНТА ====================
+
+    /** scope: following — свои и подписки; all — публичные всех. Курсор — Page.next. */
+    suspend fun feed(scope: String, before: String? = null): Outcome<Page<Post>>
+
+    suspend fun personPosts(userId: Int, before: String? = null): Outcome<Page<Post>>
+
+    suspend fun post(id: Long): Outcome<Post>
+
+    /** visibility: public | followers. jpeg — уже уменьшенное фото или null. */
+    suspend fun createPost(text: String, jpeg: ByteArray?, visibility: String): Outcome<PostResult>
+
+    suspend fun editPost(id: Long, text: String): Outcome<Post>
+
+    suspend fun deletePost(id: Long): Outcome<String>
+
+    suspend fun likePost(id: Long, liked: Boolean): Outcome<Post>
+
+    suspend fun comments(postId: Long, before: String? = null): Outcome<Page<PostComment>>
+
+    suspend fun addComment(postId: Long, text: String): Outcome<PostComment>
+
+    suspend fun deleteComment(postId: Long, commentId: Long): Outcome<String>
+
+    /** Жалоба на публикацию (commentId == null) или на комментарий к ней. */
+    suspend fun reportPost(
+        postId: Long,
+        commentId: Long?,
+        reason: String,
+        comment: String,
+        alsoBlock: Boolean,
+    ): Outcome<String>
+
+    suspend fun follow(userId: Int, follow: Boolean): Outcome<FollowInfo>
+
+    suspend fun postImage(id: Long): Outcome<ByteArray>
 
     // ==================== УВЕДОМЛЕНИЯ ====================
 
@@ -167,15 +234,31 @@ interface Api {
         alsoBlock: Boolean,
     ): Outcome<String>
 
-    // ==================== ЗАГЛУШКИ ====================
+    // ==================== КОШЕЛЁК ====================
+    // Правила — на сервере (main/wallet.py), общие с сайтом.
 
-    /** Заглушка: в серверном API пополнения нет. */
-    suspend fun topUp(amount: String, method: String): Outcome<String>
+    suspend fun wallet(): Outcome<WalletInfo>
 
-    /** Заглушка: в серверном API вывода средств нет. */
-    suspend fun withdraw(amount: String, method: String, target: String): Outcome<String>
+    /**
+     * Пополнение. Обычно ответ — адрес страницы оплаты ЮKassa (открыть в
+     * браузере); в тестовом режиме сервера деньги зачисляются сразу.
+     */
+    suspend fun topUp(amount: String, method: String): Outcome<TopUpResult>
 
-    /** Заглушка: подача паспортных данных есть только на сайте. */
+    suspend fun withdrawals(): Outcome<List<Withdrawal>>
+
+    /**
+     * Заявка на вывод. fields — как у формы сайта: payment_method, amount,
+     * card_number/card_holder/expiry_date, phone_number/bank_id или
+     * wallet_number.
+     */
+    suspend fun createWithdrawal(fields: Map<String, String>): Outcome<String>
+
+    suspend fun cancelWithdrawal(id: Int): Outcome<String>
+
+    suspend fun verification(): Outcome<VerificationInfo>
+
+    /** Паспортные данные — на проверку администратору; уровень сам не повышается. */
     suspend fun submitVerification(
         fullName: String,
         birthDate: String,
@@ -183,7 +266,10 @@ interface Api {
         number: String,
     ): Outcome<String>
 
-    /** Заглушка: восстановление пароля есть только на сайте. */
+    /** Скан документа (JPEG) — на проверку. */
+    suspend fun uploadDocument(type: String, jpeg: ByteArray): Outcome<String>
+
+    /** Письмо со ссылкой; новый пароль задаётся по ссылке в браузере. */
     suspend fun resetPassword(email: String): Outcome<String>
 }
 
@@ -199,8 +285,3 @@ const val SESSION_EXPIRED: String = "__session_expired__"
 
 /** Сервер требует код двухфакторной проверки (отвечает 403). */
 const val TWO_FACTOR_REQUIRED: String = "__two_factor_required__"
-
-/** Текст, который экраны показывают под формами-заглушками. */
-const val STUB_NOTE: String =
-    "Это заглушка. В серверном API такой операции пока нет — приложение " +
-        "покажет ответ, но на сервере ничего не изменится."

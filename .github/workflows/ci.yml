@@ -92,6 +92,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       # Android SDK на раннерах GitHub уже установлен (ANDROID_HOME)
       - run: chmod +x gradlew && ./gradlew assembleDebug --stacktrace
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest
       # Lint пока не блокирует: у существующего кода могут быть замечания,
       # которые никто не разбирал. Отчёт — в артефактах запуска; когда он
       # станет чистым, уберите continue-on-error.

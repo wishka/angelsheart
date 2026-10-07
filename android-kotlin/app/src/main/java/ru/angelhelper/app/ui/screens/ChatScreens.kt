@@ -36,6 +36,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -91,6 +92,9 @@ fun ChatsScreen(vm: AppViewModel, state: UiState) {
                 ChatRow(vm, chat) { vm.go(Screen.Chat(chat.id)) }
                 if (index != state.chats.lastIndex) HorizontalDivider()
             }
+        }
+        if (state.chatsNext != null) {
+            SecondaryButton("Показать ещё", onClick = { vm.moreChats() })
         }
         SecondaryButton("Обновить", onClick = { vm.loadChats() })
     }
@@ -196,6 +200,10 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
     var confirmBlock by remember { mutableStateOf(false) }
     // Сообщение, на которое человек жалуется (долгое нажатие)
     var reporting by remember { mutableStateOf<ChatMessage?>(null) }
+    // Своё сообщение, для которого открыто меню «изменить / удалить»
+    var acting by remember { mutableStateOf<ChatMessage?>(null) }
+    // Сообщение, которое сейчас правится в поле ввода
+    var editing by remember(id) { mutableStateOf<ChatMessage?>(null) }
     // Фото, открытое на весь экран
     var viewing by remember { mutableStateOf<ChatMessage?>(null) }
     val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -272,7 +280,11 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
                 Bubble(
                     message,
                     showSender = chat?.isDirect == false,
-                    onLongPress = if (message.canReport) ({ reporting = message }) else null,
+                    onLongPress = when {
+                        message.canEdit -> ({ acting = message })
+                        message.canReport -> ({ reporting = message })
+                        else -> null
+                    },
                     image = if (message.hasImage) {
                         {
                             RemoteImage(
@@ -288,6 +300,13 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
                     } else null,
                 )
             }
+            if (state.chatHasOlder && state.chatMessages.isNotEmpty()) {
+                item {
+                    TextButton(onClick = { vm.loadOlderMessages(id) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Показать более ранние")
+                    }
+                }
+            }
         }
 
         when (chat?.blockStatus) {
@@ -297,7 +316,14 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
                 onAction = { chat?.peerId?.let { vm.unblock(it) } },
             )
             "blocked_me" -> BlockedBar("Пользователь ограничил переписку с вами.")
-            else -> MessageInput(
+            else -> Column {
+                editing?.let {
+                    BlockedBar("Редактирование сообщения", action = "Отмена") {
+                        editing = null
+                        text = ""
+                    }
+                }
+                MessageInput(
                 text = text,
                 onTextChange = { text = it.take(2000) },
                 enabled = chat != null && !state.busy,
@@ -305,10 +331,17 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
                     pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 },
                 onSend = {
-                    vm.sendMessage(id, text.trim())
+                    val target = editing
+                    if (target != null) {
+                        vm.editMessage(id, target.id, text.trim())
+                        editing = null
+                    } else {
+                        vm.sendMessage(id, text.trim())
+                    }
                     text = ""
                 },
             )
+            }
         }
     }
 
@@ -332,6 +365,27 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
                 contentScale = ContentScale.Fit,
             )
         }
+    }
+
+    acting?.let { message ->
+        AlertDialog(
+            onDismissRequest = { acting = null },
+            title = { Text("Сообщение") },
+            text = { Text(message.text.ifBlank { "Фото" }.take(200)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    acting = null
+                    vm.deleteMessage(id, message.id)
+                }) { Text("Удалить") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    acting = null
+                    editing = message
+                    text = message.text
+                }) { Text("Изменить") }
+            },
+        )
     }
 
     reporting?.let { message ->
@@ -381,7 +435,7 @@ private fun ChatMenuItems(
         else -> DropdownMenuItem(text = { Text("Выйти из чата") }, onClick = pick(onLeave))
     }
     DropdownMenuItem(
-        text = { Text("Жалоба: удерживайте сообщение") },
+        text = { Text("Удерживайте сообщение: своё — изменить, чужое — пожаловаться") },
         onClick = close,
         enabled = false,
     )
@@ -487,11 +541,15 @@ private fun Bubble(
                 if (message.text.isNotEmpty()) Text(
                     message.text,
                     style = MaterialTheme.typography.bodyLarge,
-                    fontStyle = if (message.isHidden) FontStyle.Italic else FontStyle.Normal,
-                    color = if (message.isHidden) MaterialTheme.colorScheme.onSurfaceVariant else Color.Unspecified,
+                    fontStyle = if (message.isHidden || message.deleted) FontStyle.Italic else FontStyle.Normal,
+                    color = when {
+                        message.isHidden -> MaterialTheme.colorScheme.onSurfaceVariant
+                        message.deleted && !message.isMine -> MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> Color.Unspecified
+                    },
                 )
                 Text(
-                    message.createdAt.asReadableDate(),
+                    message.createdAt.asReadableDate() + if (message.edited && !message.deleted) " · изменено" else "",
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (message.isMine && !message.isHidden) {
                         MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f)

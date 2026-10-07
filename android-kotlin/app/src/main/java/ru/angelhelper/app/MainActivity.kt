@@ -22,10 +22,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Face
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
@@ -49,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -81,6 +80,11 @@ import ru.angelhelper.app.ui.screens.TopUpScreen
 import ru.angelhelper.app.ui.screens.TransferScreen
 import ru.angelhelper.app.ui.screens.VerificationScreen
 import ru.angelhelper.app.ui.screens.WithdrawScreen
+import ru.angelhelper.app.ui.screens.FeedScreen
+import ru.angelhelper.app.ui.screens.GroupEditScreen
+import ru.angelhelper.app.ui.screens.NewPostScreen
+import ru.angelhelper.app.ui.screens.PostDetailScreen
+import android.net.Uri
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,24 +107,22 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Разделы нижней навигации: только те, что осмысленны после входа.
- *
- * Перевод и история ушли с панели, чтобы освободить место «Людям» и
- * «Чатам»: больше пяти разделов панель Material не вмещает без
- * обрезанных подписей. Обе операции остались на «Главной», а перевод —
- * ещё и в анкете человека и в личном чате.
+ * Разделы нижней навигации. Приложение — прежде всего сообщество:
+ * лента, люди, чаты и группы. Кошелёк, переводы и сборы — в «Профиле».
  */
 private val bottomScreens = listOf(
-    Screen.Dashboard to "Главная",
-    Screen.Fundraises to "Сборы",
+    Screen.Feed to "Лента",
     Screen.People to "Люди",
     Screen.Chats to "Чаты",
+    Screen.Groups to "Группы",
     Screen.Profile to "Профиль",
 )
 
-/** Вкладка «Люди» подсвечена и на соседнем экране групп. */
-private fun isSelected(tab: Screen, current: Screen): Boolean =
-    current == tab || (tab == Screen.People && current == Screen.Groups)
+/**
+ * Какая вкладка подсвечена: по корню стека, а не по верхнему экрану —
+ * открытая из ленты запись или анкета остаётся «внутри» ленты.
+ */
+private fun isSelected(tab: Screen, state: UiState): Boolean = state.stack.firstOrNull() == tab
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -153,13 +155,27 @@ fun AppRoot(vm: AppViewModel = viewModel()) {
     val askNotifications = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { vm.markNotificationsAsked() }
-    val signedInScreen = state.screen == Screen.Dashboard
+    val signedInScreen = state.screen == Screen.Feed
     LaunchedEffect(signedInScreen) {
         if (signedInScreen && !vm.notificationsAsked &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
         ) {
             vm.markNotificationsAsked()
             askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    // Страница оплаты ЮKassa открывается в браузере: вводить данные
+    // карты внутри приложения нельзя, а браузер показывает настоящий адрес
+    val context = LocalContext.current
+    LaunchedEffect(state.openUrl) {
+        state.openUrl?.let { url ->
+            vm.consumeOpenUrl()
+            try {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            } catch (_: Exception) {
+                // браузера нет — сообщение об оплате уже показано
+            }
         }
     }
 
@@ -214,7 +230,7 @@ fun AppRoot(vm: AppViewModel = viewModel()) {
                     val unread = state.chats.sumOf { it.unreadCount }
                     bottomScreens.forEach { (screen, label) ->
                         NavigationBarItem(
-                            selected = isSelected(screen, state.screen),
+                            selected = isSelected(screen, state),
                             onClick = { vm.goRoot(screen) },
                             icon = {
                                 if (screen == Screen.Chats && unread > 0) {
@@ -271,6 +287,10 @@ fun AppRoot(vm: AppViewModel = viewModel()) {
                     Screen.Login -> LoginScreen(vm, state)
                     Screen.Register -> RegisterScreen(vm, state)
                     Screen.PasswordReset -> PasswordResetScreen(vm, state)
+                    Screen.Feed -> FeedScreen(vm, state)
+                    is Screen.PostDetail -> PostDetailScreen(vm, state, screen.id)
+                    Screen.NewPost -> NewPostScreen(vm, state)
+                    is Screen.GroupEdit -> GroupEditScreen(vm, state, screen.id)
                     Screen.Dashboard -> DashboardScreen(vm, state)
                     Screen.Fundraises -> FundraisesScreen(vm, state)
                     is Screen.FundraiseDetail -> FundraiseDetailScreen(vm, state, screen.id)
@@ -303,7 +323,11 @@ private fun titleFor(state: UiState): String = when (state.screen) {
     Screen.Login -> "Вход"
     Screen.Register -> "Регистрация"
     Screen.PasswordReset -> "Восстановление пароля"
-    Screen.Dashboard -> "Ангел-Хранитель"
+    Screen.Feed -> "Ангел-Хранитель"
+    is Screen.PostDetail -> "Запись"
+    Screen.NewPost -> "Новая запись"
+    is Screen.GroupEdit -> "Настройки группы"
+    Screen.Dashboard -> "Кошелёк"
     Screen.Fundraises -> "Сборы средств"
     is Screen.FundraiseDetail -> "Сбор"
     Screen.Transfer -> "Перевод"
@@ -328,9 +352,7 @@ private fun titleFor(state: UiState): String = when (state.screen) {
 }
 
 private fun iconFor(screen: Screen) = when (screen) {
-    Screen.Fundraises -> Icons.Default.Favorite
-    Screen.Transfer -> Icons.AutoMirrored.Filled.Send
-    Screen.History -> Icons.AutoMirrored.Filled.List
+    Screen.Groups -> Icons.AutoMirrored.Filled.List
     Screen.Profile -> Icons.Default.Person
     Screen.People -> Icons.Default.Face
     Screen.Chats -> Icons.Default.Email

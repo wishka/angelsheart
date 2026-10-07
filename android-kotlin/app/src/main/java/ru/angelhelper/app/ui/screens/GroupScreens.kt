@@ -6,6 +6,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.remember
+import ru.angelhelper.app.data.CommunityMember
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -45,10 +54,8 @@ private fun statusTitle(status: String): String? = when (status) {
 
 @Composable
 fun GroupsScreen(vm: AppViewModel, state: UiState) {
-    var search by rememberSaveable { mutableStateOf("") }
+    var search by rememberSaveable { mutableStateOf(state.groupsSearch) }
     val mineOnly = state.groupsMineOnly
-
-    CommunitySwitch(vm, peopleSelected = false)
 
     Panel(title = "Группы по интересам") {
         Field(search, { search = it }, "Название или описание")
@@ -68,6 +75,9 @@ fun GroupsScreen(vm: AppViewModel, state: UiState) {
     } else {
         state.groups.forEach { group ->
             GroupCard(group) { vm.go(Screen.GroupDetail(group.id)) }
+        }
+        if (state.groupsNext != null) {
+            SecondaryButton("Показать ещё", onClick = { vm.moreGroups() })
         }
     }
 }
@@ -137,6 +147,8 @@ fun GroupDetailScreen(vm: AppViewModel, state: UiState, id: Int) {
                 }
                 if (group.myStatus != "owner") {
                     SecondaryButton("Выйти из группы", onClick = { vm.groupAction(id, "leave") })
+                } else {
+                    Caption("Владелец не может выйти из группы — сначала передайте владение другому участнику.")
                 }
             }
         }
@@ -158,6 +170,26 @@ fun GroupDetailScreen(vm: AppViewModel, state: UiState, id: Int) {
         }
     }
 
+    var confirmDelete by remember(id) { mutableStateOf(false) }
+    if (group.myStatus == "owner") {
+        Panel(title = "Управление") {
+            SecondaryButton("Изменить группу", onClick = { vm.go(Screen.GroupEdit(id)) })
+            SecondaryButton("Удалить группу", onClick = { confirmDelete = true })
+        }
+    }
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "Удалить группу?",
+            text = "Группа «${group.name}» и её обсуждение будут удалены для всех участников. Отменить нельзя.",
+            confirm = "Удалить",
+            onConfirm = { vm.deleteGroup(id) },
+            onDismiss = { confirmDelete = false },
+        )
+    }
+
+    // Пункт меню участника и действие, которое ждёт подтверждения
+    var pending by remember(id) { mutableStateOf<Pair<CommunityMember, String>?>(null) }
+
     Panel(title = "Участники") {
         if (group.members.isEmpty()) {
             Caption("Список участников и обсуждение видны только участникам группы.")
@@ -177,8 +209,71 @@ fun GroupDetailScreen(vm: AppViewModel, state: UiState, id: Int) {
                         Caption("@${member.username}")
                     }
                     if (member.roleTitle.isNotEmpty()) Caption(member.roleTitle)
+                    MemberMenu(
+                        myStatus = group.myStatus,
+                        member = member,
+                        isMe = member.username == vm.currentUsername,
+                        onAction = { action -> pending = member to action },
+                    )
                 }
                 if (index != group.members.lastIndex) HorizontalDivider()
+            }
+        }
+    }
+
+    pending?.let { (member, action) ->
+        val (title, text) = when (action) {
+            "admin" -> "Назначить администратором?" to
+                "${member.displayName} сможет принимать заявки и исключать участников."
+            "member" -> "Снять права администратора?" to "${member.displayName} станет обычным участником."
+            "transfer" -> "Передать владение?" to
+                "${member.displayName} станет владельцем группы, а вы — администратором. Вернуть владение сможет только новый владелец."
+            else -> "Исключить из группы?" to "${member.displayName} больше не увидит обсуждение группы."
+        }
+        ConfirmDialog(
+            title = title,
+            text = text,
+            confirm = "Да",
+            onConfirm = {
+                when (action) {
+                    "admin", "member" -> vm.groupAction(id, "role", member.id, action)
+                    else -> vm.groupAction(id, action, member.id)
+                }
+            },
+            onDismiss = { pending = null },
+        )
+    }
+}
+
+/**
+ * Меню участника для владельца и администраторов. Владелец назначает
+ * и снимает администраторов, передаёт владение и исключает; администратор
+ * исключает только обычных участников. Те же правила проверяет сервер.
+ */
+@Composable
+private fun MemberMenu(myStatus: String, member: CommunityMember, isMe: Boolean, onAction: (String) -> Unit) {
+    if (isMe || member.role == "owner") return
+    val items = buildList {
+        if (myStatus == "owner") {
+            add(if (member.role == "admin") "member" to "Снять администратора" else "admin" to "Сделать администратором")
+            add("transfer" to "Передать владение")
+            add("remove" to "Исключить")
+        } else if (myStatus == "admin" && member.role == "member") {
+            add("remove" to "Исключить")
+        }
+    }
+    if (items.isEmpty()) return
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Default.MoreVert, contentDescription = "Действия с участником")
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            items.forEach { (action, title) ->
+                DropdownMenuItem(text = { Text(title) }, onClick = {
+                    open = false
+                    onAction(action)
+                })
             }
         }
     }
@@ -213,5 +308,41 @@ fun NewGroupScreen(vm: AppViewModel, state: UiState) {
             onClick = { vm.createGroup(name.trim(), description.trim(), topic, isPrivate) },
         )
         Caption("Вы станете владельцем группы. У группы сразу появится своё обсуждение.")
+    }
+}
+
+// ==================== НАСТРОЙКИ ГРУППЫ ====================
+
+@Composable
+fun GroupEditScreen(vm: AppViewModel, state: UiState, id: Int) {
+    val group = state.openGroup?.takeIf { it.id == id }
+    if (group == null) {
+        Panel { EmptyNote("Загружаем группу…") }
+        return
+    }
+    var name by rememberSaveable(id) { mutableStateOf(group.name) }
+    var description by rememberSaveable(id) { mutableStateOf(group.description) }
+    var topic by rememberSaveable(id) { mutableStateOf(group.topic?.slug ?: "") }
+    var isPrivate by rememberSaveable(id) { mutableStateOf(group.isPrivate) }
+
+    Panel(title = "Группа") {
+        Field(name, { name = it.take(80) }, "Название")
+        Field(description, { description = it.take(1000) }, "Описание", singleLine = false)
+        Caption("Тема")
+        ChipChoice(
+            state.interests.map { it.slug to it.title },
+            isSelected = { it == topic },
+            onToggle = { slug -> topic = if (topic == slug) "" else slug },
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = isPrivate, onCheckedChange = { isPrivate = it })
+            Text("Закрытая — вступление по заявке", style = MaterialTheme.typography.bodyMedium)
+        }
+        PrimaryButton(
+            "Сохранить",
+            busy = state.busy,
+            enabled = name.isNotBlank(),
+            onClick = { vm.updateGroup(id, name.trim(), description.trim(), topic, isPrivate) },
+        )
     }
 }

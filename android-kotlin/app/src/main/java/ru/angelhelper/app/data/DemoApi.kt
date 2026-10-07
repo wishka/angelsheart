@@ -3,41 +3,6 @@ package ru.angelhelper.app.data
 import kotlinx.coroutines.delay
 
 /**
- * Ответы заглушек, общие для демо-режима и для живого сервера.
- *
- * Вынесены отдельно, чтобы операция, которой на сервере нет, отвечала
- * одинаково в обоих режимах. Иначе «пополнение» вело бы себя по-разному
- * в зависимости от переключателя, и разница выглядела бы как настоящая
- * работа сервера.
- */
-object Demo {
-
-    fun topUpReply(amount: String): Outcome<String> = Outcome.Ok(
-        "Пополнение на $amount ₽ принято.\n\n$STUB_NOTE\n\n" +
-            "На сайте эта операция уходит в ЮKassa и возвращается вебхуком; " +
-            "в API соответствующей точки нет."
-    )
-
-    fun withdrawReply(amount: String): Outcome<String> = Outcome.Ok(
-        "Заявка на вывод $amount ₽ создана.\n\n$STUB_NOTE\n\n" +
-            "Настоящий вывод требует подтверждённого адреса почты, " +
-            "верификации и обработки заявки вручную."
-    )
-
-    fun verificationReply(): Outcome<String> = Outcome.Ok(
-        "Данные отправлены на проверку.\n\n$STUB_NOTE\n\n" +
-            "Паспортные данные принимает только сайт: они шифруются " +
-            "на сервере, и передавать их из тестового приложения незачем."
-    )
-
-    fun passwordResetReply(email: String): Outcome<String> = Outcome.Ok(
-        "Если адрес $email зарегистрирован, письмо со ссылкой отправлено.\n\n" +
-            "$STUB_NOTE\n\nВосстановление пароля работает на сайте: " +
-            "ссылка из письма открывается в браузере."
-    )
-}
-
-/**
  * Выдуманные данные из памяти.
  *
  * Нужны, чтобы приложение можно было открыть и пролистать вообще без
@@ -144,14 +109,18 @@ object DemoApi : Api {
         )
     }
 
-    override suspend fun fundraises(search: String): Outcome<List<Fundraise>> {
+    // Демо-списки короткие и приходят одной страницей (next = null)
+    override suspend fun fundraises(search: String, page: Int): Outcome<Page<Fundraise>> {
         delay(PAUSE_MS)
-        if (search.isBlank()) return Outcome.Ok(fundraises.toList())
         val needle = search.trim().lowercase()
         return Outcome.Ok(
-            fundraises.filter {
-                it.title.lowercase().contains(needle) || it.description.lowercase().contains(needle)
-            }
+            Page(
+                fundraises.filter {
+                    needle.isEmpty() || it.title.lowercase().contains(needle) ||
+                        it.description.lowercase().contains(needle)
+                },
+                null,
+            )
         )
     }
 
@@ -236,9 +205,9 @@ object DemoApi : Api {
         return Outcome.Ok("Перевод ${money(value)} ₽ пользователю $receiver выполнен (демо-режим)")
     }
 
-    override suspend fun transactions(): Outcome<List<Tx>> {
+    override suspend fun transactions(page: Int): Outcome<Page<Tx>> {
         delay(PAUSE_MS)
-        return Outcome.Ok(transactions.toList())
+        return Outcome.Ok(Page(transactions.toList(), null))
     }
 
     override suspend fun leaders(): Outcome<List<Leader>> {
@@ -280,19 +249,27 @@ object DemoApi : Api {
         return DemoSocial.saveProfile(profile)
     }
 
-    override suspend fun people(filter: PeopleFilter): Outcome<List<Person>> {
+    override suspend fun people(filter: PeopleFilter, page: Int): Outcome<Page<Person>> {
         delay(PAUSE_MS)
-        return DemoSocial.people(filter)
+        return DemoSocial.people(filter).asPage()
+    }
+
+    private fun <T> Outcome<List<T>>.asPage(): Outcome<Page<T>> = when (this) {
+        is Outcome.Ok -> Outcome.Ok(Page(value, null))
+        is Outcome.Fail -> this
     }
 
     override suspend fun person(id: Int): Outcome<Person> {
         delay(PAUSE_MS)
-        return DemoSocial.person(id)
+        return when (val found = DemoSocial.person(id)) {
+            is Outcome.Ok -> Outcome.Ok(found.value.copy(follow = DemoFeed.followInfo(id)))
+            is Outcome.Fail -> found
+        }
     }
 
-    override suspend fun chats(): Outcome<List<ChatInfo>> {
+    override suspend fun chats(page: Int): Outcome<Page<ChatInfo>> {
         delay(PAUSE_MS)
-        return DemoSocial.chats()
+        return DemoSocial.chats().asPage()
     }
 
     override suspend fun chat(id: Int): Outcome<ChatInfo> {
@@ -306,8 +283,17 @@ object DemoApi : Api {
     }
 
     // Без паузы: открытый чат опрашивается каждые несколько секунд
-    override suspend fun messages(chatId: Int, afterId: Long?): Outcome<List<ChatMessage>> =
-        DemoSocial.messages(chatId, afterId)
+    override suspend fun messages(chatId: Int, afterId: Long?, changedSince: String?): Outcome<MessagesUpdate> =
+        DemoSocial.messages(chatId, afterId, changedSince)
+
+    override suspend fun olderMessages(chatId: Int, beforeId: Long): Outcome<Page<ChatMessage>> =
+        DemoSocial.olderMessages()
+
+    override suspend fun editMessage(chatId: Int, messageId: Long, text: String): Outcome<ChatMessage> =
+        DemoSocial.editMessage(chatId, messageId, text)
+
+    override suspend fun deleteMessage(chatId: Int, messageId: Long): Outcome<ChatMessage> =
+        DemoSocial.deleteMessage(chatId, messageId)
 
     override suspend fun sendMessage(chatId: Int, text: String): Outcome<ChatMessage> =
         DemoSocial.send(chatId, text)
@@ -317,9 +303,9 @@ object DemoApi : Api {
         return DemoSocial.leaveChat(chatId)
     }
 
-    override suspend fun communities(search: String, mineOnly: Boolean): Outcome<List<Community>> {
+    override suspend fun communities(search: String, mineOnly: Boolean, page: Int): Outcome<Page<Community>> {
         delay(PAUSE_MS)
-        return DemoSocial.communities(search, mineOnly)
+        return DemoSocial.communities(search, mineOnly).asPage()
     }
 
     override suspend fun community(id: Int): Outcome<Community> {
@@ -337,10 +323,94 @@ object DemoApi : Api {
         return DemoSocial.create(name, description, topic, isPrivate)
     }
 
-    override suspend fun communityAction(id: Int, action: String, userId: Int?): Outcome<CommunityReply> {
+    override suspend fun communityAction(id: Int, action: String, userId: Int?, role: String?): Outcome<CommunityReply> {
         delay(PAUSE_MS)
-        return DemoSocial.action(id, action, userId)
+        return DemoSocial.action(id, action, userId, role)
     }
+
+    override suspend fun updateCommunity(
+        id: Int,
+        name: String,
+        description: String,
+        topic: String,
+        isPrivate: Boolean,
+    ): Outcome<Community> {
+        delay(PAUSE_MS)
+        return DemoSocial.update(id, name, description, topic, isPrivate)
+    }
+
+    override suspend fun deleteCommunity(id: Int): Outcome<String> {
+        delay(PAUSE_MS)
+        return DemoSocial.delete(id)
+    }
+
+    // ==================== ЛЕНТА ====================
+
+    override suspend fun feed(scope: String, before: String?): Outcome<Page<Post>> {
+        delay(PAUSE_MS)
+        return DemoFeed.feed(scope)
+    }
+
+    override suspend fun personPosts(userId: Int, before: String?): Outcome<Page<Post>> {
+        delay(PAUSE_MS)
+        return DemoFeed.personPosts(userId)
+    }
+
+    override suspend fun post(id: Long): Outcome<Post> {
+        delay(PAUSE_MS)
+        return DemoFeed.post(id)
+    }
+
+    override suspend fun createPost(text: String, jpeg: ByteArray?, visibility: String): Outcome<PostResult> {
+        delay(PAUSE_MS)
+        val profile = (DemoSocial.profile() as? Outcome.Ok)?.value
+        return DemoFeed.create(text, jpeg, visibility, profilePublic = profile?.isDiscoverable == true)
+    }
+
+    override suspend fun editPost(id: Long, text: String): Outcome<Post> {
+        delay(PAUSE_MS)
+        return DemoFeed.edit(id, text)
+    }
+
+    override suspend fun deletePost(id: Long): Outcome<String> {
+        delay(PAUSE_MS)
+        return DemoFeed.delete(id)
+    }
+
+    override suspend fun likePost(id: Long, liked: Boolean): Outcome<Post> = DemoFeed.like(id, liked)
+
+    override suspend fun comments(postId: Long, before: String?): Outcome<Page<PostComment>> {
+        delay(PAUSE_MS)
+        return DemoFeed.comments(postId)
+    }
+
+    override suspend fun addComment(postId: Long, text: String): Outcome<PostComment> {
+        delay(PAUSE_MS)
+        return DemoFeed.addComment(postId, text)
+    }
+
+    override suspend fun deleteComment(postId: Long, commentId: Long): Outcome<String> {
+        delay(PAUSE_MS)
+        return DemoFeed.deleteComment(postId, commentId)
+    }
+
+    override suspend fun reportPost(
+        postId: Long,
+        commentId: Long?,
+        reason: String,
+        comment: String,
+        alsoBlock: Boolean,
+    ): Outcome<String> {
+        delay(PAUSE_MS)
+        return DemoFeed.report(postId, commentId, reason, alsoBlock)
+    }
+
+    override suspend fun follow(userId: Int, follow: Boolean): Outcome<FollowInfo> {
+        delay(PAUSE_MS)
+        return DemoFeed.follow(userId, follow)
+    }
+
+    override suspend fun postImage(id: Long): Outcome<ByteArray> = DemoFeed.image(id)
 
     // В демо-режиме сервера нет — и уведомлять некому
     override suspend fun registerDevice(token: String): Outcome<Unit> = Outcome.Ok(Unit)
@@ -393,28 +463,87 @@ object DemoApi : Api {
         return DemoSocial.report(chatId, messageId, reason, alsoBlock)
     }
 
-    override suspend fun topUp(amount: String, method: String): Outcome<String> {
+    // ==================== КОШЕЛЁК ====================
+    // Демо-режим ведёт себя как тестовый режим сервера: пополнение сразу,
+    // без страницы оплаты. Лимиты условные.
+
+    private val withdrawals = mutableListOf<Withdrawal>()
+    private var nextWithdrawalId = 1
+    private var verificationSubmitted = false
+    private val documents = mutableListOf<KycDocument>()
+
+    override suspend fun wallet(): Outcome<WalletInfo> {
         delay(PAUSE_MS)
-        val value = amount.replace(',', '.').toDoubleOrNull()
-            ?: return Outcome.Fail("Введите сумму")
-        if (value <= 0) return Outcome.Fail("Сумма должна быть больше нуля")
-        balance += value
-        return Demo.topUpReply(money(value))
+        return Outcome.Ok(
+            WalletInfo(
+                balance = money(balance),
+                topupMin = "1.00", topupMax = "100000.00",
+                topupMethods = listOf(Choice("card", "Банковская карта"), Choice("sbp", "СБП"), Choice("yoomoney", "ЮMoney")),
+                topupSimulated = true,
+                withdrawMin = "500.00", withdrawMax = "15000.00",
+                withdrawMethods = listOf(Choice("card", "Банковская карта"), Choice("sbp", "СБП"), Choice("yoomoney", "ЮMoney")),
+                sbpBanks = listOf(Choice("100000000004", "Т-Банк"), Choice("100000000111", "Сбербанк")),
+                verificationLevel = "basic",
+            )
+        )
     }
 
-    override suspend fun withdraw(
-        amount: String,
-        method: String,
-        target: String,
-    ): Outcome<String> {
+    override suspend fun topUp(amount: String, method: String): Outcome<TopUpResult> {
         delay(PAUSE_MS)
-        val value = amount.replace(',', '.').toDoubleOrNull()
+        val value = amount.replace(',', '.').toDoubleOrNull() ?: return Outcome.Fail("Сумма пополнения указана некорректно")
+        if (value < 1) return Outcome.Fail("Минимальная сумма пополнения — 1 ₽")
+        balance += value
+        return Outcome.Ok(TopUpResult(true, "Баланс пополнен на ${money(value)} ₽ (демо-режим)", null))
+    }
+
+    override suspend fun withdrawals(): Outcome<List<Withdrawal>> {
+        delay(PAUSE_MS)
+        return Outcome.Ok(withdrawals.toList())
+    }
+
+    override suspend fun createWithdrawal(fields: Map<String, String>): Outcome<String> {
+        delay(PAUSE_MS)
+        val value = fields["amount"].orEmpty().replace(',', '.').toDoubleOrNull()
             ?: return Outcome.Fail("Введите сумму")
-        if (value <= 0) return Outcome.Fail("Сумма должна быть больше нуля")
-        if (value > balance) {
-            return Outcome.Fail("Недостаточно средств. Доступно ${money(balance)} ₽")
+        if (value < 500) return Outcome.Fail("Минимальная сумма вывода — 500 ₽")
+        if (value > 15000) return Outcome.Fail("Превышен лимит вывода для вашего уровня верификации: 15000 ₽")
+        if (value > balance) return Outcome.Fail("Недостаточно средств на балансе")
+        val method = fields["payment_method"].orEmpty()
+        val details = when (method) {
+            "card" -> "****" + fields["card_number"].orEmpty().takeLast(4)
+            "sbp" -> "+7 *** ***-" + fields["phone_number"].orEmpty().takeLast(2)
+            else -> "***" + fields["wallet_number"].orEmpty().takeLast(4)
         }
-        return Demo.withdrawReply(money(value))
+        balance -= value
+        withdrawals.add(0, Withdrawal(nextWithdrawalId++, money(value),
+            mapOf("card" to "Банковская карта", "sbp" to "СБП").getOrDefault(method, "ЮMoney"),
+            details, "pending", "На рассмотрении", "только что", true))
+        return Outcome.Ok("Заявка на вывод ${money(value)} ₽ создана (демо-режим)")
+    }
+
+    override suspend fun cancelWithdrawal(id: Int): Outcome<String> {
+        delay(PAUSE_MS)
+        val index = withdrawals.indexOfFirst { it.id == id && it.canCancel }
+        if (index < 0) return Outcome.Fail("Невозможно отменить заявку в текущем статусе")
+        val withdrawal = withdrawals[index]
+        balance += withdrawal.amount.toDouble()
+        withdrawals[index] = withdrawal.copy(status = "cancelled", statusTitle = "Отменена", canCancel = false)
+        return Outcome.Ok("Заявка #$id отменена, средства возвращены на баланс")
+    }
+
+    override suspend fun verification(): Outcome<VerificationInfo> {
+        delay(PAUSE_MS)
+        return Outcome.Ok(
+            VerificationInfo(
+                level = "basic", levelTitle = "Базовая верификация",
+                submitted = verificationSubmitted,
+                passportMasked = if (verificationSubmitted) "45** ***456" else "—",
+                limits = mapOf("single_withdrawal" to "15000.00", "daily_withdrawal" to "50000.00"),
+                documents = documents.toList(),
+                documentTypes = listOf(Choice("passport", "Паспорт РФ"), Choice("driver_license", "Водительское удостоверение"),
+                    Choice("snils", "СНИЛС"), Choice("inn", "ИНН")),
+            )
+        )
     }
 
     override suspend fun submitVerification(
@@ -424,13 +553,25 @@ object DemoApi : Api {
         number: String,
     ): Outcome<String> {
         delay(PAUSE_MS)
-        if (fullName.isBlank()) return Outcome.Fail("Укажите полное имя")
-        return Demo.verificationReply()
+        if (fullName.trim().split(" ").size < 2) return Outcome.Fail("Укажите фамилию и имя полностью")
+        if (series.length != 4 || number.length != 6) return Outcome.Fail("Серия — 4 цифры, номер — 6 цифр")
+        val year = birthDate.takeLast(4).toIntOrNull() ?: birthDate.take(4).toIntOrNull()
+            ?: return Outcome.Fail("Укажите дату рождения в формате ДД.ММ.ГГГГ")
+        if (2026 - year < 18) return Outcome.Fail("Сервис доступен только совершеннолетним")
+        verificationSubmitted = true
+        return Outcome.Ok("Данные отправлены на проверку. Загрузите скан документа (демо-режим)")
+    }
+
+    override suspend fun uploadDocument(type: String, jpeg: ByteArray): Outcome<String> {
+        delay(PAUSE_MS)
+        documents.add(0, KycDocument(documents.size + 1, if (type == "passport") "Паспорт РФ" else type,
+            "На проверке", "только что"))
+        return Outcome.Ok("Документ загружен на проверку (демо-режим)")
     }
 
     override suspend fun resetPassword(email: String): Outcome<String> {
         delay(PAUSE_MS)
         if (!email.contains("@")) return Outcome.Fail("Введите адрес почты")
-        return Demo.passwordResetReply(email)
+        return Outcome.Ok("Если адрес $email зарегистрирован, на него отправлено письмо со ссылкой (демо-режим)")
     }
 }

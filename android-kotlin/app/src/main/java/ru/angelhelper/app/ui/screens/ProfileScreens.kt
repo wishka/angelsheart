@@ -18,7 +18,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import ru.angelhelper.app.BuildConfig
 import ru.angelhelper.app.data.AppPrefs
-import ru.angelhelper.app.data.STUB_NOTE
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import ru.angelhelper.app.data.asReadableDate
 import ru.angelhelper.app.ui.AppViewModel
 import ru.angelhelper.app.ui.EmptyNote
@@ -29,7 +31,6 @@ import ru.angelhelper.app.ui.Panel
 import ru.angelhelper.app.ui.PrimaryButton
 import ru.angelhelper.app.ui.Screen
 import ru.angelhelper.app.ui.SecondaryButton
-import ru.angelhelper.app.ui.StubBanner
 import ru.angelhelper.app.ui.UiState
 
 @Composable
@@ -49,14 +50,25 @@ fun ProfileScreen(vm: AppViewModel, state: UiState) {
         SecondaryButton("Обновить", onClick = { vm.loadProfile() })
     }
 
-    Panel(title = "Разделы") {
+    Panel(title = "Сообщество") {
         SecondaryButton("Анкета в сообществе", onClick = { vm.go(Screen.SocialProfileEdit) })
+        state.socialProfile?.userId?.takeIf { it > 0 }?.let { myId ->
+            SecondaryButton("Мои записи и подписчики", onClick = { vm.go(Screen.PersonDetail(myId)) })
+        }
         SecondaryButton("Чёрный список", onClick = { vm.go(Screen.BlockList) })
-        SecondaryButton("Группы", onClick = { vm.goRoot(Screen.Groups) })
+    }
+
+    Panel(title = "Деньги") {
+        SecondaryButton("Кошелёк", onClick = { vm.go(Screen.Dashboard) })
+        SecondaryButton("Перевести деньги", onClick = { vm.go(Screen.Transfer) })
+        SecondaryButton("Сборы средств", onClick = { vm.go(Screen.Fundraises) })
         SecondaryButton("История операций", onClick = { vm.go(Screen.History) })
         SecondaryButton("Верификация", onClick = { vm.go(Screen.Verification) })
-        SecondaryButton("Мои согласия", onClick = { vm.go(Screen.Consents) })
         SecondaryButton("Лидеры", onClick = { vm.go(Screen.Leaders) })
+    }
+
+    Panel(title = "Прочее") {
+        SecondaryButton("Мои согласия", onClick = { vm.go(Screen.Consents) })
         SecondaryButton("Настройки", onClick = { vm.go(Screen.Settings) })
     }
 
@@ -65,30 +77,34 @@ fun ProfileScreen(vm: AppViewModel, state: UiState) {
     }
 }
 
+/**
+ * Верификация: паспортные данные и сканы документов уходят на проверку
+ * администратору — так же, как с сайта. Уровень сам не повышается:
+ * его меняет администратор после проверки.
+ */
 @Composable
 fun VerificationScreen(vm: AppViewModel, state: UiState) {
+    val info = state.verification
     var fullName by rememberSaveable { mutableStateOf("") }
     var birthDate by rememberSaveable { mutableStateOf("") }
     var series by rememberSaveable { mutableStateOf("") }
     var number by rememberSaveable { mutableStateOf("") }
-
-    StubBanner(
-        "Подача паспортных данных — заглушка. $STUB_NOTE Настоящая " +
-            "верификация проходит только на сайте: данные там шифруются " +
-            "на сервере, и передавать их из тестового приложения незачем."
-    )
-
-    Panel(title = "Текущий уровень") {
-        LabelValue("Уровень", state.profile?.verificationTitle ?: "—", strong = true)
-        Text(
-            "Уровень определяет дневной предел вывода и сумму сбора, " +
-                "который можно опубликовать.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    var docType by rememberSaveable { mutableStateOf("") }
+    val pickScan = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null && docType.isNotEmpty()) vm.uploadDocument(docType, uri)
     }
 
-    Panel(title = "Базовая верификация") {
+    Panel(title = "Текущий уровень") {
+        LabelValue("Уровень", info?.levelTitle ?: state.profile?.verificationTitle ?: "—", strong = true)
+        if (info?.passportMasked?.isNotBlank() == true) LabelValue("Паспорт", info.passportMasked)
+        info?.limits?.forEach { (label, value) -> LabelValue(label, value) }
+        Caption("Уровень определяет дневной предел вывода и сумму сбора, который можно опубликовать.")
+    }
+
+    Panel(title = if (info?.submitted == true) "Данные отправлены" else "Базовая верификация") {
+        if (info?.submitted == true) {
+            Caption("Данные на проверке. Можно отправить их заново, если ошиблись.")
+        }
         Field(fullName, { fullName = it }, "Фамилия, имя, отчество")
         Field(
             birthDate, { birthDate = it }, "Дата рождения",
@@ -100,12 +116,12 @@ fun VerificationScreen(vm: AppViewModel, state: UiState) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Field(
-                series, { series = it }, "Серия",
+                series, { series = it.filter(Char::isDigit).take(4) }, "Серия",
                 keyboardType = KeyboardType.Number,
                 modifier = Modifier.weight(1f),
             )
             Field(
-                number, { number = it }, "Номер",
+                number, { number = it.filter(Char::isDigit).take(6) }, "Номер",
                 keyboardType = KeyboardType.Number,
                 modifier = Modifier.weight(1f),
             )
@@ -113,8 +129,28 @@ fun VerificationScreen(vm: AppViewModel, state: UiState) {
         PrimaryButton(
             "Отправить на проверку",
             busy = state.busy,
-            enabled = fullName.isNotBlank(),
-            onClick = { vm.submitVerification(fullName.trim(), birthDate.trim(), series.trim(), number.trim()) },
+            enabled = fullName.isNotBlank() && birthDate.isNotBlank() && series.length == 4 && number.length == 6,
+            onClick = { vm.submitVerification(fullName.trim(), birthDate.trim(), series, number) },
+        )
+        Caption("Паспортные данные хранятся на сервере в зашифрованном виде.")
+    }
+
+    Panel(title = "Документы") {
+        info?.documents?.forEach { doc ->
+            LabelValue(doc.typeTitle, "${doc.statusTitle}, ${doc.uploadedAt.asReadableDate()}")
+        }
+        if (info?.documents.isNullOrEmpty()) Caption("Документов пока нет.")
+        Caption("Тип документа")
+        ChipChoice(
+            info?.documentTypes.orEmpty().map { it.id to it.title },
+            isSelected = { it == docType },
+            onToggle = { docType = it },
+        )
+        PrimaryButton(
+            "Выбрать фото документа",
+            busy = state.busy,
+            enabled = docType.isNotEmpty(),
+            onClick = { pickScan.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
         )
     }
 }
@@ -219,9 +255,8 @@ fun SettingsScreen(vm: AppViewModel, state: UiState) {
         LabelValue("Версия", "1.0.0")
         LabelValue("Режим", if (state.demoMode) "демо" else "сервер")
         Text(
-            "Тестовая сборка. Пополнение, вывод, верификация и " +
-                "восстановление пароля — заглушки: в серверном API этих " +
-                "операций нет.",
+            "Ангел-Хранитель — сообщество взаимопомощи: лента, люди, чаты " +
+                "и группы, а также переводы и сборы средств.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
