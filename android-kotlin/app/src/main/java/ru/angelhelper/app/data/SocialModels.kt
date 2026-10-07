@@ -22,6 +22,8 @@ data class Person(
     val gender: String,
     val about: String,
     val interests: List<Interest>,
+    /** Этот человек в моём чёрном списке. */
+    val isBlocked: Boolean = false,
 ) {
     /** Короткая строка под именем: «28 лет · Москва». */
     val summary: String
@@ -72,7 +74,16 @@ data class ChatMessage(
     val text: String,
     val createdAt: String,
     val isMine: Boolean,
-)
+    /** null — автор удалил учётную запись. */
+    val senderId: Int? = null,
+    /**
+     * Текст подменён сервером: скрыто модератором или автор в моём
+     * чёрном списке. На такое сообщение жаловаться уже незачем.
+     */
+    val isHidden: Boolean = false,
+) {
+    val canReport: Boolean get() = !isMine && !isHidden && senderId != null
+}
 
 data class ChatMember(
     val id: Int,
@@ -97,8 +108,12 @@ data class ChatInfo(
     val unreadCount: Int,
     val lastActivityAt: String,
     val members: List<ChatMember> = emptyList(),
+    val peerId: Int? = null,
+    /** Для личного чата: none, blocked_by_me, blocked_me. */
+    val blockStatus: String = "none",
 ) {
     val isDirect: Boolean get() = kind == "direct"
+    val isBlocked: Boolean get() = blockStatus != "none"
 
     val kindTitle: String
         get() = when (kind) {
@@ -180,3 +195,20 @@ fun plural(n: Int, one: String, few: String, many: String): String {
 fun ageTitle(age: Int): String = plural(age, "год", "года", "лет")
 
 fun membersTitle(count: Int): String = plural(count, "участник", "участника", "участников")
+
+/** Запись чёрного списка. */
+data class BlockedUser(
+    val id: Int,
+    val username: String,
+    val displayName: String,
+    val createdAt: String,
+)
+
+/** Причины жалобы — в точности как REASON_CHOICES модели MessageReport. */
+val REPORT_REASONS: List<Pair<String, String>> = listOf(
+    "spam" to "Спам или реклама",
+    "abuse" to "Оскорбления или травля",
+    "fraud" to "Мошенничество",
+    "illegal" to "Запрещённый контент",
+    "other" to "Другое",
+)

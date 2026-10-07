@@ -1,6 +1,15 @@
 package ru.angelhelper.app.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.remember
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -165,6 +174,10 @@ fun NewChatScreen(vm: AppViewModel, state: UiState) {
 @Composable
 fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
     var text by rememberSaveable(id) { mutableStateOf("") }
+    var menuOpen by remember { mutableStateOf(false) }
+    var confirmBlock by remember { mutableStateOf(false) }
+    // Сообщение, на которое человек жалуется (долгое нажатие)
+    var reporting by remember { mutableStateOf<ChatMessage?>(null) }
     val chat = state.openChat?.takeIf { it.id == id }
 
     LaunchedEffect(id) {
@@ -188,15 +201,23 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
                 )
                 if (chat != null) Caption(chat.kindTitle)
             }
-            when {
-                chat == null -> Unit
-                chat.isDirect && chat.peerUsername != null -> TextButton(
-                    onClick = { vm.transferTo(chat.peerUsername) },
-                ) { Text("Перевести") }
-                chat.kind == "community" && chat.communityId != null -> TextButton(
-                    onClick = { vm.go(Screen.GroupDetail(chat.communityId)) },
-                ) { Text("Группа") }
-                chat.kind == "group" -> TextButton(onClick = { vm.leaveChat(id) }) { Text("Выйти") }
+            if (chat != null) {
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Действия")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        ChatMenuItems(
+                            chat = chat,
+                            onTransfer = { username -> vm.transferTo(username) },
+                            onBlock = { confirmBlock = true },
+                            onUnblock = { userId -> vm.unblock(userId) },
+                            onOpenGroup = { groupId -> vm.go(Screen.GroupDetail(groupId)) },
+                            onLeave = { vm.leaveChat(id) },
+                            close = { menuOpen = false },
+                        )
+                    }
+                }
             }
         }
 
@@ -212,49 +233,167 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
                 item { EmptyNote(if (chat == null) "Загружаем сообщения…" else "Сообщений пока нет — напишите первым.") }
             }
             items(state.chatMessages.asReversed(), key = { it.id }) { message ->
-                Bubble(message, showSender = chat?.isDirect == false)
+                Bubble(
+                    message,
+                    showSender = chat?.isDirect == false,
+                    onLongPress = if (message.canReport) ({ reporting = message }) else null,
+                )
             }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it.take(2000) },
-                placeholder = { Text("Сообщение") },
-                maxLines = 4,
-                modifier = Modifier.weight(1f),
+        when (chat?.blockStatus) {
+            "blocked_by_me" -> BlockedBar(
+                "Вы заблокировали этого пользователя. Переписка закрыта.",
+                action = "Разблокировать",
+                onAction = { chat?.peerId?.let { vm.unblock(it) } },
             )
-            IconButton(
-                enabled = text.isNotBlank() && !state.busy,
-                onClick = {
+            "blocked_me" -> BlockedBar("Пользователь ограничил переписку с вами.")
+            else -> MessageInput(
+                text = text,
+                onTextChange = { text = it.take(2000) },
+                enabled = chat != null && !state.busy,
+                onSend = {
                     vm.sendMessage(id, text.trim())
                     text = ""
                 },
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Отправить")
+            )
+        }
+    }
+
+    val peerUsername = chat?.peerUsername
+    if (confirmBlock && chat != null && peerUsername != null) {
+        ConfirmBlockDialog(
+            name = chat.title,
+            onConfirm = { vm.block(peerUsername) },
+            onDismiss = { confirmBlock = false },
+        )
+    }
+
+    reporting?.let { message ->
+        ReportDialog(
+            authorName = message.senderName,
+            messageText = message.text,
+            onSubmit = { reason, comment, alsoBlock ->
+                vm.reportMessage(id, message.id, reason, comment, alsoBlock)
+            },
+            onDismiss = { reporting = null },
+        )
+    }
+}
+
+/** Пункты меню чата — свои для личного, группового чата и обсуждения группы. */
+@Composable
+private fun ChatMenuItems(
+    chat: ChatInfo,
+    onTransfer: (String) -> Unit,
+    onBlock: () -> Unit,
+    onUnblock: (Int) -> Unit,
+    onOpenGroup: (Int) -> Unit,
+    onLeave: () -> Unit,
+    close: () -> Unit,
+) {
+    fun pick(action: () -> Unit): () -> Unit = {
+        close()
+        action()
+    }
+    val peerUsername = chat.peerUsername
+    val peerId = chat.peerId
+    val communityId = chat.communityId
+    when (chat.kind) {
+        "direct" -> {
+            if (peerUsername != null && !chat.isBlocked) {
+                DropdownMenuItem(text = { Text("Перевести деньги") }, onClick = pick { onTransfer(peerUsername) })
             }
+            if (chat.blockStatus == "blocked_by_me" && peerId != null) {
+                DropdownMenuItem(text = { Text("Разблокировать") }, onClick = pick { onUnblock(peerId) })
+            } else if (peerUsername != null) {
+                DropdownMenuItem(text = { Text("Заблокировать") }, onClick = pick(onBlock))
+            }
+        }
+        "community" -> if (communityId != null) {
+            DropdownMenuItem(text = { Text("Открыть группу") }, onClick = pick { onOpenGroup(communityId) })
+        }
+        else -> DropdownMenuItem(text = { Text("Выйти из чата") }, onClick = pick(onLeave))
+    }
+    DropdownMenuItem(
+        text = { Text("Жалоба: удерживайте сообщение") },
+        onClick = close,
+        enabled = false,
+    )
+}
+
+@Composable
+private fun BlockedBar(text: String, action: String? = null, onAction: () -> Unit = {}) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            if (action != null) TextButton(onClick = onAction) { Text(action) }
         }
     }
 }
 
 @Composable
-private fun Bubble(message: ChatMessage, showSender: Boolean) {
+private fun MessageInput(text: String, onTextChange: (String) -> Unit, enabled: Boolean, onSend: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        OutlinedTextField(
+            value = text,
+            onValueChange = onTextChange,
+            placeholder = { Text("Сообщение") },
+            maxLines = 4,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(enabled = enabled && text.isNotBlank(), onClick = onSend) {
+            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Отправить")
+        }
+    }
+}
+
+/**
+ * Пузырь сообщения.
+ *
+ * Долгое нажатие на чужое сообщение открывает жалобу. Скрытые сообщения
+ * (модератором или из-за чёрного списка) рисуются приглушённо, и
+ * пожаловаться на них нельзя — текста уже не видно.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Bubble(message: ChatMessage, showSender: Boolean, onLongPress: (() -> Unit)?) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isMine) Arrangement.End else Arrangement.Start,
     ) {
         Surface(
             shape = RoundedCornerShape(16.dp),
-            color = if (message.isMine) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.surface
+            color = when {
+                message.isHidden -> MaterialTheme.colorScheme.surfaceVariant
+                message.isMine -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.surface
             },
-            modifier = Modifier.widthIn(max = 300.dp),
+            modifier = Modifier
+                .widthIn(max = 300.dp)
+                .then(
+                    if (onLongPress != null) {
+                        Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress)
+                    } else {
+                        Modifier
+                    }
+                ),
         ) {
             Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 if (showSender && !message.isMine) {
@@ -265,11 +404,16 @@ private fun Bubble(message: ChatMessage, showSender: Boolean) {
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }
-                Text(message.text, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    message.text,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontStyle = if (message.isHidden) FontStyle.Italic else FontStyle.Normal,
+                    color = if (message.isHidden) MaterialTheme.colorScheme.onSurfaceVariant else Color.Unspecified,
+                )
                 Text(
                     message.createdAt.asReadableDate(),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (message.isMine) {
+                    color = if (message.isMine && !message.isHidden) {
                         MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f)
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant

@@ -83,19 +83,26 @@ object DemoSocial {
     private var nextChatId = 10
     private var nextCommunityId = 10
 
-    private fun message(sender: String, text: String, at: String): ChatMessage =
-        ChatMessage(++nextMessageId, sender, text, at, isMine = sender == "Вы")
+    private fun message(sender: String, text: String, at: String, senderId: Int): ChatMessage =
+        ChatMessage(++nextMessageId, sender, text, at, isMine = senderId == MY_ID, senderId = senderId)
+
+    /** Кого демо-пользователь заблокировал (id). */
+    private val blocked = mutableSetOf<Int>()
+
+    /** На какие сообщения уже пожаловался — повторно нельзя, как на сервере. */
+    private val reported = mutableSetOf<Long>()
 
     private val chats = mutableListOf(
         DemoChat(1, "direct", "", mutableListOf(me, memberOf(people[0]))).apply {
-            messages += message("Анна Петрова", "Привет! Видела, ты помог со сбором для Ани. Спасибо 🙏", "2026-09-14T10:20:00Z")
-            messages += message("Вы", "Привет! Рад был помочь. Как она?", "2026-09-14T10:25:00Z")
-            messages += message("Анна Петрова", "Уже начала занятия с врачом. Пришлю фото на выходных!", "2026-09-14T10:31:00Z")
+            messages += message("Анна Петрова", "Привет! Видела, ты помог со сбором для Ани. Спасибо 🙏", "2026-09-14T10:20:00Z", 2)
+            messages += message("Вы", "Привет! Рад был помочь. Как она?", "2026-09-14T10:25:00Z", MY_ID)
+            messages += message("Анна Петрова", "Уже начала занятия с врачом. Пришлю фото на выходных!", "2026-09-14T10:31:00Z", 2)
             readUpTo = messages[1].id
         },
-        DemoChat(2, "community", "Волонтёры Москвы", mutableListOf(me, memberOf(people[0]), memberOf(people[5])), communityId = 1).apply {
-            messages += message("Ольга", "В субботу субботник в Сокольниках, кто с нами?", "2026-09-13T08:00:00Z")
-            messages += message("Анна Петрова", "Я буду!", "2026-09-13T08:12:00Z")
+        DemoChat(2, "community", "Волонтёры Москвы", mutableListOf(me, memberOf(people[0]), memberOf(people[4]), memberOf(people[3])), communityId = 1).apply {
+            messages += message("Ольга", "В субботу субботник в Сокольниках, кто с нами?", "2026-09-13T08:00:00Z", 6)
+            messages += message("Анна Петрова", "Я буду!", "2026-09-13T08:12:00Z", 2)
+            messages += message("Павел", "Покупайте курсы заработка, пишите в личку!!!", "2026-09-13T09:40:00Z", 5)
             readUpTo = messages.last().id
         },
     )
@@ -134,6 +141,7 @@ object DemoSocial {
         val city = filter.city.trim().lowercase()
         return Outcome.Ok(
             people.filter { person ->
+                person.id !in blocked &&
                 (query.isEmpty() || "${person.username} ${person.displayName} ${person.city}".lowercase().contains(query)) &&
                     (city.isEmpty() || person.city.lowercase() == city) &&
                     (filter.gender.isBlank() || person.gender == filter.gender) &&
@@ -145,22 +153,32 @@ object DemoSocial {
     }
 
     fun person(id: Int): Outcome<Person> =
-        people.firstOrNull { it.id == id }?.let { Outcome.Ok(it) }
+        people.firstOrNull { it.id == id }?.let { Outcome.Ok(it.copy(isBlocked = id in blocked)) }
             ?: Outcome.Fail("Пользователь не найден или скрыл анкету")
 
     // ==================== ЧАТЫ ====================
 
+    /** Как сервер: в общих чатах текст заблокированного подменяется. */
+    private fun present(chat: DemoChat, message: ChatMessage): ChatMessage =
+        if (chat.kind != "direct" && message.senderId in blocked) {
+            message.copy(text = "Сообщение от пользователя из вашего чёрного списка", isHidden = true)
+        } else {
+            message
+        }
+
     private fun info(chat: DemoChat, withMembers: Boolean): ChatInfo {
         val peer = if (chat.kind == "direct") chat.members.firstOrNull { it.username != ME } else null
         return ChatInfo(
+            peerId = peer?.id,
+            blockStatus = if (peer != null && peer.id in blocked) "blocked_by_me" else "none",
             id = chat.id,
             kind = chat.kind,
             title = peer?.displayName ?: chat.title,
             membersCount = chat.members.size,
             peerUsername = peer?.username,
             communityId = chat.communityId,
-            lastMessage = chat.messages.lastOrNull(),
-            unreadCount = chat.messages.count { it.id > chat.readUpTo && !it.isMine },
+            lastMessage = chat.messages.lastOrNull()?.let { present(chat, it) },
+            unreadCount = chat.messages.count { it.id > chat.readUpTo && !it.isMine && it.senderId !in blocked },
             lastActivityAt = chat.messages.lastOrNull()?.createdAt ?: "",
             members = if (withMembers) chat.members.toList() else emptyList(),
         )
@@ -184,6 +202,17 @@ object DemoSocial {
         val missing = names - found.map { it.username }.toSet()
         if (missing.isNotEmpty()) return Outcome.Fail("Не найдены: " + missing.sorted().joinToString())
 
+        // Как на сервере: прежнюю личную переписку с заблокированным открыть
+        // можно (прочитать историю), а новую переписку начать — нет
+        val refused = found.filter { it.id in blocked }
+        val existingDirect = found.size == 1 && title.isBlank() &&
+            chats.any { c -> c.kind == "direct" && c.members.any { it.id == found[0].id } }
+        if (refused.isNotEmpty() && !existingDirect) {
+            return Outcome.Fail(
+                if (found.size == 1) "Нельзя написать этому пользователю"
+                else "Нельзя добавить в чат: " + refused.joinToString { it.username }
+            )
+        }
         if (found.size == 1 && title.isBlank()) {
             val existing = chats.firstOrNull { chat ->
                 chat.kind == "direct" && chat.members.any { it.username == found[0].username }
@@ -203,15 +232,18 @@ object DemoSocial {
         val chat = chats.firstOrNull { it.id == chatId } ?: return Outcome.Fail("Чат не найден")
         val list = if (afterId == null) chat.messages.takeLast(50) else chat.messages.filter { it.id > afterId }
         list.lastOrNull()?.let { chat.readUpTo = maxOf(chat.readUpTo, it.id) }
-        return Outcome.Ok(list.toList())
+        return Outcome.Ok(list.map { present(chat, it) })
     }
 
     fun send(chatId: Int, text: String): Outcome<ChatMessage> {
         val chat = chats.firstOrNull { it.id == chatId } ?: return Outcome.Fail("Чат не найден")
+        if (chat.kind == "direct" && chat.members.any { it.id in blocked }) {
+            return Outcome.Fail("Переписка недоступна: один из вас в чёрном списке у другого")
+        }
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return Outcome.Fail("Сообщение пустое")
         if (trimmed.length > 2000) return Outcome.Fail("Сообщение длиннее 2000 символов")
-        val sent = message("Вы", trimmed, "только что")
+        val sent = message("Вы", trimmed, "только что", MY_ID)
         chat.messages += sent
         chat.readUpTo = sent.id
         return Outcome.Ok(sent)
@@ -227,6 +259,43 @@ object DemoSocial {
                 Outcome.Ok("Вы вышли из чата")
             }
         }
+    }
+
+    // ==================== ЧЁРНЫЙ СПИСОК И ЖАЛОБЫ ====================
+
+    fun blocks(): Outcome<List<BlockedUser>> = Outcome.Ok(
+        people.filter { it.id in blocked }
+            .map { BlockedUser(it.id, it.username, it.displayName, "2026-09-15T12:00:00Z") }
+    )
+
+    fun block(username: String): Outcome<String> {
+        val name = username.trim().removePrefix("@")
+        if (name == ME) return Outcome.Fail("Нельзя заблокировать самого себя")
+        val person = people.firstOrNull { it.username == name } ?: return Outcome.Fail("Пользователь не найден")
+        return if (blocked.add(person.id)) {
+            Outcome.Ok("${person.username} добавлен в чёрный список")
+        } else {
+            Outcome.Ok("${person.username} уже в чёрном списке")
+        }
+    }
+
+    fun unblock(userId: Int): Outcome<String> =
+        if (blocked.remove(userId)) Outcome.Ok("Пользователь удалён из чёрного списка")
+        else Outcome.Fail("Этого пользователя нет в чёрном списке")
+
+    fun report(chatId: Int, messageId: Long, reason: String, alsoBlock: Boolean): Outcome<String> {
+        val chat = chats.firstOrNull { it.id == chatId } ?: return Outcome.Fail("Чат не найден")
+        val message = chat.messages.firstOrNull { it.id == messageId } ?: return Outcome.Fail("Сообщение не найдено")
+        if (message.isMine) return Outcome.Fail("Нельзя пожаловаться на своё сообщение")
+        if (REPORT_REASONS.none { it.first == reason }) return Outcome.Fail("Укажите причину жалобы")
+        if (!reported.add(messageId)) return Outcome.Fail("Вы уже пожаловались на это сообщение")
+        var text = "Жалоба отправлена. Модератор рассмотрит её. (демо-режим)"
+        val senderId = message.senderId
+        if (alsoBlock && senderId != null) {
+            blocked.add(senderId)
+            text += " ${people.firstOrNull { it.id == senderId }?.username ?: "Автор"} добавлен в чёрный список."
+        }
+        return Outcome.Ok(text)
     }
 
     // ==================== ГРУППЫ ====================

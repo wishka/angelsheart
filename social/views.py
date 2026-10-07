@@ -16,7 +16,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from . import services
-from .models import Chat, ChatMessage, Community, CommunityMembership, Interest
+from .models import Chat, ChatMessage, Community, CommunityMembership, Interest, UserBlock
 from .serializers import (
     ChatCreateSerializer, ChatDetailSerializer, ChatSerializer, CommunityCreateSerializer,
     CommunityDetailSerializer, CommunitySerializer, InterestSerializer, MessageCreateSerializer,
@@ -97,16 +97,23 @@ class PeopleViewSet(SocialMixin, viewsets.GenericViewSet):
 
     def list(self, request):
         page = self.paginate_queryset(self.get_queryset())
-        return self.get_paginated_response(PersonSerializer(page, many=True).data)
+        return self.get_paginated_response(
+            PersonSerializer(page, many=True, context={'request': request}).data,
+        )
 
     def retrieve(self, request, pk=None):
-        user = services.discoverable_users().filter(pk=_int(pk)).first()
+        user = (
+            services.discoverable_users()
+            # Тот, кто заблокировал зрителя, для него не существует
+            .exclude(pk__in=services.blocked_by_ids(request.user))
+            .filter(pk=_int(pk)).first()
+        )
         if user is None and _int(pk) == request.user.pk:
             user = request.user
         if user is None:
             return Response({'error': 'Пользователь не найден или скрыл анкету'},
                             status=status.HTTP_404_NOT_FOUND)
-        return Response(PersonSerializer(user).data)
+        return Response(PersonSerializer(user, context={'request': request}).data)
 
 
 # ==================== ЧАТЫ ====================
@@ -188,6 +195,8 @@ class ChatViewSet(SocialMixin, viewsets.GenericViewSet):
                 return self.refuse(error)
             return Response(message_payload(message, request.user), status=status.HTTP_201_CREATED)
 
+        blocked = services.blocked_ids(request.user)
+
         limit = 50
         messages = ChatMessage.objects.filter(chat=chat).select_related('sender')
         after, before = _int(request.query_params.get('after')), _int(request.query_params.get('before'))
@@ -207,9 +216,28 @@ class ChatViewSet(SocialMixin, viewsets.GenericViewSet):
             services.mark_read(member, batch[-1].pk)
 
         return Response({
-            'results': [message_payload(m, request.user) for m in batch],
+            'results': [message_payload(m, request.user, blocked) for m in batch],
             'has_more': has_more,
         })
+
+    @action(detail=True, methods=['post'], url_path=r'messages/(?P<message_id>[0-9]+)/report')
+    def report(self, request, pk=None, message_id=None):
+        """
+        Жалоба на сообщение: {reason, comment, block}. reason — spam,
+        abuse, fraud, illegal, other. block=true сразу добавляет автора
+        в чёрный список.
+        """
+        try:
+            chat = self._chat(pk)
+            text = services.report_message(
+                request.user, chat, _int(message_id),
+                reason=request.data.get('reason', ''),
+                comment=request.data.get('comment', ''),
+                also_block=str(request.data.get('block', '')).lower() in ('1', 'true'),
+            )
+        except services.SocialError as error:
+            return self.refuse(error)
+        return Response({'message': text}, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
     def leave(self, request, pk=None):
@@ -297,3 +325,47 @@ class CommunityViewSet(SocialMixin, viewsets.GenericViewSet):
     @action(detail=True, methods=['post'])
     def decline(self, request, pk=None):
         return self._do(pk, services.decline_request, _int(request.data.get('user_id')))
+
+
+# ==================== ЧЁРНЫЙ СПИСОК ====================
+
+class BlockViewSet(SocialMixin, viewsets.GenericViewSet):
+    """
+    GET — свой чёрный список; POST {username} или {user_id} — добавить;
+    DELETE /api/blocks/<user_id>/ — убрать.
+    """
+
+    serializer_class = PersonSerializer
+
+    def list(self, request):
+        blocks = UserBlock.objects.filter(blocker=request.user).select_related('blocked')
+        from .serializers import display_name
+        return Response([
+            {
+                'id': b.blocked_id,
+                'username': b.blocked.username,
+                'display_name': display_name(b.blocked),
+                'created_at': b.created_at.isoformat(),
+            }
+            for b in blocks
+        ])
+
+    def create(self, request):
+        username = (request.data.get('username') or '').strip().lstrip('@')
+        user_id = _int(request.data.get('user_id'))
+        users = User.objects.filter(is_active=True)
+        target = (users.filter(pk=user_id) if user_id else users.filter(username=username)).first()
+        if target is None:
+            return Response({'error': 'Пользователь не найден'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            text = services.block_user(request.user, target)
+        except services.SocialError as error:
+            return self.refuse(error)
+        return Response({'message': text, 'id': target.pk}, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, pk=None):
+        try:
+            text = services.unblock_user(request.user, _int(pk))
+        except services.SocialError as error:
+            return self.refuse(error)
+        return Response({'message': text})

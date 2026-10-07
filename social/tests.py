@@ -274,3 +274,156 @@ class ProfilePutTests(SocialTestCase):
         response = self.client.put('/api/profile/', {'about': 'Новое'}, format='json')
         self.assertEqual(response.json()['city'], 'Тверь')
         self.assertEqual(response.json()['about'], 'Новое')
+
+
+class BlockTests(SocialTestCase):
+    def setUp(self):
+        super().setUp()
+        self.anna = make_user('anna', city='Москва', discoverable=True)
+        self.anna_client = APIClient()
+        self.anna_client.force_authenticate(self.anna)
+
+    def block(self, client, username):
+        return client.post('/api/blocks/', {'username': username}, format='json')
+
+    def test_block_list_and_unblock(self):
+        self.assertEqual(self.block(self.client, 'anna').status_code, 201)
+        self.assertEqual(self.block(self.client, 'anna').json()['message'], 'anna уже в чёрном списке')
+        listed = self.client.get('/api/blocks/').json()
+        self.assertEqual([b['username'] for b in listed], ['anna'])
+        self.assertEqual(self.client.delete(f'/api/blocks/{self.anna.pk}/').status_code, 200)
+        self.assertEqual(self.client.get('/api/blocks/').json(), [])
+        self.assertEqual(self.client.delete(f'/api/blocks/{self.anna.pk}/').status_code, 404)
+
+    def test_cannot_block_self(self):
+        self.assertEqual(self.block(self.client, 'me').status_code, 400)
+
+    def test_blocked_people_disappear_from_search_both_ways(self):
+        self.block(self.anna_client, 'me')
+        self.assertEqual(self.client.get('/api/people/').json()['results'], [])
+        self.assertEqual(self.client.get(f'/api/people/{self.anna.pk}/').status_code, 404)
+
+    def test_blocker_sees_flag_in_profile(self):
+        self.block(self.client, 'anna')
+        # Заблокированный не ищется, но карточку заблокировавший открыть может
+        self.assertTrue(self.client.get(f'/api/people/{self.anna.pk}/').json()['is_blocked'])
+
+    def test_direct_chat_closed_both_ways(self):
+        chat_id = self.client.post('/api/chats/', {'usernames': ['anna']}, format='json').json()['id']
+        self.block(self.anna_client, 'me')
+
+        for client in (self.client, self.anna_client):
+            response = client.post(f'/api/chats/{chat_id}/messages/', {'text': 'hi'}, format='json')
+            self.assertEqual(response.status_code, 403)
+
+        statuses = {
+            'me': self.client.get('/api/chats/').json()['results'][0]['block_status'],
+            'anna': self.anna_client.get('/api/chats/').json()['results'][0]['block_status'],
+        }
+        self.assertEqual(statuses, {'me': 'blocked_me', 'anna': 'blocked_by_me'})
+        # Историю открыть можно
+        self.assertEqual(self.client.get(f'/api/chats/{chat_id}/messages/').status_code, 200)
+
+    def test_new_direct_chat_refused(self):
+        self.block(self.anna_client, 'me')
+        response = self.client.post('/api/chats/', {'usernames': ['anna']}, format='json')
+        self.assertEqual(response.status_code, 403)
+        response = self.client.post('/api/chats/', {'usernames': ['anna', 'ivan'], 'title': 'Т'},
+                                    format='json')
+        self.assertEqual(response.status_code, 400)  # ivan не существует
+
+    def test_group_messages_from_blocked_are_hidden(self):
+        ivan = make_user('ivan')
+        chat = services.create_group_chat(self.me, 'Т', [self.anna, ivan])
+        services.send_message(chat, self.anna, 'Текст Анны')
+        self.block(self.client, 'anna')
+
+        thread = self.client.get(f'/api/chats/{chat.pk}/messages/').json()['results']
+        self.assertEqual(thread[0]['text'], 'Сообщение от пользователя из вашего чёрного списка')
+        self.assertTrue(thread[0]['is_hidden'])
+        ivan_client = APIClient()
+        ivan_client.force_authenticate(ivan)
+        self.assertEqual(ivan_client.get(f'/api/chats/{chat.pk}/messages/').json()['results'][0]['text'],
+                         'Текст Анны')
+        # Непрочитанное от заблокированного не считается
+        self.assertEqual(self.client.get('/api/chats/').json()['results'][0]['unread_count'], 0)
+
+    def test_erasure_removes_blocks(self):
+        self.block(self.client, 'anna')
+        services.erase_user_social_data(self.anna)
+        self.assertFalse(services.UserBlock.objects.exists())
+
+
+class ReportTests(SocialTestCase):
+    def setUp(self):
+        super().setUp()
+        self.anna = make_user('anna')
+        self.chat = services.create_group_chat(
+            self.anna, 'Т', [self.me] + [make_user(f'u{i}') for i in range(3)],
+        )
+        self.message = services.send_message(self.chat, self.anna, 'Купи слона')
+
+    def report(self, client, **data):
+        payload = {'reason': 'spam', **data}
+        return client.post(f'/api/chats/{self.chat.pk}/messages/{self.message.pk}/report/',
+                           payload, format='json')
+
+    def client_for(self, username):
+        client = APIClient()
+        client.force_authenticate(User.objects.get(username=username))
+        return client
+
+    def test_report_saves_snapshot(self):
+        response = self.report(self.client, comment='навязчиво')
+        self.assertEqual(response.status_code, 201, response.content)
+        report = services.MessageReport.objects.get()
+        self.assertEqual((report.message_text, report.sender, report.reason), ('Купи слона', self.anna, 'spam'))
+
+    def test_report_once_and_not_own(self):
+        self.report(self.client)
+        self.assertEqual(self.report(self.client).status_code, 400)
+        self.assertEqual(self.report(self.client_for('anna')).status_code, 400)
+
+    def test_outsider_cannot_report(self):
+        make_user('stranger')
+        self.assertEqual(self.report(self.client_for('stranger')).status_code, 404)
+
+    def test_bad_reason(self):
+        self.assertEqual(self.report(self.client, reason='boring').status_code, 400)
+
+    def test_report_and_block(self):
+        response = self.report(self.client, block=True)
+        self.assertIn('чёрный список', response.json()['message'])
+        self.assertTrue(services.UserBlock.objects.filter(blocker=self.me, blocked=self.anna).exists())
+
+    def test_three_reports_hide_message_until_moderation(self):
+        self.report(self.client)
+        self.report(self.client_for('u0'))
+        self.message.refresh_from_db()
+        self.assertFalse(self.message.is_hidden)
+        self.report(self.client_for('u1'))
+        self.message.refresh_from_db()
+        self.assertTrue(self.message.is_hidden)
+        text = self.client_for('u2').get(f'/api/chats/{self.chat.pk}/messages/').json()['results'][0]['text']
+        self.assertEqual(text, 'Сообщение скрыто модератором')
+
+        moderator = User.objects.create_superuser('mod', 'mod@example.com', 'Sunrise-Harbor-42')
+        services.resolve_reports(self.message, moderator, accept=False)
+        self.message.refresh_from_db()
+        self.assertFalse(self.message.is_hidden)
+        self.assertEqual(
+            set(services.MessageReport.objects.values_list('status', flat=True)), {'rejected'},
+        )
+
+    def test_admin_accept_action(self):
+        self.report(self.client)
+        moderator = User.objects.create_superuser('mod', 'mod@example.com', 'Sunrise-Harbor-42')
+        web = self.client_class()
+        web.force_login(moderator)
+        report = services.MessageReport.objects.get()
+        response = web.post('/admin/social/messagereport/', {
+            'action': 'accept_reports', '_selected_action': [report.pk],
+        })
+        self.assertEqual(response.status_code, 302)
+        self.message.refresh_from_db()
+        self.assertTrue(self.message.is_hidden)

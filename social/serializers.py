@@ -45,7 +45,18 @@ class PersonSerializer(serializers.Serializer):
             'interests': InterestSerializer(
                 profile.interests.all() if profile else [], many=True,
             ).data,
+            'is_blocked': user.pk in _blocked(self.context),
         }
+
+
+def _blocked(context):
+    """Чёрный список зрителя; считается один раз на ответ, а не на каждую строку."""
+    if 'blocked_ids' not in context:
+        request = context.get('request')
+        context['blocked_ids'] = (
+            services.blocked_ids(request.user) if request is not None else set()
+        )
+    return context['blocked_ids']
 
 
 class MyProfileSerializer(serializers.Serializer):
@@ -92,15 +103,36 @@ class MyProfileSerializer(serializers.Serializer):
 
 # ==================== ЧАТЫ ====================
 
-def message_payload(message, viewer):
+HIDDEN_BY_MODERATOR = 'Сообщение скрыто модератором'
+HIDDEN_BLOCKED = 'Сообщение от пользователя из вашего чёрного списка'
+
+
+def message_payload(message, viewer, blocked=()):
+    """
+    Сообщение для показа.
+
+    Скрытое модератором и пришедшее от того, кого зритель заблокировал,
+    отдаются без текста — подменой на сервере, а не флажком для
+    приложения: старая версия приложения флажок не знает и показала бы
+    текст как есть.
+    """
     if message is None:
         return None
     deleted = message.sender_id is None
+    text = message.text
+    hidden = False
+    if deleted and not text:
+        text = 'Сообщение удалено'
+    elif message.is_hidden:
+        text, hidden = HIDDEN_BY_MODERATOR, True
+    elif message.sender_id in blocked:
+        text, hidden = HIDDEN_BLOCKED, True
     return {
         'id': message.pk,
         'sender_id': message.sender_id,
         'sender_name': DELETED_USER if deleted else display_name(message.sender),
-        'text': 'Сообщение удалено' if deleted and not message.text else message.text,
+        'text': text,
+        'is_hidden': hidden,
         'created_at': message.created_at.isoformat(),
         'is_mine': message.sender_id == viewer.pk,
     }
@@ -118,13 +150,19 @@ class ChatSerializer(serializers.Serializer):
 
     def to_representation(self, chat):
         viewer = self.context['request'].user
+        blocked = _blocked(self.context)
         member = chat.members.filter(user=viewer).first()
         last = chat.messages.select_related('sender').order_by('-id').first()
         peer = None
+        block_status = 'none'
         if chat.kind == Chat.KIND_DIRECT:
             other = chat.members.exclude(user=viewer).select_related('user').first()
             if other:
                 peer = {'id': other.user_id, 'username': other.user.username}
+                if other.user_id in blocked:
+                    block_status = 'blocked_by_me'
+                elif services.UserBlock.objects.filter(blocker_id=other.user_id, blocked=viewer).exists():
+                    block_status = 'blocked_me'
         community = getattr(chat, 'community', None) if chat.kind == Chat.KIND_COMMUNITY else None
         return {
             'id': chat.pk,
@@ -133,8 +171,11 @@ class ChatSerializer(serializers.Serializer):
             'members_count': chat.members.count(),
             'peer': peer,
             'community_id': community.pk if community else None,
-            'last_message': message_payload(last, viewer),
-            'unread_count': services.unread_count(member) if member else 0,
+            # 'none', 'blocked_by_me', 'blocked_me' — для личного чата:
+            # приложение показывает плашку и выключает поле ввода
+            'block_status': block_status,
+            'last_message': message_payload(last, viewer, blocked),
+            'unread_count': services.unread_count(member, blocked) if member else 0,
             'last_activity_at': chat.last_activity_at.isoformat(),
         }
 

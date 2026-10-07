@@ -50,6 +50,7 @@ import ru.angelhelper.app.ui.AngelsHeartTheme
 import ru.angelhelper.app.ui.AppViewModel
 import ru.angelhelper.app.ui.Screen
 import ru.angelhelper.app.ui.UiState
+import ru.angelhelper.app.ui.screens.BlockListScreen
 import ru.angelhelper.app.ui.screens.ChatScreen
 import ru.angelhelper.app.ui.screens.ChatsScreen
 import ru.angelhelper.app.ui.screens.ConsentsScreen
@@ -251,6 +252,7 @@ fun AppRoot(vm: AppViewModel = viewModel()) {
                     is Screen.Chat -> Unit // рисуется выше, вне общей прокрутки
                     Screen.NewChat -> NewChatScreen(vm, state)
                     Screen.SocialProfileEdit -> SocialProfileEditScreen(vm, state)
+                    Screen.BlockList -> BlockListScreen(vm, state)
                 }
             }
         }
@@ -282,6 +284,7 @@ private fun titleFor(state: UiState): String = when (state.screen) {
     is Screen.Chat -> "Переписка"
     Screen.NewChat -> "Новый чат"
     Screen.SocialProfileEdit -> "Анкета в сообществе"
+    Screen.BlockList -> "Чёрный список"
 }
 
 private fun iconFor(screen: Screen) = when (screen) {

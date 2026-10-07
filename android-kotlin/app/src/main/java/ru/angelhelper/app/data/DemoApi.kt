@@ -342,6 +342,32 @@ object DemoApi : Api {
         return DemoSocial.action(id, action, userId)
     }
 
+    override suspend fun blocks(): Outcome<List<BlockedUser>> {
+        delay(PAUSE_MS)
+        return DemoSocial.blocks()
+    }
+
+    override suspend fun block(username: String): Outcome<String> {
+        delay(PAUSE_MS)
+        return DemoSocial.block(username)
+    }
+
+    override suspend fun unblock(userId: Int): Outcome<String> {
+        delay(PAUSE_MS)
+        return DemoSocial.unblock(userId)
+    }
+
+    override suspend fun reportMessage(
+        chatId: Int,
+        messageId: Long,
+        reason: String,
+        comment: String,
+        alsoBlock: Boolean,
+    ): Outcome<String> {
+        delay(PAUSE_MS)
+        return DemoSocial.report(chatId, messageId, reason, alsoBlock)
+    }
+
     override suspend fun topUp(amount: String, method: String): Outcome<String> {
         delay(PAUSE_MS)
         val value = amount.replace(',', '.').toDoubleOrNull()

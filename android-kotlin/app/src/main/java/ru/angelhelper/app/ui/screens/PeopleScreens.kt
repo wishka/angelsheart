@@ -252,9 +252,25 @@ fun PersonDetailScreen(vm: AppViewModel, state: UiState, id: Int) {
         }
     }
 
-    Panel {
-        PrimaryButton("Написать", busy = state.busy, onClick = { vm.writeTo(person.username) })
-        SecondaryButton("Перевести деньги", onClick = { vm.transferTo(person.username) })
+    var confirmBlock by remember(id) { mutableStateOf(false) }
+    if (person.isBlocked) {
+        StubBanner("${person.displayName} в вашем чёрном списке: переписка закрыта для обоих.")
+        Panel {
+            PrimaryButton("Разблокировать", busy = state.busy, onClick = { vm.unblock(person.id) })
+        }
+    } else {
+        Panel {
+            PrimaryButton("Написать", busy = state.busy, onClick = { vm.writeTo(person.username) })
+            SecondaryButton("Перевести деньги", onClick = { vm.transferTo(person.username) })
+            SecondaryButton("Заблокировать", onClick = { confirmBlock = true })
+        }
+    }
+    if (confirmBlock) {
+        ConfirmBlockDialog(
+            name = person.displayName,
+            onConfirm = { vm.block(person.username) },
+            onDismiss = { confirmBlock = false },
+        )
     }
 }
 

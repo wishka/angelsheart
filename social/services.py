@@ -8,16 +8,22 @@
 
 from django.contrib.auth.models import User
 from django.db import IntegrityError, transaction
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from main.models import UserConsent
 
 from .models import (
-    Chat, ChatMember, ChatMessage, Community, CommunityMembership, Interest, SocialProfile,
+    Chat, ChatMember, ChatMessage, Community, CommunityMembership, Interest, MessageReport,
+    SocialProfile, UserBlock,
 )
 
 DISTRIBUTION = 'distribution'
+
+# После скольких жалоб от разных людей сообщение скрывается до решения
+# модератора. Одна жалоба не скрывает ничего: иначе любой мог бы
+# «стереть» неудобное сообщение одним нажатием.
+REPORTS_TO_HIDE = 3
 
 
 class SocialError(Exception):
@@ -27,6 +33,40 @@ class SocialError(Exception):
         super().__init__(message)
         self.message = message
         self.status = status
+
+
+# ==================== ЧЁРНЫЙ СПИСОК ====================
+
+def blocked_ids(user):
+    """Кого заблокировал user."""
+    return set(UserBlock.objects.filter(blocker=user).values_list('blocked_id', flat=True))
+
+
+def blocked_by_ids(user):
+    """Кто заблокировал user."""
+    return set(UserBlock.objects.filter(blocked=user).values_list('blocker_id', flat=True))
+
+
+def is_blocked_between(a, b):
+    return UserBlock.objects.filter(
+        Q(blocker=a, blocked=b) | Q(blocker=b, blocked=a),
+    ).exists()
+
+
+def block_user(user, target):
+    if target.pk == user.pk:
+        raise SocialError('Нельзя заблокировать самого себя')
+    _, created = UserBlock.objects.get_or_create(blocker=user, blocked=target)
+    if not created:
+        return f'{target.username} уже в чёрном списке'
+    return f'{target.username} добавлен в чёрный список'
+
+
+def unblock_user(user, target_id):
+    deleted, _ = UserBlock.objects.filter(blocker=user, blocked_id=target_id).delete()
+    if not deleted:
+        raise SocialError('Этого пользователя нет в чёрном списке', status=404)
+    return 'Пользователь удалён из чёрного списка'
 
 
 # ==================== АНКЕТА И ПОИСК ====================
@@ -64,7 +104,14 @@ def search_people(viewer, query='', city='', gender='', age_min=None, age_max=No
     query ищется в имени пользователя, имени для показа и городе.
     interests — список slug: достаточно совпадения хотя бы по одному.
     """
-    users = discoverable_users().exclude(pk=viewer.pk).select_related('social_profile')
+    users = (
+        discoverable_users()
+        .exclude(pk=viewer.pk)
+        # Чёрный список скрывает в обе стороны: заблокированный не должен
+        # находить того, кто его заблокировал, и наоборот
+        .exclude(pk__in=blocked_ids(viewer) | blocked_by_ids(viewer))
+        .select_related('social_profile')
+    )
 
     query = (query or '').strip().lstrip('@').lower()
     if query:
@@ -143,7 +190,11 @@ def get_or_create_direct_chat(user, other):
     key = Chat.direct_key_for(user, other)
     chat = Chat.objects.filter(direct_key=key).first()
     if chat is not None:
+        # Существующую переписку открыть можно и после блокировки —
+        # прочитать историю; писать в неё запрещает send_message
         return chat, False
+    if is_blocked_between(user, other):
+        raise SocialError('Нельзя написать этому пользователю', status=403)
 
     try:
         with transaction.atomic():
@@ -164,6 +215,9 @@ def create_group_chat(user, title, others):
     if not title:
         raise SocialError('Укажите название чата')
     members = {u.pk: u for u in others if u.pk != user.pk and u.is_active}
+    refused = [u.username for u in members.values() if is_blocked_between(user, u)]
+    if refused:
+        raise SocialError('Нельзя добавить в чат: ' + ', '.join(sorted(refused)), status=403)
     if not members:
         raise SocialError('Добавьте хотя бы одного участника')
     if len(members) + 1 > Chat.MAX_MEMBERS:
@@ -179,6 +233,12 @@ def create_group_chat(user, title, others):
 
 def send_message(chat, user, text):
     member = membership(chat, user)
+    if chat.kind == Chat.KIND_DIRECT:
+        peer = chat.members.exclude(user=user).first()
+        if peer is not None and is_blocked_between(user, peer.user):
+            raise SocialError(
+                'Переписка недоступна: один из вас в чёрном списке у другого', status=403,
+            )
     text = (text or '').strip()
     if not text:
         raise SocialError('Сообщение пустое')
@@ -200,10 +260,10 @@ def mark_read(member, last_message_id):
         member.save(update_fields=['last_read_message_id'])
 
 
-def unread_count(member):
+def unread_count(member, hidden_senders=()):
     return ChatMessage.objects.filter(
-        chat_id=member.chat_id, id__gt=member.last_read_message_id,
-    ).exclude(sender_id=member.user_id).count()
+        chat_id=member.chat_id, id__gt=member.last_read_message_id, is_hidden=False,
+    ).exclude(sender_id=member.user_id).exclude(sender_id__in=hidden_senders).count()
 
 
 @transaction.atomic
@@ -316,6 +376,71 @@ def decline_request(community, manager, user_id):
     return 'Заявка отклонена'
 
 
+# ==================== ЖАЛОБЫ ====================
+
+def report_message(user, chat, message_id, reason, comment='', also_block=False):
+    """
+    Жалоба на сообщение. Возвращает текст для человека.
+
+    Жаловаться можно только на сообщение из своего чата и только один
+    раз. После REPORTS_TO_HIDE жалоб от разных людей сообщение скрывается
+    до решения модератора.
+    """
+    membership(chat, user)
+    message = ChatMessage.objects.filter(chat=chat, pk=message_id).select_related('sender').first()
+    if message is None:
+        raise SocialError('Сообщение не найдено', status=404)
+    if message.sender_id == user.pk:
+        raise SocialError('Нельзя пожаловаться на своё сообщение')
+    if message.sender_id is None or not message.text:
+        raise SocialError('Сообщение уже удалено')
+    if reason not in dict(MessageReport.REASON_CHOICES):
+        raise SocialError('Укажите причину жалобы')
+
+    with transaction.atomic():
+        _, created = MessageReport.objects.get_or_create(
+            message=message, reporter=user,
+            defaults={
+                'reason': reason,
+                'comment': (comment or '').strip()[:500],
+                'message_text': message.text,
+                'sender': message.sender,
+            },
+        )
+        if not created:
+            raise SocialError('Вы уже пожаловались на это сообщение')
+
+        reporters = MessageReport.objects.filter(
+            message=message, status=MessageReport.STATUS_NEW,
+        ).values('reporter').distinct().count()
+        if reporters >= REPORTS_TO_HIDE and not message.is_hidden:
+            message.is_hidden = True
+            message.save(update_fields=['is_hidden'])
+
+        text = 'Жалоба отправлена. Модератор рассмотрит её.'
+        if also_block:
+            block_user(user, message.sender)
+            text += f' {message.sender.username} добавлен в чёрный список.'
+    return text
+
+
+def resolve_reports(message, moderator, accept):
+    """
+    Решение модератора по всем новым жалобам на сообщение.
+
+    accept=True — сообщение скрывается; False — жалобы отклоняются и
+    сообщение возвращается, если его скрыло автоматическое правило.
+    """
+    with transaction.atomic():
+        MessageReport.objects.filter(message=message, status=MessageReport.STATUS_NEW).update(
+            status=MessageReport.STATUS_ACCEPTED if accept else MessageReport.STATUS_REJECTED,
+            resolved_at=timezone.now(),
+            resolved_by=moderator,
+        )
+        message.is_hidden = accept
+        message.save(update_fields=['is_hidden'])
+
+
 # ==================== УДАЛЕНИЕ УЧЁТНОЙ ЗАПИСИ ====================
 
 def erase_user_social_data(user):
@@ -351,3 +476,8 @@ def erase_user_social_data(user):
 
     CommunityMembership.objects.filter(user=user).delete()
     ChatMember.objects.filter(user=user).delete()
+    UserBlock.objects.filter(Q(blocker=user) | Q(blocked=user)).delete()
+    # Жалобы — и поданные человеком, и на его сообщения — остаются:
+    # это сведения о возможном нарушении, и модератор должен довести
+    # разбор до конца. Учётная запись при удалении обезличивается, так
+    # что в жалобе остаётся только логин вида deleted_…

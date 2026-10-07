@@ -511,6 +511,7 @@ class HttpApi(private val prefs: AppPrefs) : Api {
     )
 
     private fun personOf(json: JSONObject) = Person(
+        isBlocked = json.optBoolean("is_blocked", false),
         id = json.optInt("id"),
         username = json.text("username"),
         displayName = json.text("display_name").ifBlank { json.text("username") },
@@ -539,6 +540,8 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         text = json.text("text"),
         createdAt = json.text("created_at"),
         isMine = json.optBoolean("is_mine", false),
+        senderId = json.intOrNull("sender_id"),
+        isHidden = json.optBoolean("is_hidden", false),
     )
 
     private fun memberOf(json: JSONObject) = ChatMember(
@@ -558,6 +561,8 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         unreadCount = json.optInt("unread_count"),
         lastActivityAt = json.text("last_activity_at"),
         members = parseList(json.optJSONArray("members"), ::memberOf),
+        peerId = json.optJSONObject("peer")?.intOrNull("id"),
+        blockStatus = json.text("block_status").ifBlank { "none" },
     )
 
     private fun communityOf(json: JSONObject) = Community(
@@ -700,6 +705,41 @@ class HttpApi(private val prefs: AppPrefs) : Api {
                 CommunityReply(communityOf(json), json.text("message"))
             }
         }
+
+    // ==================== ЧЁРНЫЙ СПИСОК И ЖАЛОБЫ ====================
+
+    override suspend fun blocks(): Outcome<List<BlockedUser>> = request {
+        getList("api/blocks/") { json ->
+            BlockedUser(
+                id = json.optInt("id"),
+                username = json.text("username"),
+                displayName = json.text("display_name").ifBlank { json.text("username") },
+                createdAt = json.text("created_at"),
+            )
+        }
+    }
+
+    override suspend fun block(username: String): Outcome<String> = request {
+        getOne("api/blocks/", "POST", JSONObject().put("username", username)) { it.text("message") }
+    }
+
+    override suspend fun unblock(userId: Int): Outcome<String> = request {
+        getOne("api/blocks/$userId/", "DELETE", null) { it.text("message") }
+    }
+
+    override suspend fun reportMessage(
+        chatId: Int,
+        messageId: Long,
+        reason: String,
+        comment: String,
+        alsoBlock: Boolean,
+    ): Outcome<String> = request {
+        val payload = JSONObject()
+            .put("reason", reason)
+            .put("comment", comment)
+            .put("block", alsoBlock)
+        getOne("api/chats/$chatId/messages/$messageId/report/", "POST", payload) { it.text("message") }
+    }
 
     // ==================== ЗАГЛУШКИ ====================
     // Этих точек в серверном API нет. Реализации совпадают с демо-режимом

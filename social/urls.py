@@ -9,6 +9,7 @@ router = SimpleRouter()
 router.register(r'people', views.PeopleViewSet, basename='people')
 router.register(r'chats', views.ChatViewSet, basename='chat')
 router.register(r'groups', views.CommunityViewSet, basename='community')
+router.register(r'blocks', views.BlockViewSet, basename='block')
 
 urlpatterns = [
     path('profile/', views.MyProfileView.as_view(), name='social_profile'),

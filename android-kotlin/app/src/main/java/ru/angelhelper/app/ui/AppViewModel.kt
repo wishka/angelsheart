@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.update
 import ru.angelhelper.app.data.Api
+import ru.angelhelper.app.data.BlockedUser
 import ru.angelhelper.app.data.ChatInfo
 import ru.angelhelper.app.data.ChatMessage
 import ru.angelhelper.app.data.Community
@@ -64,6 +65,7 @@ sealed interface Screen {
     data class Chat(val id: Int) : Screen
     data object NewChat : Screen
     data object SocialProfileEdit : Screen
+    data object BlockList : Screen
 }
 
 /**
@@ -112,6 +114,7 @@ data class UiState(
     val openGroup: Community? = null,
     /** Получатель, подставляемый в форму перевода из анкеты человека. */
     val transferPrefill: String = "",
+    val blocks: List<BlockedUser> = emptyList(),
 ) {
     val screen: Screen get() = stack.last()
     val canGoBack: Boolean get() = stack.size > 1
@@ -204,6 +207,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             Screen.NewGroup -> ensureInterests()
             Screen.Chats -> loadChats()
             is Screen.Chat -> openChatThread(screen.id)
+            Screen.BlockList -> loadBlocks()
             Screen.SocialProfileEdit -> {
                 ensureInterests()
                 loadSocialProfile()
@@ -510,6 +514,40 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             goRoot(Screen.Chats)
         },
     ) { it.leaveChat(chatId) }
+
+    // ==================== ЧЁРНЫЙ СПИСОК И ЖАЛОБЫ ====================
+
+    fun loadBlocks() = run(
+        onOk = { list -> _state.update { it.copy(blocks = list) } },
+    ) { it.blocks() }
+
+    /**
+     * После блокировки и разблокировки текущий экран перечитывается:
+     * в чате меняется плашка и доступность поля ввода, в анкете — кнопки,
+     * в общем чате сообщения заблокированного скрываются.
+     */
+    private fun reloadCurrent() = loadFor(_state.value.screen)
+
+    fun block(username: String) = run(
+        onOk = { text ->
+            say(text, isError = false)
+            reloadCurrent()
+        },
+    ) { it.block(username) }
+
+    fun unblock(userId: Int) = run(
+        onOk = { text ->
+            say(text, isError = false)
+            reloadCurrent()
+        },
+    ) { it.unblock(userId) }
+
+    fun reportMessage(chatId: Int, messageId: Long, reason: String, comment: String, alsoBlock: Boolean) = run(
+        onOk = { text ->
+            say(text, isError = false)
+            if (alsoBlock) reloadCurrent()
+        },
+    ) { it.reportMessage(chatId, messageId, reason, comment, alsoBlock) }
 
     // ==================== СООБЩЕСТВО: ГРУППЫ ====================
 

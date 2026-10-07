@@ -171,6 +171,10 @@ class ChatMessage(models.Model):
     sender = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='+')
     text = models.TextField(max_length=MAX_LENGTH)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Скрыто модератором или автоматически после нескольких жалоб.
+    # Текст не стирается: модератору нужно видеть, на что жаловались,
+    # а решение можно отменить.
+    is_hidden = models.BooleanField('Скрыто', default=False)
 
     class Meta:
         verbose_name = 'Сообщение'
@@ -254,3 +258,82 @@ class CommunityMembership(models.Model):
     @property
     def can_manage(self):
         return self.status == self.STATUS_ACTIVE and self.role in (self.ROLE_OWNER, self.ROLE_ADMIN)
+
+
+class UserBlock(models.Model):
+    """
+    Чёрный список.
+
+    Блокировка действует в обе стороны для личной переписки: ни
+    заблокированный не может написать, ни тот, кто заблокировал, — иначе
+    можно было бы писать человеку, лишив его возможности ответить.
+    Друг друга они не видят в поиске. В общих группах сообщения остаются,
+    но у заблокировавшего они скрыты.
+    """
+
+    blocker = models.ForeignKey(User, on_delete=models.CASCADE, related_name='blocks_made')
+    blocked = models.ForeignKey(User, on_delete=models.CASCADE, related_name='blocks_received')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Блокировка'
+        verbose_name_plural = 'Чёрный список'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['blocker', 'blocked'], name='unique_user_block'),
+        ]
+
+    def __str__(self):
+        return f'{self.blocker} → {self.blocked}'
+
+
+class MessageReport(models.Model):
+    """
+    Жалоба на сообщение.
+
+    Текст и автор сообщения копируются в жалобу в момент подачи: автор
+    может удалить учётную запись, и тогда текст в чате стирается, а
+    модератору всё равно нужно понять, на что жаловались.
+    """
+
+    REASON_CHOICES = [
+        ('spam', 'Спам или реклама'),
+        ('abuse', 'Оскорбления или травля'),
+        ('fraud', 'Мошенничество'),
+        ('illegal', 'Запрещённый контент'),
+        ('other', 'Другое'),
+    ]
+    STATUS_NEW = 'new'
+    STATUS_ACCEPTED = 'accepted'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (STATUS_NEW, 'Новая'),
+        (STATUS_ACCEPTED, 'Принята — сообщение скрыто'),
+        (STATUS_REJECTED, 'Отклонена'),
+    ]
+
+    message = models.ForeignKey(ChatMessage, on_delete=models.SET_NULL, null=True,
+                                related_name='reports')
+    reporter = models.ForeignKey(User, on_delete=models.CASCADE, related_name='message_reports')
+    reason = models.CharField('Причина', max_length=10, choices=REASON_CHOICES)
+    comment = models.TextField('Комментарий', max_length=500, blank=True)
+    message_text = models.TextField('Текст сообщения на момент жалобы')
+    sender = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name='reports_received', verbose_name='Автор сообщения')
+    status = models.CharField('Статус', max_length=10, choices=STATUS_CHOICES,
+                              default=STATUS_NEW, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name='+')
+
+    class Meta:
+        verbose_name = 'Жалоба на сообщение'
+        verbose_name_plural = 'Жалобы на сообщения'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['message', 'reporter'], name='unique_message_report'),
+        ]
+
+    def __str__(self):
+        return f'Жалоба #{self.pk}: {self.get_reason_display()}'

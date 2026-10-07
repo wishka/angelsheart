@@ -115,6 +115,31 @@ interface Api {
     /** action: join, leave, approve, decline; для двух последних нужен userId. */
     suspend fun communityAction(id: Int, action: String, userId: Int? = null): Outcome<CommunityReply>
 
+    // ==================== ЧЁРНЫЙ СПИСОК И ЖАЛОБЫ ====================
+
+    suspend fun blocks(): Outcome<List<BlockedUser>>
+
+    /**
+     * В чёрный список. Действует в обе стороны: личная переписка
+     * закрывается для обоих, в поиске друг друга не видно, в общих
+     * чатах сообщения заблокированного скрыты.
+     */
+    suspend fun block(username: String): Outcome<String>
+
+    suspend fun unblock(userId: Int): Outcome<String>
+
+    /**
+     * Жалоба на сообщение модератору. reason — ключ из REPORT_REASONS;
+     * alsoBlock сразу добавляет автора в чёрный список.
+     */
+    suspend fun reportMessage(
+        chatId: Int,
+        messageId: Long,
+        reason: String,
+        comment: String,
+        alsoBlock: Boolean,
+    ): Outcome<String>
+
     // ==================== ЗАГЛУШКИ ====================
 
     /** Заглушка: в серверном API пополнения нет. */
