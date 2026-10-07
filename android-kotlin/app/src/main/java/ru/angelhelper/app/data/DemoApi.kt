@@ -342,6 +342,26 @@ object DemoApi : Api {
         return DemoSocial.action(id, action, userId)
     }
 
+    override suspend fun uploadAvatar(jpeg: ByteArray): Outcome<SocialProfile> {
+        delay(PAUSE_MS)
+        return DemoSocial.uploadAvatar(jpeg)
+    }
+
+    override suspend fun removeAvatar(): Outcome<SocialProfile> {
+        delay(PAUSE_MS)
+        return DemoSocial.removeAvatar()
+    }
+
+    override suspend fun avatar(userId: Int): Outcome<ByteArray> = DemoSocial.avatar(userId)
+
+    override suspend fun sendImage(chatId: Int, text: String, jpeg: ByteArray): Outcome<ChatMessage> {
+        delay(PAUSE_MS)
+        return DemoSocial.sendImage(chatId, text, jpeg)
+    }
+
+    override suspend fun messageImage(chatId: Int, messageId: Long): Outcome<ByteArray> =
+        DemoSocial.messageImage(messageId)
+
     override suspend fun blocks(): Outcome<List<BlockedUser>> {
         delay(PAUSE_MS)
         return DemoSocial.blocks()

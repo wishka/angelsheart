@@ -7,6 +7,7 @@ API сообщества: /api/profile/, /api/people/, /api/chats/, /api/groups/
 """
 
 from django.contrib.auth.models import User
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -69,6 +70,29 @@ class MyProfileView(SocialMixin, APIView):
         return self.patch(request)
 
 
+class MyAvatarView(SocialMixin, APIView):
+    """POST multipart с полем image — новое фото; DELETE — убрать фото."""
+
+    def post(self, request):
+        try:
+            profile = services.set_avatar(request.user, request.FILES.get('image'))
+        except services.SocialError as error:
+            return self.refuse(error)
+        return Response(MyProfileSerializer(profile).data)
+
+    def delete(self, request):
+        profile = services.remove_avatar(request.user)
+        return Response(MyProfileSerializer(profile).data)
+
+
+def _file_response(field):
+    # private, max-age: приложение кэширует само, а промежуточным
+    # прокси хранить чужие фото незачем
+    response = FileResponse(field.open('rb'), content_type='image/jpeg')
+    response['Cache-Control'] = 'private, max-age=86400'
+    return response
+
+
 # ==================== ЛЮДИ ====================
 
 class PeopleViewSet(SocialMixin, viewsets.GenericViewSet):
@@ -114,6 +138,14 @@ class PeopleViewSet(SocialMixin, viewsets.GenericViewSet):
             return Response({'error': 'Пользователь не найден или скрыл анкету'},
                             status=status.HTTP_404_NOT_FOUND)
         return Response(PersonSerializer(user, context={'request': request}).data)
+
+    @action(detail=True, methods=['get'])
+    def avatar(self, request, pk=None):
+        user = User.objects.filter(pk=_int(pk), is_active=True).select_related('social_profile').first()
+        profile = getattr(user, 'social_profile', None) if user else None
+        if profile is None or not profile.avatar or not services.can_see_avatar(request.user, user):
+            return Response({'error': 'Фото нет'}, status=status.HTTP_404_NOT_FOUND)
+        return _file_response(profile.avatar)
 
 
 # ==================== ЧАТЫ ====================
@@ -190,7 +222,11 @@ class ChatViewSet(SocialMixin, viewsets.GenericViewSet):
             serializer = MessageCreateSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             try:
-                message = services.send_message(chat, request.user, serializer.validated_data['text'])
+                message = services.send_message(
+                    chat, request.user,
+                    serializer.validated_data['text'],
+                    serializer.validated_data['image'],
+                )
             except services.SocialError as error:
                 return self.refuse(error)
             return Response(message_payload(message, request.user), status=status.HTTP_201_CREATED)
@@ -219,6 +255,19 @@ class ChatViewSet(SocialMixin, viewsets.GenericViewSet):
             'results': [message_payload(m, request.user, blocked) for m in batch],
             'has_more': has_more,
         })
+
+    @action(detail=True, methods=['get'], url_path=r'messages/(?P<message_id>[0-9]+)/image')
+    def image(self, request, pk=None, message_id=None):
+        """Фото из сообщения — только участникам чата и только не скрытое."""
+        try:
+            chat = self._chat(pk)
+        except services.SocialError as error:
+            return self.refuse(error)
+        message = ChatMessage.objects.filter(chat=chat, pk=_int(message_id)).first()
+        if (message is None or not message.image or message.is_hidden
+                or message.sender_id in services.blocked_ids(request.user)):
+            return Response({'error': 'Изображения нет'}, status=status.HTTP_404_NOT_FOUND)
+        return _file_response(message.image)
 
     @action(detail=True, methods=['post'], url_path=r'messages/(?P<message_id>[0-9]+)/report')
     def report(self, request, pk=None, message_id=None):

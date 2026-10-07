@@ -22,6 +22,20 @@ def _profile(user):
         return None
 
 
+def avatar_fields(user):
+    """
+    has_avatar и avatar_version. Версия — время правки анкеты: приложение
+    кладёт фото в кэш по паре (id, версия) и после смены фото не покажет
+    старое.
+    """
+    profile = _profile(user) if user is not None else None
+    has = bool(profile and profile.avatar)
+    return {
+        'has_avatar': has,
+        'avatar_version': profile.updated_at.strftime('%Y%m%d%H%M%S') if has else '',
+    }
+
+
 def display_name(user):
     if user is None:
         return DELETED_USER
@@ -46,6 +60,7 @@ class PersonSerializer(serializers.Serializer):
                 profile.interests.all() if profile else [], many=True,
             ).data,
             'is_blocked': user.pk in _blocked(self.context),
+            **avatar_fields(user),
         }
 
 
@@ -98,6 +113,8 @@ class MyProfileSerializer(serializers.Serializer):
             # в поиске не видна, хотя флажок включён, — и экран должен
             # сказать почему
             'distribution_consent': services.has_distribution_consent(profile.user),
+            'user_id': profile.user_id,
+            **avatar_fields(profile.user),
         }
 
 
@@ -121,7 +138,7 @@ def message_payload(message, viewer, blocked=()):
     deleted = message.sender_id is None
     text = message.text
     hidden = False
-    if deleted and not text:
+    if deleted and not text and not message.image:
         text = 'Сообщение удалено'
     elif message.is_hidden:
         text, hidden = HIDDEN_BY_MODERATOR, True
@@ -133,6 +150,8 @@ def message_payload(message, viewer, blocked=()):
         'sender_name': DELETED_USER if deleted else display_name(message.sender),
         'text': text,
         'is_hidden': hidden,
+        # Скрытое сообщение не отдаёт и фото: сама выдача файла тоже это проверяет
+        'has_image': bool(message.image) and not hidden,
         'created_at': message.created_at.isoformat(),
         'is_mine': message.sender_id == viewer.pk,
     }
@@ -158,7 +177,10 @@ class ChatSerializer(serializers.Serializer):
         if chat.kind == Chat.KIND_DIRECT:
             other = chat.members.exclude(user=viewer).select_related('user').first()
             if other:
-                peer = {'id': other.user_id, 'username': other.user.username}
+                peer = {
+                    'id': other.user_id, 'username': other.user.username,
+                    **avatar_fields(other.user),
+                }
                 if other.user_id in blocked:
                     block_status = 'blocked_by_me'
                 elif services.UserBlock.objects.filter(blocker_id=other.user_id, blocked=viewer).exists():
@@ -196,7 +218,11 @@ class ChatCreateSerializer(serializers.Serializer):
 
 
 class MessageCreateSerializer(serializers.Serializer):
-    text = serializers.CharField(max_length=ChatMessage.MAX_LENGTH, trim_whitespace=True)
+    text = serializers.CharField(max_length=ChatMessage.MAX_LENGTH, trim_whitespace=True,
+                                 required=False, allow_blank=True, default='')
+    # FileField, а не ImageField: проверку и пересохранение делает
+    # images.prepare, двойная проверка Pillow ничего не добавила бы
+    image = serializers.FileField(required=False, allow_null=True, default=None)
 
 
 # ==================== ГРУППЫ ====================

@@ -1,8 +1,11 @@
 package ru.angelhelper.app.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -514,6 +517,50 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             goRoot(Screen.Chats)
         },
     ) { it.leaveChat(chatId) }
+
+    // ==================== ФОТО ====================
+
+    /** Снимок из галереи → JPEG нужного размера; работа с файлом — не в главном потоке. */
+    private suspend fun readPhoto(uri: Uri, maxSide: Int): ByteArray? =
+        withContext(Dispatchers.IO) { ImageTools.prepareJpeg(getApplication<Application>(), uri, maxSide) }
+
+    fun uploadAvatar(uri: Uri) {
+        viewModelScope.launch {
+            val jpeg = readPhoto(uri, 1024)
+            if (jpeg == null) {
+                say("Не удалось прочитать фото", isError = true)
+                return@launch
+            }
+            run(onOk = { profile ->
+                _state.update { it.copy(socialProfile = profile) }
+                say("Фото обновлено", isError = false)
+            }) { it.uploadAvatar(jpeg) }
+        }
+    }
+
+    fun removeAvatar() = run(
+        onOk = { profile -> _state.update { it.copy(socialProfile = profile) } },
+    ) { it.removeAvatar() }
+
+    fun sendImage(chatId: Int, uri: Uri, caption: String) {
+        viewModelScope.launch {
+            val jpeg = readPhoto(uri, 1600)
+            if (jpeg == null) {
+                say("Не удалось прочитать фото", isError = true)
+                return@launch
+            }
+            run(onOk = { message -> mergeMessages(chatId, listOf(message)) }) {
+                it.sendImage(chatId, caption, jpeg)
+            }
+        }
+    }
+
+    /** Байты фото для RemoteImage; null при любой неудаче — экран покажет подложку. */
+    suspend fun avatarBytes(userId: Int): ByteArray? =
+        (api().avatar(userId) as? Outcome.Ok)?.value
+
+    suspend fun messageImageBytes(chatId: Int, messageId: Long): ByteArray? =
+        (api().messageImage(chatId, messageId) as? Outcome.Ok)?.value
 
     // ==================== ЧЁРНЫЙ СПИСОК И ЖАЛОБЫ ====================
 

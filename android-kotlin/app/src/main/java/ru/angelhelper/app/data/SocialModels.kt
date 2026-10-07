@@ -24,6 +24,9 @@ data class Person(
     val interests: List<Interest>,
     /** Этот человек в моём чёрном списке. */
     val isBlocked: Boolean = false,
+    val hasAvatar: Boolean = false,
+    /** Меняется при смене фото — ключ кэша. */
+    val avatarVersion: String = "",
 ) {
     /** Короткая строка под именем: «28 лет · Москва». */
     val summary: String
@@ -47,6 +50,9 @@ data class SocialProfile(
      * сайте, и экран должен объяснить, почему анкеты в поиске нет.
      */
     val distributionConsent: Boolean,
+    val userId: Int = 0,
+    val hasAvatar: Boolean = false,
+    val avatarVersion: String = "",
 )
 
 /** Параметры поиска людей. Пустой фильтр — все, кто открыт для поиска. */
@@ -81,8 +87,18 @@ data class ChatMessage(
      * чёрном списке. На такое сообщение жаловаться уже незачем.
      */
     val isHidden: Boolean = false,
+    /** В сообщении фото; загружается отдельно по id сообщения. */
+    val hasImage: Boolean = false,
 ) {
     val canReport: Boolean get() = !isMine && !isHidden && senderId != null
+
+    /** Для строки в списке чатов: фото без подписи — «📷 Фото». */
+    val previewText: String
+        get() = when {
+            hasImage && text.isBlank() -> "📷 Фото"
+            hasImage -> "📷 $text"
+            else -> text
+        }
 }
 
 data class ChatMember(
@@ -111,6 +127,8 @@ data class ChatInfo(
     val peerId: Int? = null,
     /** Для личного чата: none, blocked_by_me, blocked_me. */
     val blockStatus: String = "none",
+    val peerHasAvatar: Boolean = false,
+    val peerAvatarVersion: String = "",
 ) {
     val isDirect: Boolean get() = kind == "direct"
     val isBlocked: Boolean get() = blockStatus != "none"

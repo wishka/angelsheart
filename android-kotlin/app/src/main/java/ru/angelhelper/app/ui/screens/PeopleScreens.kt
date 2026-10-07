@@ -1,5 +1,8 @@
 package ru.angelhelper.app.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +20,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +45,7 @@ import ru.angelhelper.app.ui.Field
 import ru.angelhelper.app.ui.LabelValue
 import ru.angelhelper.app.ui.Panel
 import ru.angelhelper.app.ui.PrimaryButton
+import ru.angelhelper.app.ui.RemoteImage
 import ru.angelhelper.app.ui.Screen
 import ru.angelhelper.app.ui.SecondaryButton
 import ru.angelhelper.app.ui.StubBanner
@@ -65,6 +70,33 @@ fun Initials(name: String, size: Dp = 44.dp) {
     ) {
         Text(letters, color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
     }
+}
+
+/**
+ * Фото человека в кружке; пока фото грузится или если его нет — инициалы.
+ * Ключ кэша включает версию фото, поэтому новое фото видно сразу.
+ */
+@Composable
+fun PersonAvatar(
+    vm: AppViewModel,
+    userId: Int,
+    name: String,
+    hasAvatar: Boolean,
+    version: String,
+    size: Dp = 44.dp,
+) {
+    if (!hasAvatar) {
+        Initials(name, size)
+        return
+    }
+    RemoteImage(
+        key = "avatar:$userId:$version",
+        load = { vm.avatarBytes(userId) },
+        modifier = Modifier
+            .size(size)
+            .clip(CircleShape),
+        placeholder = { Initials(name, size) },
+    )
 }
 
 /**
@@ -187,7 +219,7 @@ fun PeopleScreen(vm: AppViewModel, state: UiState) {
             EmptyNote("Никого не нашли. Попробуйте ослабить фильтры.")
         } else {
             state.people.forEachIndexed { index, person ->
-                PersonRow(person) { vm.go(Screen.PersonDetail(person.id)) }
+                PersonRow(vm, person) { vm.go(Screen.PersonDetail(person.id)) }
                 if (index != state.people.lastIndex) HorizontalDivider()
             }
         }
@@ -200,7 +232,7 @@ fun PeopleScreen(vm: AppViewModel, state: UiState) {
 }
 
 @Composable
-private fun PersonRow(person: Person, onClick: () -> Unit) {
+private fun PersonRow(vm: AppViewModel, person: Person, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -209,7 +241,7 @@ private fun PersonRow(person: Person, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Initials(person.displayName)
+        PersonAvatar(vm, person.id, person.displayName, person.hasAvatar, person.avatarVersion)
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(person.displayName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
             val line = listOf(person.summary, person.interests.joinToString { it.title })
@@ -235,7 +267,7 @@ fun PersonDetailScreen(vm: AppViewModel, state: UiState, id: Int) {
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Initials(person.displayName, size = 64.dp)
+            PersonAvatar(vm, person.id, person.displayName, person.hasAvatar, person.avatarVersion, size = 64.dp)
             Column {
                 Text(person.displayName, style = MaterialTheme.typography.headlineSmall)
                 Caption("@${person.username}")
@@ -300,6 +332,34 @@ fun SocialProfileEditScreen(vm: AppViewModel, state: UiState) {
     var about by remember(profile) { mutableStateOf(profile.about) }
     var interests by remember(profile) { mutableStateOf(profile.interests.map { it.slug }.toSet()) }
     var discoverable by remember(profile) { mutableStateOf(profile.isDiscoverable) }
+
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) vm.uploadAvatar(uri)
+    }
+
+    Panel(title = "Фото") {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PersonAvatar(
+                vm, profile.userId, profile.displayName.ifBlank { profile.username },
+                profile.hasAvatar, profile.avatarVersion, size = 72.dp,
+            )
+            Column {
+                TextButton(onClick = {
+                    pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }) { Text(if (profile.hasAvatar) "Сменить фото" else "Выбрать фото") }
+                if (profile.hasAvatar) {
+                    TextButton(onClick = { vm.removeAvatar() }) { Text("Удалить фото") }
+                }
+            }
+        }
+        Caption(
+            "Фото видят те, кому видна анкета, и собеседники по чатам. Место " +
+                "съёмки и другие данные из файла снимка удаляются при загрузке."
+        )
+    }
 
     if (profile.isDiscoverable && !profile.distributionConsent) {
         StubBanner(

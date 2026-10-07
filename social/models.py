@@ -10,6 +10,8 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+from main.storage import private_media_storage
+
 User = settings.AUTH_USER_MODEL
 
 
@@ -64,6 +66,10 @@ class SocialProfile(models.Model):
     about = models.TextField('О себе', max_length=500, blank=True)
     interests = models.ManyToManyField(Interest, blank=True, related_name='profiles')
     is_discoverable = models.BooleanField('Показывать в поиске', default=False)
+    # Фото лежит в приватном хранилище и отдаётся только вью с проверкой
+    # прав (people/<id>/avatar/): анкета видна не всем, и фото тоже
+    avatar = models.ImageField('Фото', upload_to='avatars/%Y/%m/', blank=True,
+                               storage=private_media_storage)
     updated_at = models.DateTimeField(auto_now=True)
 
     # Служебные поля для поиска, в нижнем регистре. SQLite (база для
@@ -169,7 +175,11 @@ class ChatMessage(models.Model):
 
     chat = models.ForeignKey(Chat, on_delete=models.CASCADE, related_name='messages')
     sender = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='+')
-    text = models.TextField(max_length=MAX_LENGTH)
+    # Может быть пустым, если в сообщении только фото
+    text = models.TextField(max_length=MAX_LENGTH, blank=True)
+    # Вложение-изображение; приватное хранилище, выдача — только участникам
+    image = models.ImageField('Изображение', upload_to='chat/%Y/%m/', blank=True,
+                              storage=private_media_storage)
     created_at = models.DateTimeField(auto_now_add=True)
     # Скрыто модератором или автоматически после нескольких жалоб.
     # Текст не стирается: модератору нужно видеть, на что жаловались,

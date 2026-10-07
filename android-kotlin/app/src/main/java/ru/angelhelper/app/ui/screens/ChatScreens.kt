@@ -1,6 +1,15 @@
 package ru.angelhelper.app.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.window.Dialog
+import ru.angelhelper.app.ui.RemoteImage
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.remember
@@ -75,7 +84,7 @@ fun ChatsScreen(vm: AppViewModel, state: UiState) {
             )
         } else {
             state.chats.forEachIndexed { index, chat ->
-                ChatRow(chat) { vm.go(Screen.Chat(chat.id)) }
+                ChatRow(vm, chat) { vm.go(Screen.Chat(chat.id)) }
                 if (index != state.chats.lastIndex) HorizontalDivider()
             }
         }
@@ -84,7 +93,7 @@ fun ChatsScreen(vm: AppViewModel, state: UiState) {
 }
 
 @Composable
-private fun ChatRow(chat: ChatInfo, onClick: () -> Unit) {
+private fun ChatRow(vm: AppViewModel, chat: ChatInfo, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -93,7 +102,12 @@ private fun ChatRow(chat: ChatInfo, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Initials(chat.title)
+        val peerId = chat.peerId
+        if (peerId != null) {
+            PersonAvatar(vm, peerId, chat.title, chat.peerHasAvatar, chat.peerAvatarVersion)
+        } else {
+            Initials(chat.title)
+        }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 chat.title,
@@ -105,9 +119,9 @@ private fun ChatRow(chat: ChatInfo, onClick: () -> Unit) {
             val last = chat.lastMessage
             val preview = when {
                 last == null -> chat.kindTitle
-                last.isMine -> "Вы: ${last.text}"
-                chat.isDirect -> last.text
-                else -> "${last.senderName}: ${last.text}"
+                last.isMine -> "Вы: ${last.previewText}"
+                chat.isDirect -> last.previewText
+                else -> "${last.senderName}: ${last.previewText}"
             }
             Text(
                 preview,
@@ -178,6 +192,15 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
     var confirmBlock by remember { mutableStateOf(false) }
     // Сообщение, на которое человек жалуется (долгое нажатие)
     var reporting by remember { mutableStateOf<ChatMessage?>(null) }
+    // Фото, открытое на весь экран
+    var viewing by remember { mutableStateOf<ChatMessage?>(null) }
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            // Набранный текст уходит подписью к фото
+            vm.sendImage(id, uri, text.trim())
+            text = ""
+        }
+    }
     val chat = state.openChat?.takeIf { it.id == id }
 
     LaunchedEffect(id) {
@@ -237,6 +260,19 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
                     message,
                     showSender = chat?.isDirect == false,
                     onLongPress = if (message.canReport) ({ reporting = message }) else null,
+                    image = if (message.hasImage) {
+                        {
+                            RemoteImage(
+                                key = "msg:$id:${message.id}",
+                                load = { vm.messageImageBytes(id, message.id) },
+                                modifier = Modifier
+                                    .padding(bottom = 4.dp)
+                                    .size(width = 240.dp, height = 240.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { viewing = message },
+                            )
+                        }
+                    } else null,
                 )
             }
         }
@@ -252,6 +288,9 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
                 text = text,
                 onTextChange = { text = it.take(2000) },
                 enabled = chat != null && !state.busy,
+                onAttach = {
+                    pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                },
                 onSend = {
                     vm.sendMessage(id, text.trim())
                     text = ""
@@ -267,6 +306,19 @@ fun ChatScreen(vm: AppViewModel, state: UiState, id: Int) {
             onConfirm = { vm.block(peerUsername) },
             onDismiss = { confirmBlock = false },
         )
+    }
+
+    viewing?.let { message ->
+        Dialog(onDismissRequest = { viewing = null }) {
+            RemoteImage(
+                key = "msg:$id:${message.id}",
+                load = { vm.messageImageBytes(id, message.id) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { viewing = null },
+                contentScale = ContentScale.Fit,
+            )
+        }
     }
 
     reporting?.let { message ->
@@ -345,12 +397,21 @@ private fun BlockedBar(text: String, action: String? = null, onAction: () -> Uni
 }
 
 @Composable
-private fun MessageInput(text: String, onTextChange: (String) -> Unit, enabled: Boolean, onSend: () -> Unit) {
+private fun MessageInput(
+    text: String,
+    onTextChange: (String) -> Unit,
+    enabled: Boolean,
+    onAttach: () -> Unit,
+    onSend: () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        IconButton(enabled = enabled, onClick = onAttach) {
+            Icon(Icons.Default.Add, contentDescription = "Прикрепить фото")
+        }
         OutlinedTextField(
             value = text,
             onValueChange = onTextChange,
@@ -373,7 +434,12 @@ private fun MessageInput(text: String, onTextChange: (String) -> Unit, enabled: 
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Bubble(message: ChatMessage, showSender: Boolean, onLongPress: (() -> Unit)?) {
+private fun Bubble(
+    message: ChatMessage,
+    showSender: Boolean,
+    onLongPress: (() -> Unit)?,
+    image: (@Composable () -> Unit)?,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isMine) Arrangement.End else Arrangement.Start,
@@ -404,7 +470,8 @@ private fun Bubble(message: ChatMessage, showSender: Boolean, onLongPress: (() -
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }
-                Text(
+                image?.invoke()
+                if (message.text.isNotEmpty()) Text(
                     message.text,
                     style = MaterialTheme.typography.bodyLarge,
                     fontStyle = if (message.isHidden) FontStyle.Italic else FontStyle.Normal,

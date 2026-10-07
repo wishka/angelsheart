@@ -13,6 +13,7 @@ router.register(r'blocks', views.BlockViewSet, basename='block')
 
 urlpatterns = [
     path('profile/', views.MyProfileView.as_view(), name='social_profile'),
+    path('profile/avatar/', views.MyAvatarView.as_view(), name='social_avatar'),
     path('interests/', views.InterestListView.as_view(), name='social_interests'),
     path('', include(router.urls)),
 ]

@@ -73,16 +73,21 @@ class HttpApi(private val prefs: AppPrefs) : Api {
     private fun authorized(path: String, method: String, payload: JSONObject?): Reply {
         val first = call(path, method, payload, prefs.accessToken)
         if (first.code != 401) return first
+        val access = refreshAccess() ?: return first
+        return call(path, method, payload, access)
+    }
 
-        val refresh = prefs.refreshToken ?: return first
+    /** Новый токен доступа по refresh или null, если вход больше не действует. */
+    private fun refreshAccess(): String? {
+        val refresh = prefs.refreshToken ?: return null
         val refreshed = call(
             "api/auth/refresh/", "POST", JSONObject().put("refresh", refresh), null,
         )
-        if (refreshed.code !in 200..299) return first
+        if (refreshed.code !in 200..299) return null
 
         val json = JSONObject(refreshed.body)
         val access = json.optString("access", "")
-        if (access.isEmpty()) return first
+        if (access.isEmpty()) return null
         prefs.accessToken = access
 
         // На сервере включены ROTATE_REFRESH_TOKENS и
@@ -94,8 +99,77 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         val refreshedToken = json.optString("refresh", "")
         if (refreshedToken.isNotEmpty()) prefs.refreshToken = refreshedToken
 
-        return call(path, method, payload, access)
+        return access
     }
+
+    // ---- Двоичные запросы: фото ----
+
+    private class Part(val field: String, val fileName: String, val mime: String, val bytes: ByteArray)
+
+    /**
+     * Запрос с телом multipart/form-data или без тела, ответ — байты.
+     *
+     * Отдельно от call(): там тело — JSON и ответ читается строкой, а фото
+     * в строку превращать нельзя — байты исказятся при перекодировке.
+     */
+    private fun callBinary(
+        path: String,
+        method: String,
+        token: String?,
+        fields: Map<String, String>,
+        part: Part?,
+    ): Pair<Int, ByteArray> {
+        val connection = urlFor(path).openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = method
+            connection.connectTimeout = 10_000
+            connection.readTimeout = 60_000
+            if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
+            if (part != null || fields.isNotEmpty()) {
+                val boundary = "----angelsheart" + System.nanoTime()
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+                connection.outputStream.use { out ->
+                    fun line(text: String) = out.write((text + "\r\n").toByteArray(Charsets.UTF_8))
+                    fields.forEach { (name, value) ->
+                        line("--$boundary")
+                        line("Content-Disposition: form-data; name=\"$name\"")
+                        line("")
+                        line(value)
+                    }
+                    if (part != null) {
+                        line("--$boundary")
+                        line("Content-Disposition: form-data; name=\"${part.field}\"; filename=\"${part.fileName}\"")
+                        line("Content-Type: ${part.mime}")
+                        line("")
+                        out.write(part.bytes)
+                        line("")
+                    }
+                    line("--$boundary--")
+                }
+            }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            return code to (stream?.use { it.readBytes() } ?: ByteArray(0))
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun authorizedBinary(
+        path: String,
+        method: String,
+        fields: Map<String, String> = emptyMap(),
+        part: Part? = null,
+    ): Pair<Int, ByteArray> {
+        val first = callBinary(path, method, prefs.accessToken, fields, part)
+        if (first.first != 401) return first
+        val access = refreshAccess() ?: return first
+        return callBinary(path, method, access, fields, part)
+    }
+
+    /** Ответ на двоичный запрос в виде Reply — чтобы разбирать ошибки как обычно. */
+    private fun Pair<Int, ByteArray>.asReply() = Reply(first, String(second, Charsets.UTF_8))
 
     /**
      * Человеческое сообщение об отказе.
@@ -512,6 +586,8 @@ class HttpApi(private val prefs: AppPrefs) : Api {
 
     private fun personOf(json: JSONObject) = Person(
         isBlocked = json.optBoolean("is_blocked", false),
+        hasAvatar = json.optBoolean("has_avatar", false),
+        avatarVersion = json.text("avatar_version"),
         id = json.optInt("id"),
         username = json.text("username"),
         displayName = json.text("display_name").ifBlank { json.text("username") },
@@ -532,6 +608,9 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         interests = parseList(json.optJSONArray("interests"), ::interestOf),
         isDiscoverable = json.optBoolean("is_discoverable", false),
         distributionConsent = json.optBoolean("distribution_consent", false),
+        userId = json.optInt("user_id"),
+        hasAvatar = json.optBoolean("has_avatar", false),
+        avatarVersion = json.text("avatar_version"),
     )
 
     private fun messageOf(json: JSONObject) = ChatMessage(
@@ -542,6 +621,7 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         isMine = json.optBoolean("is_mine", false),
         senderId = json.intOrNull("sender_id"),
         isHidden = json.optBoolean("is_hidden", false),
+        hasImage = json.optBoolean("has_image", false),
     )
 
     private fun memberOf(json: JSONObject) = ChatMember(
@@ -563,6 +643,8 @@ class HttpApi(private val prefs: AppPrefs) : Api {
         members = parseList(json.optJSONArray("members"), ::memberOf),
         peerId = json.optJSONObject("peer")?.intOrNull("id"),
         blockStatus = json.text("block_status").ifBlank { "none" },
+        peerHasAvatar = json.optJSONObject("peer")?.optBoolean("has_avatar", false) ?: false,
+        peerAvatarVersion = json.optJSONObject("peer")?.text("avatar_version") ?: "",
     )
 
     private fun communityOf(json: JSONObject) = Community(
@@ -705,6 +787,42 @@ class HttpApi(private val prefs: AppPrefs) : Api {
                 CommunityReply(communityOf(json), json.text("message"))
             }
         }
+
+    // ==================== ФОТО ====================
+
+    private fun photo(bytes: ByteArray) = Part("image", "photo.jpg", "image/jpeg", bytes)
+
+    /** Байты при 2xx, иначе разбор ошибки как у JSON-ответов. */
+    private fun bytesOrFailure(reply: Pair<Int, ByteArray>): Outcome<ByteArray> =
+        if (reply.first in 200..299) Outcome.Ok(reply.second) else failure(reply.asReply())
+
+    override suspend fun uploadAvatar(jpeg: ByteArray): Outcome<SocialProfile> = request {
+        val reply = authorizedBinary("api/profile/avatar/", "POST", part = photo(jpeg)).asReply()
+        if (reply.code !in 200..299) return@request failure(reply)
+        Outcome.Ok(socialProfileOf(JSONObject(reply.body)))
+    }
+
+    override suspend fun removeAvatar(): Outcome<SocialProfile> = request {
+        getOne("api/profile/avatar/", "DELETE", null, ::socialProfileOf)
+    }
+
+    override suspend fun avatar(userId: Int): Outcome<ByteArray> = request {
+        bytesOrFailure(authorizedBinary("api/people/$userId/avatar/", "GET"))
+    }
+
+    override suspend fun sendImage(chatId: Int, text: String, jpeg: ByteArray): Outcome<ChatMessage> = request {
+        val reply = authorizedBinary(
+            "api/chats/$chatId/messages/", "POST",
+            fields = if (text.isBlank()) emptyMap() else mapOf("text" to text),
+            part = photo(jpeg),
+        ).asReply()
+        if (reply.code !in 200..299) return@request failure(reply)
+        Outcome.Ok(messageOf(JSONObject(reply.body)))
+    }
+
+    override suspend fun messageImage(chatId: Int, messageId: Long): Outcome<ByteArray> = request {
+        bytesOrFailure(authorizedBinary("api/chats/$chatId/messages/$messageId/image/", "GET"))
+    }
 
     // ==================== ЧЁРНЫЙ СПИСОК И ЖАЛОБЫ ====================
 

@@ -92,6 +92,11 @@ object DemoSocial {
     /** На какие сообщения уже пожаловался — повторно нельзя, как на сервере. */
     private val reported = mutableSetOf<Long>()
 
+    /** Фото в памяти: своё фото анкеты и фото из сообщений. */
+    private var myAvatar: ByteArray? = null
+    private var avatarVersion = 0
+    private val messageImages = mutableMapOf<Long, ByteArray>()
+
     private val chats = mutableListOf(
         DemoChat(1, "direct", "", mutableListOf(me, memberOf(people[0]))).apply {
             messages += message("Анна Петрова", "Привет! Видела, ты помог со сбором для Ани. Спасибо 🙏", "2026-09-14T10:20:00Z", 2)
@@ -120,7 +125,44 @@ object DemoSocial {
 
     // ==================== АНКЕТА И ПОИСК ====================
 
-    fun profile(): Outcome<SocialProfile> = Outcome.Ok(profile)
+    fun profile(): Outcome<SocialProfile> = Outcome.Ok(withAvatar(profile))
+
+    private fun withAvatar(p: SocialProfile) = p.copy(
+        userId = MY_ID,
+        hasAvatar = myAvatar != null,
+        avatarVersion = if (myAvatar != null) avatarVersion.toString() else "",
+    )
+
+    fun uploadAvatar(jpeg: ByteArray): Outcome<SocialProfile> {
+        if (jpeg.isEmpty()) return Outcome.Fail("Файл не похож на изображение")
+        myAvatar = jpeg
+        avatarVersion += 1
+        return Outcome.Ok(withAvatar(profile))
+    }
+
+    fun removeAvatar(): Outcome<SocialProfile> {
+        myAvatar = null
+        return Outcome.Ok(withAvatar(profile))
+    }
+
+    /** У выдуманных людей фото нет — экраны показывают инициалы. */
+    fun avatar(userId: Int): Outcome<ByteArray> =
+        myAvatar?.takeIf { userId == MY_ID }?.let { Outcome.Ok(it) } ?: Outcome.Fail("Фото нет")
+
+    fun sendImage(chatId: Int, text: String, jpeg: ByteArray): Outcome<ChatMessage> {
+        val chat = chats.firstOrNull { it.id == chatId } ?: return Outcome.Fail("Чат не найден")
+        if (chat.kind == "direct" && chat.members.any { it.id in blocked }) {
+            return Outcome.Fail("Переписка недоступна: один из вас в чёрном списке у другого")
+        }
+        val sent = message("Вы", text.trim(), "только что", MY_ID).copy(hasImage = true)
+        messageImages[sent.id] = jpeg
+        chat.messages += sent
+        chat.readUpTo = sent.id
+        return Outcome.Ok(sent)
+    }
+
+    fun messageImage(messageId: Long): Outcome<ByteArray> =
+        messageImages[messageId]?.let { Outcome.Ok(it) } ?: Outcome.Fail("Изображения нет")
 
     fun saveProfile(update: SocialProfile): Outcome<SocialProfile> {
         val year = 2026
@@ -130,10 +172,11 @@ object DemoSocial {
         }
         profile = update.copy(
             username = ME,
+            hasAvatar = false,
             // Как на сервере: включение показа в поиске фиксирует согласие
             distributionConsent = profile.distributionConsent || update.isDiscoverable,
         )
-        return Outcome.Ok(profile)
+        return Outcome.Ok(withAvatar(profile))
     }
 
     fun people(filter: PeopleFilter): Outcome<List<Person>> {
@@ -161,7 +204,7 @@ object DemoSocial {
     /** Как сервер: в общих чатах текст заблокированного подменяется. */
     private fun present(chat: DemoChat, message: ChatMessage): ChatMessage =
         if (chat.kind != "direct" && message.senderId in blocked) {
-            message.copy(text = "Сообщение от пользователя из вашего чёрного списка", isHidden = true)
+            message.copy(text = "Сообщение от пользователя из вашего чёрного списка", isHidden = true, hasImage = false)
         } else {
             message
         }

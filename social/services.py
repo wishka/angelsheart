@@ -13,6 +13,8 @@ from django.utils import timezone
 
 from main.models import UserConsent
 
+from . import images
+
 from .models import (
     Chat, ChatMember, ChatMessage, Community, CommunityMembership, Interest, MessageReport,
     SocialProfile, UserBlock,
@@ -171,6 +173,41 @@ def update_profile(request, data):
     return profile
 
 
+def set_avatar(user, uploaded):
+    try:
+        prepared = images.prepare(uploaded, images.AVATAR_SIDE, square=True)
+    except images.ImageRejected as error:
+        raise SocialError(error.message)
+    profile = SocialProfile.for_user(user)
+    old = profile.avatar.name if profile.avatar else None
+    profile.avatar.save(prepared.name, prepared, save=True)
+    if old:
+        profile.avatar.storage.delete(old)
+    return profile
+
+
+def remove_avatar(user):
+    profile = SocialProfile.for_user(user)
+    if profile.avatar:
+        profile.avatar.delete(save=True)
+    return profile
+
+
+def can_see_avatar(viewer, user):
+    """
+    Фото видно: самому человеку; всем, если анкета открыта для поиска;
+    собеседникам по общему чату. Никогда — тем, кто в чёрном списке
+    с любой стороны.
+    """
+    if viewer.pk == user.pk:
+        return True
+    if is_blocked_between(viewer, user):
+        return False
+    if discoverable_users().filter(pk=user.pk).exists():
+        return True
+    return ChatMember.objects.filter(user=viewer, chat__members__user=user).exists()
+
+
 # ==================== ЧАТЫ ====================
 
 def membership(chat, user):
@@ -231,7 +268,12 @@ def create_group_chat(user, title, others):
     return chat
 
 
-def send_message(chat, user, text):
+def send_message(chat, user, text, image=None):
+    """
+    Отправка сообщения. image — загруженный файл: он проверяется и
+    пересохраняется без метаданных (images.prepare). Текст или фото —
+    хотя бы одно из двух.
+    """
     member = membership(chat, user)
     if chat.kind == Chat.KIND_DIRECT:
         peer = chat.members.exclude(user=user).first()
@@ -240,13 +282,22 @@ def send_message(chat, user, text):
                 'Переписка недоступна: один из вас в чёрном списке у другого', status=403,
             )
     text = (text or '').strip()
-    if not text:
+    if not text and image is None:
         raise SocialError('Сообщение пустое')
     if len(text) > ChatMessage.MAX_LENGTH:
         raise SocialError(f'Сообщение длиннее {ChatMessage.MAX_LENGTH} символов')
+    prepared = None
+    if image is not None:
+        try:
+            prepared = images.prepare(image, images.CHAT_SIDE)
+        except images.ImageRejected as error:
+            raise SocialError(error.message)
 
     with transaction.atomic():
-        message = ChatMessage.objects.create(chat=chat, sender=user, text=text)
+        message = ChatMessage(chat=chat, sender=user, text=text)
+        if prepared is not None:
+            message.image.save(prepared.name, prepared, save=False)
+        message.save()
         Chat.objects.filter(pk=chat.pk).update(last_activity_at=message.created_at)
         # Своё сообщение прочитано по определению
         member.last_read_message_id = message.pk
@@ -392,7 +443,7 @@ def report_message(user, chat, message_id, reason, comment='', also_block=False)
         raise SocialError('Сообщение не найдено', status=404)
     if message.sender_id == user.pk:
         raise SocialError('Нельзя пожаловаться на своё сообщение')
-    if message.sender_id is None or not message.text:
+    if message.sender_id is None or not (message.text or message.image):
         raise SocialError('Сообщение уже удалено')
     if reason not in dict(MessageReport.REASON_CHOICES):
         raise SocialError('Укажите причину жалобы')
@@ -403,7 +454,7 @@ def report_message(user, chat, message_id, reason, comment='', also_block=False)
             defaults={
                 'reason': reason,
                 'comment': (comment or '').strip()[:500],
-                'message_text': message.text,
+                'message_text': message.text + (' [фото]' if message.image else ''),
                 'sender': message.sender,
             },
         )
@@ -453,8 +504,13 @@ def erase_user_social_data(user):
     переходят к следующему по старшинству администратору или участнику;
     группа, в которой никого не осталось, удаляется вместе с обсуждением.
     """
+    # Файлы удаляются явно: удаление записи не стирает файл с диска
+    for profile in SocialProfile.objects.filter(user=user).exclude(avatar=''):
+        profile.avatar.delete(save=False)
     SocialProfile.objects.filter(user=user).delete()
-    ChatMessage.objects.filter(sender=user).update(text='', sender=None)
+    for message in ChatMessage.objects.filter(sender=user).exclude(image=''):
+        message.image.delete(save=False)
+    ChatMessage.objects.filter(sender=user).update(text='', image='', sender=None)
 
     for community in Community.objects.filter(owner=user):
         heir = (

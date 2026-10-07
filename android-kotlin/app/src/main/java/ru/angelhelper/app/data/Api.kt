@@ -115,6 +115,25 @@ interface Api {
     /** action: join, leave, approve, decline; для двух последних нужен userId. */
     suspend fun communityAction(id: Int, action: String, userId: Int? = null): Outcome<CommunityReply>
 
+    // ==================== ФОТО ====================
+
+    /**
+     * Фото анкеты. jpeg — уже уменьшенный на телефоне снимок
+     * (ImageTools.prepareJpeg); сервер всё равно пересохраняет его и
+     * срезает метаданные.
+     */
+    suspend fun uploadAvatar(jpeg: ByteArray): Outcome<SocialProfile>
+
+    suspend fun removeAvatar(): Outcome<SocialProfile>
+
+    /** Фото человека; сервер отдаёт его только тем, кому оно видно. */
+    suspend fun avatar(userId: Int): Outcome<ByteArray>
+
+    /** Сообщение с фото; text может быть пустым. */
+    suspend fun sendImage(chatId: Int, text: String, jpeg: ByteArray): Outcome<ChatMessage>
+
+    suspend fun messageImage(chatId: Int, messageId: Long): Outcome<ByteArray>
+
     // ==================== ЧЁРНЫЙ СПИСОК И ЖАЛОБЫ ====================
 
     suspend fun blocks(): Outcome<List<BlockedUser>>

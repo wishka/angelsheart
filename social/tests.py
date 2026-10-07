@@ -427,3 +427,111 @@ class ReportTests(SocialTestCase):
         self.assertEqual(response.status_code, 302)
         self.message.refresh_from_db()
         self.assertTrue(self.message.is_hidden)
+
+
+import io  # noqa: E402
+import tempfile  # noqa: E402
+from unittest import mock  # noqa: E402
+
+from django.core.files.uploadedfile import SimpleUploadedFile  # noqa: E402
+from PIL import Image  # noqa: E402
+
+from main.storage import private_media_storage  # noqa: E402
+
+
+def jpeg_with_gps(name='photo.jpg', size=(2400, 1200)):
+    """Снимок с EXIF, в котором записаны координаты — как с телефона."""
+    image = Image.new('RGB', size, (200, 100, 50))
+    exif = Image.Exif()
+    exif[0x8825] = {2: (55.0, 45.0, 0.0), 4: (37.0, 37.0, 0.0)}  # GPSInfo
+    buffer = io.BytesIO()
+    image.save(buffer, format='JPEG', exif=exif)
+    return SimpleUploadedFile(name, buffer.getvalue(), content_type='image/jpeg')
+
+
+class ImageTests(SocialTestCase):
+    def setUp(self):
+        super().setUp()
+        self.tmp = tempfile.TemporaryDirectory()
+        patches = [
+            mock.patch.object(private_media_storage, 'location', self.tmp.name),
+            mock.patch.object(private_media_storage, 'base_location', self.tmp.name),
+        ]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.addCleanup(self.tmp.cleanup)
+        self.anna = make_user('anna', discoverable=True)
+        self.anna_client = APIClient()
+        self.anna_client.force_authenticate(self.anna)
+
+    def stored_image(self, field):
+        with field.open('rb') as handle:
+            return Image.open(io.BytesIO(handle.read()))
+
+    def test_avatar_is_square_small_and_without_exif(self):
+        response = self.client.post('/api/profile/avatar/', {'image': jpeg_with_gps()}, format='multipart')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()['has_avatar'])
+        image = self.stored_image(SocialProfile.objects.get(user=self.me).avatar)
+        self.assertEqual(image.size, (512, 512))
+        self.assertNotIn(0x8825, image.getexif())
+
+    def test_not_an_image_rejected(self):
+        fake = SimpleUploadedFile('x.jpg', b'not an image', content_type='image/jpeg')
+        response = self.client.post('/api/profile/avatar/', {'image': fake}, format='multipart')
+        self.assertEqual(response.status_code, 400)
+
+    def test_avatar_visibility(self):
+        self.anna_client.post('/api/profile/avatar/', {'image': jpeg_with_gps()}, format='multipart')
+        # Анкета Анны открыта — фото видно
+        response = self.client.get(f'/api/people/{self.anna.pk}/avatar/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'image/jpeg')
+        # Анна заблокировала — не видно
+        services.block_user(self.anna, self.me)
+        self.assertEqual(self.client.get(f'/api/people/{self.anna.pk}/avatar/').status_code, 404)
+
+    def test_hidden_profile_avatar_only_for_chat_partners(self):
+        services.set_avatar(self.me, jpeg_with_gps())
+        stranger = make_user('stranger')
+        stranger_client = APIClient()
+        stranger_client.force_authenticate(stranger)
+        self.assertEqual(stranger_client.get(f'/api/people/{self.me.pk}/avatar/').status_code, 404)
+        services.get_or_create_direct_chat(stranger, self.me)
+        self.assertEqual(stranger_client.get(f'/api/people/{self.me.pk}/avatar/').status_code, 200)
+
+    def test_photo_message(self):
+        chat, _ = services.get_or_create_direct_chat(self.me, self.anna)
+        response = self.client.post(f'/api/chats/{chat.pk}/messages/', {'image': jpeg_with_gps()},
+                                    format='multipart')
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertTrue(response.json()['has_image'])
+        message_id = response.json()['id']
+        image = self.stored_image(ChatMessage.objects.get(pk=message_id).image)
+        self.assertEqual(max(image.size), 1600)
+        self.assertNotIn(0x8825, image.getexif())
+
+        url = f'/api/chats/{chat.pk}/messages/{message_id}/image/'
+        self.assertEqual(self.anna_client.get(url).status_code, 200)
+        outsider = APIClient()
+        outsider.force_authenticate(make_user('outsider'))
+        self.assertEqual(outsider.get(url).status_code, 404)
+
+    def test_empty_message_still_rejected(self):
+        chat, _ = services.get_or_create_direct_chat(self.me, self.anna)
+        response = self.client.post(f'/api/chats/{chat.pk}/messages/', {'text': ''}, format='multipart')
+        self.assertEqual(response.status_code, 400)
+
+    def test_erasure_deletes_files(self):
+        services.set_avatar(self.anna, jpeg_with_gps())
+        chat, _ = services.get_or_create_direct_chat(self.me, self.anna)
+        message = services.send_message(chat, self.anna, '', jpeg_with_gps())
+        avatar_name = SocialProfile.objects.get(user=self.anna).avatar.name
+        image_name = message.image.name
+        services.erase_user_social_data(self.anna)
+        self.assertFalse(private_media_storage.exists(avatar_name))
+        self.assertFalse(private_media_storage.exists(image_name))
+        thread = self.client.get(f'/api/chats/{chat.pk}/messages/').json()['results']
+        self.assertEqual(thread[0]['text'], 'Сообщение удалено')
+        self.assertFalse(thread[0]['has_image'])
