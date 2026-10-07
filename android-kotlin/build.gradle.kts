@@ -10,5 +10,5 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
     // Firebase: push-уведомления. Подключается в app только при наличии
     // app/google-services.json — без него сборка идёт как раньше.
-    id("com.google.gms.google-services") version "4.4.2" apply false
+    id("com.google.gms.google-services") version "4.5.0" apply false
 }
